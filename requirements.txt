@@ -1,6 +1,8 @@
 av
+dashscope
 librosa
 numpy
+Pillow
 pyyaml
 opencv-python
 concurrent-log-handler

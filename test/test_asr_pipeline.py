@@ -1,7 +1,11 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
+
+import numpy as np
 import pytest
+
 from streamparser.asr_pipeline import ASRSubtitlePipeline
 from streamparser.asr_config import ASRSettings
+from streamparser.frame import Frame, FrameType
 
 
 class TestASRSubtitlePipeline:
@@ -26,18 +30,33 @@ class TestASRSubtitlePipeline:
         mock_overlay.assert_called_once()
 
     @patch("streamparser.asr_pipeline.ASRClient")
-    def test_feed_audio_routes_to_asr_client(self, mock_client):
+    @patch("streamparser.asr_pipeline.AudioProcessor")
+    def test_feed_audio_routes_to_asr_client(
+        self, mock_audio_processor_cls, mock_client
+    ):
         """feed_audio should send frames through AudioProcessor to ASRClient."""
         mock_client_instance = MagicMock()
         mock_client.return_value = mock_client_instance
+        mock_ap_instance = MagicMock()
+        mock_ap_instance.process.return_value = np.zeros(1600, dtype=np.int16)
+        mock_audio_processor_cls.return_value = mock_ap_instance
 
         settings = ASRSettings(api_key="sk-test")
         pipeline = ASRSubtitlePipeline(settings)
         pipeline.start("test.mp4")
 
-        # feed_audio should route to ASRClient.feed_audio
-        pipeline.feed_audio_frame(b"pcm_bytes")
-        mock_client_instance.feed_audio.assert_called()
+        frame_data = np.zeros((1, 1600), dtype=np.int16)
+        mock_frame = MagicMock(spec=Frame)
+        type(mock_frame).data = PropertyMock(return_value=frame_data)
+        mock_frame.metadata = {
+            "format": "s16",
+            "layout": "mono",
+            "sample_rate": 16000,
+        }
+
+        pipeline.feed_audio_frame(mock_frame)
+        mock_ap_instance.process.assert_called_once()
+        mock_client_instance.feed_audio.assert_called_once()
 
     @patch("streamparser.asr_pipeline.ASRClient")
     def test_stop_stops_all_components(self, mock_client):

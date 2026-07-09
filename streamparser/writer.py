@@ -8,7 +8,7 @@ from fractions import Fraction
 from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import av
 from av.container import OutputContainer
@@ -397,6 +397,11 @@ class StreamWriter:
         self._thread: Optional[Thread] = None
         self._lock: Lock = Lock()
         self._running = Event()
+        self._on_container_rotate: Optional[Callable[[str], None]] = None
+
+    def set_on_container_rotate(self, callback: Optional[Callable[[str], None]]) -> None:
+        """Set callback invoked after container rotation with new filepath."""
+        self._on_container_rotate = callback
 
     def start(self) -> bool:
         """启动流写入器"""
@@ -531,6 +536,8 @@ class StreamWriter:
                 LOGGER.info(f"已关闭写入器容器，摘要信息: {self._container.summary}")
             self._container = self._create_container()
             LOGGER.info(f"已创建写入器容器: {self._container.filepath}")
+            if self._on_container_rotate:
+                self._on_container_rotate(self._container.filepath)
 
         except Exception as e:
             LOGGER.error(f"轮换写入器容器失败: {e}")

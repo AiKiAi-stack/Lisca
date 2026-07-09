@@ -446,6 +446,9 @@ class StreamSettings:
     max_retry_count: int = DEFAULT_MAX_RETRY_COUNT
     max_retry_wait_time: float = DEFAULT_MAX_RETRY_WAIT_TIME
 
+    # ASR设置
+    asr_settings: Optional[Any] = None
+
     def __post_init__(self) -> None:
         """初始化后处理"""
         self.protocol = StreamProtocol.from_url(self.url)

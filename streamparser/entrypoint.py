@@ -9,7 +9,10 @@ from typing import Optional
 
 import yaml
 
+from .asr_config import ASRSettings
+from .asr_pipeline import ASRSubtitlePipeline
 from .config import StreamSettings
+from .frame import FrameType
 from .logger import Loggers
 from .reader import StreamReader
 from .utils import FileUtils, FormatterUtils, StreamAnalyzer
@@ -25,6 +28,7 @@ class StreamProcessor:
         self.settings = settings
         self.reader = StreamReader(settings)
         self.writer = StreamWriter(settings)
+        self.pipeline: Optional[ASRSubtitlePipeline] = None
         self._process_thread: Optional[Thread] = None
         self._clean_thread: Optional[Thread] = None
         self._running = Event()
@@ -45,6 +49,15 @@ class StreamProcessor:
 
             if not self.reader.start() or not self.writer.start():
                 return False
+
+            if self.settings.asr_settings:
+                pipeline = ASRSubtitlePipeline(self.settings.asr_settings)
+                self.pipeline = pipeline
+                pipeline.start()
+                self.reader.register_frame_filter(
+                    "subtitle", pipeline.subtitle_overlay
+                )
+                self.writer.set_on_container_rotate(pipeline.rotate)
 
             self._running.set()
             self._waiting.clear()
@@ -69,6 +82,11 @@ class StreamProcessor:
             if thread and thread.is_alive():
                 thread.join(timeout=5.0)
         try:
+            if self.pipeline:
+                self.pipeline.stop()
+        except Exception as e:
+            LOGGER.error(f"ASR 管道停止失败: {e}")
+        try:
             self.reader.stop()
         except Exception as e:
             LOGGER.error(f"流读取停止失败: {e}")
@@ -84,6 +102,9 @@ class StreamProcessor:
                 try:
                     frame = self.reader.get_frame()
                     if frame:
+                        if frame.type == FrameType.AUDIO and self.pipeline:
+                            self.pipeline.feed_audio_frame(frame)
+                            self.pipeline.poll_subtitles()
                         self.writer.put_frame(frame)
                 except Exception as e:
                     LOGGER.error(f"处理错误: {e}")
@@ -122,6 +143,7 @@ def main():
     parser = argparse.ArgumentParser(description="流媒体处理器")
     parser.add_argument("source", help="配置文件路径或流媒体URL")
     parser.add_argument("-d", "--debug", action="store_true", help="启用调试日志")
+    parser.add_argument("--asr", help="ASR配置文件路径(YAML)")
     args = parser.parse_args()
 
     if args.debug:
@@ -131,6 +153,15 @@ def main():
     settings = create_settings(args.source)
     if not settings:
         return 1
+
+    if args.asr:
+        try:
+            with open(args.asr, "r", encoding="utf-8") as f:
+                asr_config = yaml.safe_load(f)
+            settings.asr_settings = ASRSettings.from_dict(asr_config)
+        except Exception as e:
+            LOGGER.error(f"ASR配置加载失败: {e}")
+            return 1
 
     # 启动流处理器程序
     processor = StreamProcessor(settings)
