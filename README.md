@@ -1,3 +1,9 @@
+[English](./README.md) | [中文](./README_zh.md)
+
+<p align="center">
+  <img src="docs/streamparser.svg" alt="streamparser" width="800"/>
+</p>
+
 # streamparser
 
 A high-performance stream media processing and parsing toolkit with real-time ASR subtitle support.
