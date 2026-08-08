@@ -221,5 +221,6 @@ __marimo__/
 models/
 test_audio/
 logs/
+results/
 .scratch/
 .qwen/
