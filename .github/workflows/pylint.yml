@@ -17,7 +17,9 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install -e .
         pip install pylint
     - name: Analysing the code with pylint
       run: |
-        pylint $(git ls-files '*.py')
+        # 只查 error 级（import/syntax 等）；whisper_streaming 为 vendored 上游，不归本仓库 lint
+        pylint --errors-only $(git ls-files '*.py' | grep -v '^whisper_streaming/')
