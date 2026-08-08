@@ -1,9 +1,8 @@
 """AliyunFunASREngine：阿里云百炼 FunASR 实时识别（dashscope SDK）
 
 复用 streamparser 的 ASRClient（DashScope WebSocket 封装）。
-需要环境变量 DASHSCOPE_API_KEY + workspace_id/region 配置。
-
-⚠️ 未实测：需有效 API key（ticket-05 待用户提供 key 后验证）。
+API key 从参数或环境变量 DASHSCOPE_API_KEY 读取（建议经 .env / 环境注入，勿硬编码）。
+workspace_id 可选：新版 dashscope SDK（>=1.20）支持默认业务空间。
 """
 import os
 import sys
@@ -19,21 +18,23 @@ DEFAULT_MODEL = "fun-asr-realtime"
 class AliyunFunASREngine(Engine):
     def __init__(self, language: str = "zh", model: str = DEFAULT_MODEL,
                  workspace_id: str = "", region: str = DEFAULT_REGION,
-                 api_key: str = "", chunk_size: int = 3200):
+                 api_key: str = "", chunk_size: int = 3200, model_dir: str = ""):
+        # model_dir 仅为兼容通用 CLI 传参（本地引擎使用），API 引擎忽略
+        del model_dir
         self._api_key = api_key or os.environ.get("DASHSCOPE_API_KEY", "")
         if not self._api_key:
             raise RuntimeError(
-                "未配置 DASHSCOPE_API_KEY（阿里云百炼）。开通后 export DASHSCOPE_API_KEY=sk-xxx "
-                "并配置 workspace_id/region（ticket-05）"
+                "未配置 DASHSCOPE_API_KEY（阿里云百炼）。"
+                "export DASHSCOPE_API_KEY=sk-xxx 后重试（ticket-05）"
             )
-        if not workspace_id:
-            raise RuntimeError("需要配置阿里云百炼 workspace_id（业务空间ID）")
 
         import dashscope
         dashscope.api_key = self._api_key
-        dashscope.base_websocket_api_url = (
-            f"wss://{workspace_id}.{region}.maas.aliyuncs.com/api-ws/v1/inference"
-        )
+        if workspace_id:
+            # 显式指定业务空间（多空间账号）
+            dashscope.base_websocket_api_url = (
+                f"wss://{workspace_id}.{region}.maas.aliyuncs.com/api-ws/v1/inference"
+            )
 
         from streamparser.asr_client import ASRClient
         from streamparser.asr_config import ASRSettings
@@ -46,13 +47,14 @@ class AliyunFunASREngine(Engine):
         self.client.start()
 
     def _drain(self) -> Subtitle:
-        """取出缓冲中最新一条已确认字幕"""
-        latest: Subtitle = (None, None, "")
+        """FIFO 取出下一条**已确认(final)**句子（跳过 partial 增量），每句只消费一次"""
         while self.client.subtitle_buffer:
             entry = self.client.subtitle_buffer.popleft()
-            if entry.text:
-                latest = (entry.start_time, entry.end_time, entry.text)
-        return latest
+            if entry.is_final and entry.text:
+                beg = entry.start_time
+                end = entry.end_time if (entry.end_time and entry.end_time > beg) else beg + 1.0
+                return (beg, end, entry.text)
+        return (None, None, "")
 
     def transcribe_chunk(self, audio) -> Subtitle:
         import numpy as np
@@ -60,8 +62,19 @@ class AliyunFunASREngine(Engine):
         self.client.feed_audio(data)
         return self._drain()
 
+    def poll(self) -> Subtitle:
+        """只取积压句子（不推音频）：快推场景下把所有已确认句子逐条取出"""
+        return self._drain()
+
     def finish(self) -> Subtitle:
+        """流结束：停止 WS 等服务端处理完所有已推音频（句子进 buffer），
+        返回第一条；剩余句子由调用方 finish 后循环 poll() 取尽。"""
+        if not getattr(self, "_stopped", False):
+            self.client.stop()
+            self._stopped = True
         return self._drain()
 
     def close(self) -> None:
-        self.client.stop()
+        if not getattr(self, "_stopped", False):
+            self.client.stop()
+            self._stopped = True

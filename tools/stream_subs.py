@@ -60,7 +60,19 @@ def main():
         try:
             for chunk in src.iter_chunks():
                 emit(engine.transcribe_chunk(s16_to_f32(chunk)))
+                # 异步引擎（API）可能积压多条已确认句子，逐条取出
+                while True:
+                    o = engine.poll()
+                    if o[0] is None:
+                        break
+                    emit(o)
             emit(engine.finish())
+            # finish 后仍可能有剩余句子（异步引擎），poll 取尽
+            while True:
+                o = engine.poll()
+                if o[0] is None:
+                    break
+                emit(o)
         finally:
             src.close()
     finally:

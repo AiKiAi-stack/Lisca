@@ -42,8 +42,9 @@ class _Callback(RecognitionCallback):
         entry = SubtitleEntry(
             index=self._sentence_count[0],
             text=sentence.get("text", ""),
-            start_time=sentence.get("begin_time", 0) / 1000.0,
-            end_time=sentence.get("end_time", 0) / 1000.0,
+            # 新版 dashscope 部分事件时间戳可能为 None，容错为 0
+            start_time=(sentence.get("begin_time") or 0) / 1000.0,
+            end_time=(sentence.get("end_time") or 0) / 1000.0,
             is_final=RecognitionResult.is_sentence_end(sentence),
         )
         self._subtitle_buffer.append(entry)

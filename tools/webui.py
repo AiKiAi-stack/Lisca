@@ -135,9 +135,21 @@ async def ws_endpoint(ws: WebSocket):
                     o = engine.transcribe_chunk(s16_to_f32(chunk))
                     if o[0] is not None:
                         put({"type": "subtitle", "beg": o[0], "end": o[1], "text": o[2]})
+                    # 异步引擎（API）积压的已确认句子逐条取出
+                    while True:
+                        o2 = engine.poll()
+                        if o2[0] is None:
+                            break
+                        put({"type": "subtitle", "beg": o2[0], "end": o2[1], "text": o2[2]})
                 o = engine.finish()
                 if o[0] is not None:
                     put({"type": "subtitle", "beg": o[0], "end": o[1], "text": o[2]})
+                # finish 后仍可能有剩余句子（异步引擎），poll 取尽
+                while True:
+                    o2 = engine.poll()
+                    if o2[0] is None:
+                        break
+                    put({"type": "subtitle", "beg": o2[0], "end": o2[1], "text": o2[2]})
             finally:
                 src.close()
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
@@ -160,6 +172,16 @@ async def ws_endpoint(ws: WebSocket):
 
 
 def main():
+    # 从用户 ~/Projects/.env 读取 DashScope key（如存在且未设置），不硬编码
+    if not os.environ.get("DASHSCOPE_API_KEY"):
+        env_path = os.path.expanduser("~/Projects/.env")
+        if os.path.exists(env_path):
+            with open(env_path, encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("dashscopetoken="):
+                        os.environ["DASHSCOPE_API_KEY"] = line.strip().split("=", 1)[1].strip()
+                        break
+
     ap = argparse.ArgumentParser(description="实时字幕 webUI")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)

@@ -17,6 +17,11 @@ class Engine(ABC):
         """处理一个音频块（np.float32, 16kHz）。
         返回已确认的句子 (beg, end, text)；无确认内容时返回 (None, None, "")。"""
 
+    def poll(self) -> Subtitle:
+        """只取缓冲中已就绪的句子（不推入音频），无则返回 (None, None, "")。
+        异步引擎（API 回调）用；同步引擎默认无积压。"""
+        return (None, None, "")
+
     @abstractmethod
     def finish(self) -> Subtitle:
         """流结束时刷新剩余内容（最后一句）。"""
