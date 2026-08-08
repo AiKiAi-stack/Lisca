@@ -19,8 +19,9 @@ import threading
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whisper_streaming"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect  # noqa: E402
-from fastapi.responses import HTMLResponse  # noqa: E402
+from fastapi import FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse  # noqa: E402
+from starlette.background import BackgroundTask  # noqa: E402
 import uvicorn  # noqa: E402
 
 from engines import create_engine  # noqa: E402
@@ -32,6 +33,60 @@ app = FastAPI(title="实时字幕")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+
+# yt-dlp 解析缓存（5 分钟）：播放器会发多个 range 请求，避免每次重复解析
+_VIDEO_CACHE: dict = {"ts": 0.0, "url": "", "video": ""}
+
+
+def _resolve_video_url(user_input: str) -> str:
+    """解析视频流 URL（带防盗链 Referer 的平台，供 /video 代理使用）"""
+    import subprocess
+    import time
+
+    now = time.time()
+    if _VIDEO_CACHE["url"] == user_input and now - _VIDEO_CACHE["ts"] < 300:
+        return _VIDEO_CACHE["video"]
+    # bv* = 纯视频流（B站音视频分离，无合并 mp4；m4s 前端可播）
+    for attempt in range(2):
+        proc = subprocess.run(
+            ["yt-dlp", "-g", "--no-warnings", "-f", "bv*", user_input],
+            capture_output=True, text=True, timeout=120,
+        )
+        lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
+        if proc.returncode == 0 and lines:
+            video = lines[0]
+            _VIDEO_CACHE.update(ts=now, url=user_input, video=video)
+            return video
+    raise ValueError(f"视频流解析失败: {proc.stderr.strip()[:300]}")
+
+
+@app.get("/video")
+async def video_proxy(url: str, request: Request):
+    """代理视频流（补防盗链头），供前端 <video> 播放；本地文件直接返回"""
+    if os.path.exists(url):
+        return FileResponse(url)
+    import httpx
+
+    video_url = _resolve_video_url(url)
+    headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
+    if "range" in request.headers:
+        headers["Range"] = request.headers["range"]
+    client = httpx.AsyncClient(timeout=None, follow_redirects=True)
+    req = client.build_request("GET", video_url, headers=headers)
+    upstream = await client.send(req, stream=True)
+    pass_headers = {k: v for k, v in upstream.headers.items()
+                    if k.lower() in ("content-type", "content-length", "accept-ranges", "content-range")}
+
+    async def _cleanup():
+        await upstream.aclose()
+        await client.aclose()
+
+    return StreamingResponse(
+        upstream.aiter_raw(), status_code=upstream.status_code,
+        headers=pass_headers, background=BackgroundTask(_cleanup),
+    )
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from engines import create_engine  # noqa: E402
+from input_resolver import resolve_stream_url  # noqa: E402
 from stream_source import StreamSource, s16_to_f32  # noqa: E402
 
 
@@ -53,7 +54,9 @@ def main():
 
     engine = create_engine(args.engine, language=args.language, model_dir=args.model_dir)
     try:
-        src = StreamSource(args.input, chunk_sec=args.chunk_sec)
+        # 输入统一走 input_resolver（本地文件 / 流地址 / 平台页面 yt-dlp 解析）
+        real_url = resolve_stream_url(args.input)
+        src = StreamSource(real_url, chunk_sec=args.chunk_sec)
         try:
             for chunk in src.iter_chunks():
                 emit(engine.transcribe_chunk(s16_to_f32(chunk)))
