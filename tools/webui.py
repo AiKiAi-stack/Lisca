@@ -12,13 +12,14 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import sys
 import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whisper_streaming"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import HTMLResponse  # noqa: E402
 import uvicorn  # noqa: E402
 
@@ -29,12 +30,24 @@ from stream_source import StreamSource, s16_to_f32  # noqa: E402
 app = FastAPI(title="实时字幕")
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 @app.get("/", response_class=HTMLResponse)
 def index():
     with open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8") as f:
         return f.read()
+
+
+@app.post("/upload")
+async def upload(file: UploadFile = File(...)):
+    """保存上传的音频/视频文件，返回可被 StreamSource 读取的绝对路径"""
+    safe_name = os.path.basename(file.filename or "upload.bin")
+    dst = os.path.join(UPLOAD_DIR, safe_name)
+    with open(dst, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return {"path": os.path.abspath(dst), "name": safe_name}
 
 
 @app.websocket("/ws")

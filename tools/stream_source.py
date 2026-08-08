@@ -49,12 +49,12 @@ class StreamSource:
                         self._buf = self._buf[self.chunk_samples * 2:]
                         yield chunk
         finally:
-            # 剩余不足一块的尾部数据也吐出（保证不丢尾部语音）
-            if self._buf:
-                yield self._buf
-                self._buf = b""
-            self._exhausted = True
             self.container.close()
+            self._exhausted = True
+        # 正常耗尽：吐出不足一块的尾部数据（调用方提前 break 时不会走到这里）
+        if self._buf:
+            yield self._buf
+            self._buf = b""
 
     def close(self):
         self.container.close()

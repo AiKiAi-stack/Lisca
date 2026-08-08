@@ -222,5 +222,6 @@ models/
 test_audio/
 logs/
 results/
+uploads/
 .scratch/
 .qwen/
