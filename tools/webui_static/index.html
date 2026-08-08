@@ -157,6 +157,11 @@
     setStatus('连接中…');
     // 画面走 video（静音），声音走隐藏 audio（B站音视频分离）；本地文件 audio 也能播。
     // 不立即播放：等首条字幕到达后再播（源延迟 1.5s 补偿，字幕从一开始就同步）
+    // 切换前必须清理旧 audioEl：若旧 src 加载失败（B站防盗链），浏览器会锁定 error 状态，
+    // 仅赋新 src 不会触发重新加载 → 音频残留或无声。pause→清空→load→赋新 src 强制重置。
+    audioEl.pause();
+    audioEl.removeAttribute('src');
+    audioEl.load();
     player.src = `/video?url=${encodeURIComponent(url)}`;
     audioEl.src = `/audio?url=${encodeURIComponent(url)}`;
 

@@ -50,6 +50,9 @@ def _resolve_stream_url(user_input: str, fmt: str, key: str) -> str:
     if _CACHE["url"] == user_input and now - _CACHE["ts"] < 300:
         if _CACHE.get(key):
             return _CACHE[key]
+    # URL 变更时清空旧解析结果，防止切换链接后残留上一视频的 video/audio URL
+    if _CACHE["url"] != user_input:
+        _CACHE.update(video="", audio="")
     for attempt in range(2):
         proc = subprocess.run(
             ["yt-dlp", "-g", "--no-warnings", "-f", fmt, user_input],
