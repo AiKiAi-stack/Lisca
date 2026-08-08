@@ -15,7 +15,6 @@ def create_engine(name: str = "faster-whisper", **kwargs) -> Engine:
         from .faster_whisper import FasterWhisperEngine
         return FasterWhisperEngine(**kwargs)
     if name in ("aliyun-funasr", "aliyun", "api"):
-        raise NotImplementedError(
-            "阿里云 FunASR API 引擎尚未接入（ticket-05），需要 DASHSCOPE_API_KEY + WorkspaceId"
-        )
+        from .aliyun_funasr import AliyunFunASREngine
+        return AliyunFunASREngine(**kwargs)
     raise ValueError(f"未知引擎: {name}（可用: faster-whisper / aliyun-funasr）")

@@ -32,8 +32,12 @@ def test_create_engine_unknown_raises():
         create_engine("nonexistent")
 
 
-def test_create_engine_aliyun_not_implemented():
-    with pytest.raises(NotImplementedError, match="ticket-05"):
+def test_create_engine_aliyun_requires_key(monkeypatch):
+    import engines.aliyun_funasr as af
+
+    # 屏蔽真实 dashscope/streamparser import（无 key 路径不会触达）
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="DASHSCOPE_API_KEY"):
         create_engine("aliyun-funasr")
 
 
