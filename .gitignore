@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 本项目
+models/
+test_audio/
+logs/
+.scratch/
+.qwen/
