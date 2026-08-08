@@ -137,11 +137,17 @@
   function connect() {
     const url = urlEl.value.trim();
     if (!url) { setStatus('请输入流地址', true); return; }
+    // 旧会话清理：不关旧 WS 则旧 worker 继续推流串字幕；
+    // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
+    if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); }
     subs = [];
     historyItems = [];
     historyEl.innerHTML = '';
     playStarted = false;
     holdingForSync = false;
+    uiPaused = false;
+    currentEl.classList.remove('err');
+    currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
     lastBlockEnd = -1;
     const params = new URLSearchParams({ url, engine: engineEl.value });
     ws = new WebSocket(`ws://${location.host}/ws?${params}`);
