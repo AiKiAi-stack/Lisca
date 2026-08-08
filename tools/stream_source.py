@@ -14,6 +14,10 @@ import numpy as np
 
 SAMPLING_RATE = 16000
 
+# 平台 CDN 防盗链：裸 Lavf UA 会被部分节点 403，统一带浏览器 UA
+DEFAULT_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+
 
 def s16_to_f32(raw: bytes) -> np.ndarray:
     """int16 little-endian PCM bytes -> float32 array ([-1, 1])"""
@@ -24,9 +28,16 @@ def s16_to_f32(raw: bytes) -> np.ndarray:
 class StreamSource:
     """从文件或网络流解码音频，逐块产出 16kHz mono s16le PCM。"""
 
-    def __init__(self, url_or_path: str, chunk_sec: float = 0.1):
+    def __init__(self, url_or_path: str, chunk_sec: float = 0.1,
+                 http_headers: dict = None):
         self.url_or_path = url_or_path
-        self.container = av.open(url_or_path)
+        options = {}
+        if url_or_path.startswith(("http://", "https://")):
+            hdrs = {"User-Agent": DEFAULT_UA}
+            hdrs.update(http_headers or {})
+            # libavformat http 协议要求 headers 以 CRLF 结尾
+            options["headers"] = "".join(f"{k}: {v}\r\n" for k, v in hdrs.items())
+        self.container = av.open(url_or_path, options=options)
         if not self.container.streams.audio:
             self.container.close()
             raise ValueError(f"输入中没有音频流: {url_or_path}")

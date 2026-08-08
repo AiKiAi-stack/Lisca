@@ -54,13 +54,15 @@ def test_aliyun_without_key_raises(monkeypatch):
         create_engine("aliyun-funasr", workspace_id="ws-1")
 
 
-def test_aliyun_without_workspace_raises(monkeypatch):
+def test_aliyun_without_workspace_ok(monkeypatch):
+    """新版 SDK 支持默认业务空间，workspace_id 可选"""
     from engines import create_engine
 
-    _patch_deps(monkeypatch)
+    FakeClient = _patch_deps(monkeypatch)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
-    with pytest.raises(RuntimeError, match="workspace_id"):
-        create_engine("aliyun-funasr")
+    eng = create_engine("aliyun-funasr")
+    assert FakeClient.instances and FakeClient.instances[-1].started
+    eng.close()
 
 
 def test_aliyun_success_constructs_client(monkeypatch):

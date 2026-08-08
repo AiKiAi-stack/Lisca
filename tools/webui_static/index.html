@@ -19,7 +19,10 @@
   main { flex: 1; display: flex; flex-direction: column; padding: 16px 24px; gap: 12px; min-height: 0; }
   #playerWrap { position: relative; flex: 1; min-height: 0; background: #000; border-radius: 12px; overflow: hidden; }
   video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
-  #current { position: absolute; left: 0; right: 0; bottom: 12%; padding: 10px 32px; text-align: center; font-size: clamp(26px, 3.4vw, 38px); line-height: 1.5; font-weight: 600; letter-spacing: 1px; color: #fff; text-shadow: 2px 2px 4px #000, 0 0 12px #000; pointer-events: none; }
+  #current { position: absolute; left: 0; right: 0; bottom: 12%; padding: 10px 32px; text-align: center;
+    font-size: clamp(26px, 3.4vw, 38px); line-height: 1.4; font-weight: 600; letter-spacing: 1px;
+    color: #fff; text-shadow: 2px 2px 4px #000, 0 0 12px #000; pointer-events: none;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   #history { height: 18%; background: var(--panel); border-radius: 10px; padding: 10px 14px; overflow-y: auto; font-size: 14px; color: #9da7b3; }
   #history div { padding: 2px 0; }
   #history div span { color: #6e7681; margin-right: 8px; font-size: 12px; }
@@ -43,7 +46,8 @@
 </header>
 <main>
   <div id="playerWrap">
-    <video id="player" controls></video>
+    <video id="player" controls muted></video>
+    <audio id="audioEl" preload="auto"></audio>
     <div id="current">输入地址后点「开始」，边看视频边出字幕</div>
   </div>
   <div id="history"></div>
@@ -59,8 +63,12 @@
   const fileEl = document.getElementById('file');
   const uploadBtn = document.getElementById('uploadBtn');
   const player = document.getElementById('player');
+  const audioEl = document.getElementById('audioEl');
   let ws = null;
-  let subs = [];   // [{beg, end, text}] 按时间排序的已确认字幕
+  let subs = [];        // [{beg, end, text}] 句子列表（partial 累计，同句原地更新）
+  let historyItems = []; // 与 subs 对应的 history DOM 元素
+  let playStarted = false; // 是否已触发视频播放（等字幕就绪）
+  let holdingForSync = false; // 字幕未就绪时拦截手动播放产生的 pause，不冻结后端
 
   function setStatus(msg, isErr) {
     statusEl.textContent = msg;
@@ -74,49 +82,93 @@
     div.appendChild(time);
     div.appendChild(document.createTextNode(text));
     historyEl.appendChild(div);
-    while (historyEl.children.length > 200) historyEl.removeChild(historyEl.firstChild);
+    historyItems.push(div);
+    while (historyItems.length > 200) historyEl.removeChild(historyItems.shift());
     historyEl.scrollTop = historyEl.scrollHeight;
   }
 
+  function updateHistory(idx, msg) {
+    const div = historyItems[idx];
+    if (!div) return;
+    div.childNodes[0].textContent = `${msg.beg.toFixed(1)}s-${msg.end.toFixed(1)}s`;
+    div.childNodes[1].textContent = msg.text;
+  }
+
   function syncSubtitle() {
-    // 显示 currentTime 落在 [beg,end] 的最新一句
     const t = player.currentTime;
+    // 视频未开始播放时不显示字幕（避免"字幕提前"的错觉）
+    if (player.paused && t < 0.5) {
+      currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
+      return;
+    }
+    // 完整句显示：当前时刻落在句子 [beg, end+0.2s 容差] 内才显示；句结束消失，下一句出现。
+    // 暂停时后端停止解析（t 不变 + 无新数据）→ 字幕冻结
     let show = '';
     for (const s of subs) {
-      if (t >= s.beg - 0.15 && t < s.end) show = s.text;
+      if (t >= s.beg - 0.15 && t < s.end + 0.2) show = s.text;
     }
     currentEl.textContent = show;
+  }
+
+  // 字幕处理：partial 实时数据（同句原地更新），显示由 2s 定时器快照（整块替换）
+  let uiPaused = false;  // 前端暂停标志：暂停期间忽略新数据（后端同时停止解析）
+  function onSubtitle(msg) {
+    if (uiPaused) return;  // 暂停：丢弃在途 partial，恢复后重新同步
+    if (!playStarted) {
+      // 字幕就绪后再播放视频，延迟 1.5s 让字幕先跟上（源延迟补偿）
+      playStarted = true;
+      holdingForSync = false;
+      setTimeout(() => { player.play().catch(() => {}); }, 1500);
+    }
+    if (!msg.text) return;
+    const idx = subs.findIndex(s => Math.abs(s.beg - msg.beg) < 0.05);
+    if (idx >= 0) {
+      // 同一句的 partial 更新：原地替换文本
+      subs[idx].text = msg.text;
+      subs[idx].end = msg.end;
+      updateHistory(idx, msg);
+    } else {
+      // 新句：加入列表与历史
+      subs.push({ beg: msg.beg, end: msg.end, text: msg.text });
+      appendHistory(msg.beg, msg.end, msg.text);
+    }
   }
 
   function connect() {
     const url = urlEl.value.trim();
     if (!url) { setStatus('请输入流地址', true); return; }
     subs = [];
+    historyItems = [];
     historyEl.innerHTML = '';
+    playStarted = false;
+    holdingForSync = false;
+    lastBlockEnd = -1;
     const params = new URLSearchParams({ url, engine: engineEl.value });
     ws = new WebSocket(`ws://${location.host}/ws?${params}`);
     startBtn.style.display = 'none';
     stopBtn.style.display = 'inline-block';
     currentEl.classList.remove('err');
     setStatus('连接中…');
+    // 画面走 video（静音），声音走隐藏 audio（B站音视频分离）；本地文件 audio 也能播。
+    // 不立即播放：等首条字幕到达后再播（源延迟 1.5s 补偿，字幕从一开始就同步）
     player.src = `/video?url=${encodeURIComponent(url)}`;
-    player.play().catch(() => {});
+    audioEl.src = `/audio?url=${encodeURIComponent(url)}`;
 
     ws.onopen = () => setStatus('已连接，引擎加载中…');
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if (msg.type === 'subtitle') {
-        subs.push({ beg: msg.beg, end: msg.end, text: msg.text });
-        appendHistory(msg.beg, msg.end, msg.text);
-        syncSubtitle();
+        onSubtitle(msg);
       } else if (msg.type === 'status') {
         setStatus(msg.message);
       } else if (msg.type === 'error') {
         currentEl.textContent = '⚠ ' + msg.message;
         currentEl.classList.add('err');
         setStatus('出错', true);
+        playStarted = true;  // 解除播放拦截，允许手动看片（无字幕）
       } else if (msg.type === 'end') {
         setStatus('音频处理结束');
+        playStarted = true;  // 同上（静默视频等零字幕场景）
         ws.close();
       }
     };
@@ -127,10 +179,34 @@
     };
   }
 
-  player.addEventListener('timeupdate', syncSubtitle);
+  // 字幕显示节奏：定时快照（每 2s 整块替换，不逐字、不逐帧跳动）
+  setInterval(syncSubtitle, 2000);
+  player.addEventListener('seeked', syncSubtitle);
+  // 播放联动：video 控制画面与进度，audio 跟随出声；暂停时前后端都冻结（真正停止解析）
+  player.addEventListener('play', () => {
+    if (!playStarted) {
+      // 字幕未就绪时手动播放会让视频领先 ASR 一段固定偏移，时间窗永远不匹配
+      // → 叠加字幕全程空白（用户 bug）。拦截：暂停，等首条字幕后统一自动播放。
+      holdingForSync = true;
+      player.pause();
+      setStatus('字幕准备中，就绪后自动播放…');
+      return;
+    }
+    holdingForSync = false;
+    uiPaused = false;
+    audioEl.play().catch(() => {});
+    if (ws && ws.readyState === 1) ws.send('resume');
+  });
+  player.addEventListener('pause', () => {
+    if (holdingForSync) return;  // 拦截产生的 pause，不冻结后端
+    uiPaused = true;  // 立即冻结前端显示（丢弃在途 partial）
+    audioEl.pause();
+    if (ws && ws.readyState === 1) ws.send('pause');
+  });
+  player.addEventListener('seeked', () => { audioEl.currentTime = player.currentTime; });
 
   startBtn.onclick = connect;
-  stopBtn.onclick = () => { if (ws) ws.close(); player.pause(); setStatus('已停止'); };
+  stopBtn.onclick = () => { if (ws) ws.close(); player.pause(); audioEl.pause(); setStatus('已停止'); };
   uploadBtn.onclick = () => fileEl.click();
   fileEl.addEventListener('change', async () => {
     const f = fileEl.files[0];

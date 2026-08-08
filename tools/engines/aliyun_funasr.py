@@ -47,10 +47,10 @@ class AliyunFunASREngine(Engine):
         self.client.start()
 
     def _drain(self) -> Subtitle:
-        """FIFO 取出下一条**已确认(final)**句子（跳过 partial 增量），每句只消费一次"""
+        """FIFO 取出一条待显示句子（partial 实时文本，前端定时快照成块显示）"""
         while self.client.subtitle_buffer:
             entry = self.client.subtitle_buffer.popleft()
-            if entry.is_final and entry.text:
+            if entry.text:
                 beg = entry.start_time
                 end = entry.end_time if (entry.end_time and entry.end_time > beg) else beg + 1.0
                 return (beg, end, entry.text)

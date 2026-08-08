@@ -15,6 +15,7 @@ import os
 import shutil
 import sys
 import threading
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whisper_streaming"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -25,8 +26,8 @@ from starlette.background import BackgroundTask  # noqa: E402
 import uvicorn  # noqa: E402
 
 from engines import create_engine  # noqa: E402
-from input_resolver import resolve_stream_url  # noqa: E402
-from stream_source import StreamSource, s16_to_f32  # noqa: E402
+from input_resolver import classify, resolve_stream_url  # noqa: E402
+from stream_source import DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
 
 app = FastAPI(title="实时字幕")
 
@@ -34,47 +35,51 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_sta
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+UA = DEFAULT_UA
 
 # yt-dlp 解析缓存（5 分钟）：播放器会发多个 range 请求，避免每次重复解析
-_VIDEO_CACHE: dict = {"ts": 0.0, "url": "", "video": ""}
+_CACHE: dict = {"ts": 0.0, "url": "", "video": "", "audio": ""}
 
 
-def _resolve_video_url(user_input: str) -> str:
-    """解析视频流 URL（带防盗链 Referer 的平台，供 /video 代理使用）"""
+def _resolve_stream_url(user_input: str, fmt: str, key: str) -> str:
+    """解析流 URL（视频 bv* / 音频 ba），带 5 分钟缓存"""
     import subprocess
     import time
 
     now = time.time()
-    if _VIDEO_CACHE["url"] == user_input and now - _VIDEO_CACHE["ts"] < 300:
-        return _VIDEO_CACHE["video"]
-    # bv* = 纯视频流（B站音视频分离，无合并 mp4；m4s 前端可播）
+    if _CACHE["url"] == user_input and now - _CACHE["ts"] < 300:
+        if _CACHE.get(key):
+            return _CACHE[key]
     for attempt in range(2):
         proc = subprocess.run(
-            ["yt-dlp", "-g", "--no-warnings", "-f", "bv*", user_input],
+            ["yt-dlp", "-g", "--no-warnings", "-f", fmt, user_input],
             capture_output=True, text=True, timeout=120,
         )
         lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
         if proc.returncode == 0 and lines:
-            video = lines[0]
-            _VIDEO_CACHE.update(ts=now, url=user_input, video=video)
-            return video
-    raise ValueError(f"视频流解析失败: {proc.stderr.strip()[:300]}")
+            _CACHE.update(ts=now, url=user_input)
+            _CACHE[key] = lines[0]
+            return lines[0]
+    raise ValueError(f"流解析失败({fmt}): {proc.stderr.strip()[:200]}")
 
 
-@app.get("/video")
-async def video_proxy(url: str, request: Request):
-    """代理视频流（补防盗链头），供前端 <video> 播放；本地文件直接返回"""
-    if os.path.exists(url):
-        return FileResponse(url)
+def _resolve_video_url(user_input: str) -> str:
+    return _resolve_stream_url(user_input, "bv*", "video")
+
+
+def _resolve_audio_url(user_input: str) -> str:
+    return _resolve_stream_url(user_input, "ba", "audio")
+
+
+async def _proxy_stream(request: Request, stream_url: str):
+    """转发流（补防盗链头），供前端 <video>/<audio> 播放"""
     import httpx
 
-    video_url = _resolve_video_url(url)
     headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
     client = httpx.AsyncClient(timeout=None, follow_redirects=True)
-    req = client.build_request("GET", video_url, headers=headers)
+    req = client.build_request("GET", stream_url, headers=headers)
     upstream = await client.send(req, stream=True)
     pass_headers = {k: v for k, v in upstream.headers.items()
                     if k.lower() in ("content-type", "content-length", "accept-ranges", "content-range")}
@@ -89,10 +94,27 @@ async def video_proxy(url: str, request: Request):
     )
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/video")
+async def video_proxy(url: str, request: Request):
+    """代理视频流（纯画面）；本地文件直接返回"""
+    if os.path.exists(url):
+        return FileResponse(url)
+    return await _proxy_stream(request, _resolve_video_url(url))
+
+
+@app.get("/audio")
+async def audio_proxy(url: str, request: Request):
+    """代理音频流（声音）；本地文件直接返回（文件含音轨）"""
+    if os.path.exists(url):
+        return FileResponse(url)
+    return await _proxy_stream(request, _resolve_audio_url(url))
+
+
+@app.get("/")
 def index():
+    """返回单页（no-store 防浏览器缓存旧版 JS）"""
     with open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8") as f:
-        return f.read()
+        return HTMLResponse(f.read(), headers={"Cache-Control": "no-store"})
 
 
 @app.post("/upload")
@@ -118,38 +140,80 @@ async def ws_endpoint(ws: WebSocket):
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     stop = threading.Event()
+    paused = threading.Event()  # 客户端暂停 → 后端停止推流解析，字幕冻结
 
     def put(item: dict) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, item)
 
+    async def receive_loop() -> None:
+        """接收客户端控制消息（pause/resume）"""
+        try:
+            while True:
+                msg = await ws.receive_text()
+                if msg == "pause":
+                    paused.set()
+                elif msg == "resume":
+                    paused.clear()
+        except Exception:  # noqa: BLE001 - 连接关闭即结束
+            pass
+
+    asyncio.create_task(receive_loop())
+
     def worker() -> None:
+        import time
+
+        def emit(o) -> None:
+            """推送当前句 partial（整句累计文本，前端定时快照成块显示）"""
+            beg, end, text = o
+            if text:
+                put({"type": "subtitle", "beg": beg, "end": end, "text": text})
+
         try:
             real_url = resolve_stream_url(url)
+            kind, target = classify(url)
+            http_headers = None
+            if kind == "page":
+                p = urlparse(target)
+                http_headers = {"Referer": f"{p.scheme}://{p.netloc}"}
             engine = create_engine(engine_name)
             put({"type": "status", "message": f"引擎就绪，开始拉流: {real_url[:60]}"})
-            src = StreamSource(real_url)
+            src = StreamSource(real_url, http_headers=http_headers)
+            chunk_sec = 0.1  # 拉流分块（秒）：帧粒度基准（0.1s = 3 帧 @30fps）
             try:
+                last = time.monotonic()
                 for chunk in src.iter_chunks():
                     if stop.is_set():
                         break
+                    # 客户端暂停：停止推流解析（字幕冻结，省 API 调用）
+                    while paused.is_set():
+                        if stop.is_set():
+                            break
+                        time.sleep(0.2)
+                    if stop.is_set():
+                        break
+                    # 按实时速率推流：每 chunk 对应 chunk_sec 秒音频
+                    wait = chunk_sec - (time.monotonic() - last)
+                    if wait > 0:
+                        time.sleep(wait)
+                    last = time.monotonic()
                     o = engine.transcribe_chunk(s16_to_f32(chunk))
                     if o[0] is not None:
-                        put({"type": "subtitle", "beg": o[0], "end": o[1], "text": o[2]})
-                    # 异步引擎（API）积压的已确认句子逐条取出
+                        emit(o)
+                    # 异步引擎（API）积压的句子逐条取出（增量，含 partial）
                     while True:
                         o2 = engine.poll()
                         if o2[0] is None:
                             break
-                        put({"type": "subtitle", "beg": o2[0], "end": o2[1], "text": o2[2]})
+                        emit(o2)
                 o = engine.finish()
                 if o[0] is not None:
-                    put({"type": "subtitle", "beg": o[0], "end": o[1], "text": o[2]})
+                    emit(o)
                 # finish 后仍可能有剩余句子（异步引擎），poll 取尽
                 while True:
                     o2 = engine.poll()
                     if o2[0] is None:
                         break
-                    put({"type": "subtitle", "beg": o2[0], "end": o2[1], "text": o2[2]})
+                    emit(o2)
             finally:
                 src.close()
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
