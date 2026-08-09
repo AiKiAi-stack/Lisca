@@ -251,22 +251,23 @@ _PROBE_CACHE: dict = {}  # url -> (ts, {ok, latency_ms})，缓存 5 分钟
 
 @app.get("/probe")
 async def probe_stream(url: str):
-    """频道连通性检测：拉播放列表（TTFB 计延迟）→ 首分片前 16KB 验证出流。
+    """频道连通性检测：拉播放列表（TTFB 计延迟）→ 分片前 1MB 测带宽。
 
-    只测列表会有"列表能拉、分片 404"误报（ticket-19 实测）；结果内存缓存
-    5 分钟，批量检测并发调用时命中秒回。"""
+    只测列表/首字节会误导（实测 TTFB 65ms 的源带宽仅 1MB/s 播放卡死）；
+    分片下载速率才是"能不能流畅播"的关键（1080p IPTV 码率 ~1.1MB/s）。
+    结果内存缓存 5 分钟，批量检测并发调用时命中秒回。"""
     import time
 
     now = time.time()
     hit = _PROBE_CACHE.get(url)
     if hit and now - hit[0] < 300:
         return hit[1]
-    result = {"ok": False, "latency_ms": 0}
+    result = {"ok": False, "latency_ms": 0, "mbps": 0}
     headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
     import httpx
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(4.0, connect=3.0),
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=3.0),
                                      follow_redirects=True, verify=False) as client:
             t0 = time.time()
             async with client.stream("GET", url, headers=headers) as resp:
@@ -284,12 +285,15 @@ async def probe_stream(url: str):
             if not seg:
                 return result  # 无分片条目（变体列表等）→ 不可播
             seg_url = urljoin(url, seg)
+            t1 = time.time()
             async with client.stream("GET", seg_url, headers=headers) as sresp:
                 n = 0
                 async for chunk in sresp.aiter_bytes():
                     n += len(chunk)
-                    if n >= 16384:
+                    if n >= 1048576:  # 下 1MB 估算带宽
                         break
+            dt = time.time() - t1
+            result["mbps"] = round(n / dt / 1024 / 1024, 1) if dt > 0 else 0
             result["ok"] = sresp.status_code < 400 and n > 0
     except Exception as exc:  # noqa: BLE001 - 检测失败即频道失效
         logger.warning("probe 失败 %s: %s", url[:60], exc)

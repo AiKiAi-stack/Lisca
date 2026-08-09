@@ -323,7 +323,10 @@
       if (cell) {
         cell.row.classList.toggle('ok', !!data.ok);
         cell.row.classList.toggle('fail', !data.ok);
-        cell.status.textContent = data.ok ? `✅ ${data.latency_ms}ms` : '❌ 失效';
+        // 带宽是能否流畅播的关键（1080p IPTV 码率 ~1.1MB/s），与延迟并列展示
+        cell.status.textContent = data.ok
+          ? `✅ ${data.latency_ms}ms·${data.mbps}MB/s`
+          : '❌ 失效';
       }
       return data;
     } catch (e) {
@@ -357,6 +360,28 @@
     if (!/\.m3u($|\?)/i.test(u)) { setStatus('请先在输入框粘贴 .m3u 频道列表地址', true); return; }
     loadChannels(u);
   };
+
+  // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 损坏时视频无声卡死
+  // （无 error 事件，t 冻结不动）——t 停止前进 20s 即判定源不可播并提示换源。
+  // 注意不能用 t>0 判"在播"：hls.js 会把位置 seek 到直播边缘（t 可能直接是 39）。
+  let stallTimer = null;
+  function stallWatchdog() {
+    if (stallTimer) clearInterval(stallTimer);
+    let lastT = player.currentTime;
+    let lastChange = Date.now();
+    stallTimer = setInterval(() => {
+      if (player.paused) { lastT = player.currentTime; return; }  // 用户暂停不算卡
+      const t = player.currentTime;
+      if (Math.abs(t - lastT) > 0.1) { lastT = t; lastChange = Date.now(); return; }
+      if (Date.now() - lastChange > 20000) {
+        clearInterval(stallTimer);
+        logEvent('video_stall', `播放卡顿：${lastT.toFixed(1)}s 处冻结 20s`);
+        currentEl.textContent = '⚠ 该源播放卡顿（带宽不足或源损坏），请点 🔍 检测换一个快源';
+        currentEl.classList.add('err');
+        setStatus('播放卡顿：请换源', true);
+      }
+    }, 2000);
+  }
 
   function setStatus(msg, isErr) {
     statusEl.textContent = msg;
@@ -449,6 +474,7 @@
     // forceUrl 可能是 onclick 传入的 Event 对象（startBtn.onclick = connect），只认字符串
     const url = ((typeof forceUrl === 'string' && forceUrl) || urlEl.value).trim();
     if (!url) { setStatus('请输入流地址', true); return; }
+    if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
     // m3u 频道列表（ticket-19）：识别为列表则加载频道面板，不直接拉流
     if (/\.m3u($|\?)/i.test(url)) { loadChannels(url); return; }
     logEvent('connect', url.slice(0, 120));
@@ -538,6 +564,10 @@
         holdingForSync = false;
         logEvent('ready', `win=${msg.win}s，开始播放`);
         setTimeout(() => { player.play().catch(() => {}); }, 1500);
+        // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 时间轴损坏时，
+        // 视频可能长时间 waiting/不前进却无 error 事件（无声卡死）——2s 轮询，
+        // 就绪后 15s 内 t 从未前进（>0.5s）则判定源不可播，明确提示换源
+        stallWatchdog();
       } else if (msg.type === 'status') {
         setStatus(msg.message);
       } else if (msg.type === 'log') {
@@ -626,6 +656,7 @@
 
   startBtn.onclick = connect;
   stopBtn.onclick = () => {
+    if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
     if (ws) ws.close();
     if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
     player.pause();
