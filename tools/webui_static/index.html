@@ -99,6 +99,7 @@
   let holdingForSync = false; // 字幕未就绪时拦截手动播放产生的 pause，不冻结后端
   let seekPending = false; // seek 后清空当前句显示，等新数据（ADR-0001）
   let subEnabled = true; // 中间字幕显示开关（ticket-13）
+  let displayedBlock = null; // 当前显示块 {w0, text}——窗口起点快照冻结，块内零变化
 
   // 会话日志：环形缓冲（200 条），供用户一键复制反馈问题
   const logBtn = document.getElementById('logBtn');
@@ -179,19 +180,25 @@
       currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
       return;
     }
-    // 固定窗口分块（ADR-0002）：窗口 [kD,(k+1)D) 内音频内容完整显示，
-    // 窗口到点整体切换；窗口内无字 → 空白（无人说话）。
-    // 转写时间轴领先播放 → 当前窗口的字必已转写，窗口内容总是完整可用。
+    // 固定窗口分块（ADR-0002 + ticket-15）：显示「刚结束的窗口」
+    // [⌊(t-guard)/D⌋·D, ⌊(t-guard)/D⌋·D+D)。窗口起点对 subs 字级数据做一次
+    // 快照并冻结到窗口结束——API partial 字级时间戳会随修正漂移，实时聚合会闪变，
+    // 快照冻结从构造上保证「块内零变化、不流式」。guard=2s 覆盖句终发射延迟，
+    // 快照时窗口字已基本齐。
     const D = parseFloat(winLenEl.value) || 4;
-    const w0 = Math.floor(t / D) * D;
-    let text = '';
-    for (const s of subs) {
-      if (!s.words || !s.words.length) continue;
-      for (const w of s.words) {
-        if (w[0] >= w0 && w[0] < w0 + D) text += w[2];
+    const guard = 2.0;
+    const w0 = Math.floor((t - guard) / D) * D;
+    if (!displayedBlock || displayedBlock.w0 !== w0) {
+      let text = '';
+      for (const s of subs) {
+        if (!s.words || !s.words.length) continue;
+        for (const w of s.words) {
+          if (w[0] >= w0 && w[0] < w0 + D) text += w[2];
+        }
       }
+      displayedBlock = { w0, text };
     }
-    currentEl.textContent = text;
+    currentEl.textContent = displayedBlock.text;
     return;
   }
 
@@ -200,16 +207,11 @@
   function onSubtitle(msg) {
     if (uiPaused) return;  // 暂停：丢弃在途 partial，恢复后重新同步
     seekPending = false;  // 新数据到达，解除 seek 等待
-    if (!playStarted) {
-      // 字幕就绪后再播放视频，延迟 1.5s 让字幕先跟上（源延迟补偿）
-      playStarted = true;
-      holdingForSync = false;
-      setTimeout(() => { player.play().catch(() => {}); }, 1500);
-    }
     if (!msg.text) return;
     const idx = subs.findIndex(s => Math.abs(s.beg - msg.beg) < 0.05);
     if (idx >= 0) {
-      // 同一句的 partial 更新：原地替换文本与字级（含修正）
+      // 同一句的 partial 更新：文本原地替换（含修正）；words 同理整体替换——
+      // partial 携带累计 words（诊断确认），替换不含旧修订残留（ticket-15）
       subs[idx].text = msg.text;
       subs[idx].end = msg.end;
       if (msg.words) subs[idx].words = msg.words;
@@ -236,10 +238,11 @@
     holdingForSync = false;
     uiPaused = false;
     seekPending = false;
+    displayedBlock = null;
     currentEl.classList.remove('err');
     currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
     lastBlockEnd = -1;
-    const params = new URLSearchParams({ url, engine: engineEl.value, silence: silenceEl.value });
+    const params = new URLSearchParams({ url, engine: engineEl.value, silence: silenceEl.value, win: winLenEl.value });
     ws = new WebSocket(`ws://${location.host}/ws?${params}`);
     startBtn.style.display = 'none';
     stopBtn.style.display = 'inline-block';
@@ -261,6 +264,13 @@
       const msg = JSON.parse(e.data);
       if (msg.type === 'subtitle') {
         onSubtitle(msg);
+      } else if (msg.type === 'ready') {
+        // 播放就绪（ticket-15）：后端已处理满一个窗口的音频，字幕第一块将完整——
+        // 此时才开播（+1.5s 让转写先跟上），不再由首条字幕触发
+        playStarted = true;
+        holdingForSync = false;
+        logEvent('ready', `win=${msg.win}s，开始播放`);
+        setTimeout(() => { player.play().catch(() => {}); }, 1500);
       } else if (msg.type === 'status') {
         setStatus(msg.message);
       } else if (msg.type === 'log') {
@@ -332,6 +342,7 @@
   player.addEventListener('seeked', () => {
     audioEl.currentTime = player.currentTime;
     seekPending = true;  // 跳转后清空当前句显示，等新数据（ADR-0001）
+    displayedBlock = null;  // 跳转后重新快照（ticket-15）
     currentEl.textContent = '⏳ 跳转中，字幕将随转写跟进…';
     logEvent('seek', `t=${player.currentTime.toFixed(1)}`);
   });
