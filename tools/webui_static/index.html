@@ -37,6 +37,21 @@
   #stylePanel input[type="range"] { width: 150px; accent-color: var(--accent); }
   #stylePanel .val { min-width: 46px; color: var(--fg); font-variant-numeric: tabular-nums; }
   #styleReset { padding: 5px 12px; font-size: 13px; }
+  /* 直播频道面板（ticket-19）：m3u 频道列表 + 连通性检测标注 */
+  #chPanel { width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 4px 0 2px; }
+  #chPanel[hidden] { display: none; }
+  .ch-head { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #9da7b3; }
+  #chProbeBtn { padding: 5px 12px; font-size: 13px; }
+  #chList { max-height: 300px; overflow-y: auto; border: 1px solid #30363d; border-radius: 8px; background: #0d1117; }
+  .ch-group { padding: 6px 10px 2px; font-size: 12px; color: #6e7681; font-weight: 600; }
+  .ch-row { display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer; font-size: 13px; }
+  .ch-row:hover { background: #21262d; }
+  .ch-row .ch-status { min-width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
+  .ch-row.ok .ch-status { color: #3fb950; }
+  .ch-row.fail .ch-status { color: var(--err); }
+  .ch-row .ch-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch-row button { padding: 2px 8px; font-size: 12px; }
+  .ch-row.active { background: #1f3d5f; }
   #logText { width: 100%; height: 140px; background: #0d1117; color: #9da7b3; border: 1px solid #30363d;
     border-radius: 8px; padding: 10px 12px; font-family: monospace; font-size: 12px; resize: vertical; }
   .err { color: var(--err) !important; }
@@ -70,6 +85,7 @@
   <button id="subToggle" title="开关中间字幕显示">🎬 字幕：开</button>
   <button id="logBtn" title="查看/复制会话日志，便于反馈问题">📋 日志</button>
   <button id="styleBtn" title="实时调整叠加字幕的字体、大小、位置（自动记住）">🎨 字幕样式</button>
+  <button id="chBtn" title="加载 m3u 频道列表并选台播放（先在输入框粘贴 .m3u 地址）">📺 频道</button>
   <div id="stylePanel" hidden>
     <label>字号 <input type="range" id="sizeRange" min="16" max="64" step="1" value="30"><span class="val" id="sizeVal">30px</span></label>
     <label>位置 <input type="range" id="posRange" min="0" max="30" step="1" value="12"><span class="val" id="posVal">12%</span></label>
@@ -83,6 +99,13 @@
       </select>
     </label>
     <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 字体系统默认">重置默认</button>
+  </div>
+  <div id="chPanel" hidden>
+    <div class="ch-head">
+      <span id="chInfo">未加载频道列表</span>
+      <button id="chProbeBtn" title="批量检测所有频道的连通性与延迟（手动触发，并发 20，逐条显示）">🔍 批量检测</button>
+    </div>
+    <div id="chList"></div>
   </div>
   <div id="status">就绪</div>
 </header>
@@ -99,6 +122,7 @@
     <button id="copyLogBtn" style="align-self: flex-end;">📋 复制日志</button>
   </div>
 </main>
+<script src="hls.min.js"></script>
 <script>
   const urlEl = document.getElementById('url');
   const engineEl = document.getElementById('engine');
@@ -115,6 +139,7 @@
   const player = document.getElementById('player');
   const audioEl = document.getElementById('audioEl');
   let ws = null;
+  let hlsPlayer = null;  // hls.js 实例（HLS 直播，ticket-19）
   let subs = [];        // [{beg, end, text, words}] 句子列表（partial 累计，同句原地更新）
   let historyItems = []; // 与 subs 对应的 history DOM 元素
   let playStarted = false; // 是否已触发视频播放（等字幕就绪）
@@ -220,6 +245,119 @@
   };
   applyStyle();  // 页面加载即固定应用（覆盖 clamp 响应式），含 localStorage 恢复
 
+  // 直播频道（ticket-19）：m3u 列表解析 + 连通性检测 + 选台播放
+  const chBtn = document.getElementById('chBtn');
+  const chPanel = document.getElementById('chPanel');
+  const chInfo = document.getElementById('chInfo');
+  const chProbeBtn = document.getElementById('chProbeBtn');
+  const chList = document.getElementById('chList');
+  let channels = [];       // [{group, name, url}]
+  let chRows = new Map();  // url -> {row, status}
+
+  async function loadChannels(m3uUrl) {
+    setStatus('加载频道列表…');
+    logEvent('channels_load', m3uUrl.slice(0, 100));
+    try {
+      const resp = await fetch('/channels?url=' + encodeURIComponent(m3uUrl));
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      channels = await resp.json();
+    } catch (e) {
+      setStatus('频道列表加载失败: ' + e, true);
+      return;
+    }
+    if (!channels.length) { setStatus('频道列表为空（源可能失效）', true); return; }
+    renderChannels();
+    chPanel.hidden = false;
+    setStatus(`频道列表 ${channels.length} 个，点击频道开始观看`);
+  }
+
+  function renderChannels() {
+    chList.innerHTML = '';
+    chRows = new Map();
+    const groups = new Map();
+    for (const ch of channels) {
+      const g = ch.group || '未分组';
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(ch);
+    }
+    for (const [g, list] of groups) {
+      const gh = document.createElement('div');
+      gh.className = 'ch-group';
+      gh.textContent = `${g}（${list.length}）`;
+      chList.appendChild(gh);
+      for (const ch of list) {
+        const row = document.createElement('div');
+        row.className = 'ch-row';
+        const status = document.createElement('span');
+        status.className = 'ch-status';
+        const name = document.createElement('span');
+        name.className = 'ch-name';
+        name.textContent = ch.name;
+        name.title = ch.url;
+        const btn = document.createElement('button');
+        btn.textContent = '🔍';
+        btn.title = '检测该频道连通性与延迟';
+        btn.onclick = (ev) => { ev.stopPropagation(); probeChannel(ch.url); };
+        row.appendChild(status);
+        row.appendChild(name);
+        row.appendChild(btn);
+        row.onclick = () => {
+          urlEl.value = ch.url;
+          for (const [, r] of chRows) r.row.classList.remove('active');
+          row.classList.add('active');
+          connect(ch.url);
+          logEvent('channel_pick', ch.name);
+        };
+        chList.appendChild(row);
+        chRows.set(ch.url, { row, status });
+      }
+    }
+  }
+
+  async function probeChannel(url) {
+    const cell = chRows.get(url);
+    if (cell) { cell.row.classList.remove('ok', 'fail'); cell.status.textContent = '检测中…'; }
+    try {
+      const resp = await fetch('/probe?url=' + encodeURIComponent(url));
+      const data = await resp.json();
+      if (cell) {
+        cell.row.classList.toggle('ok', !!data.ok);
+        cell.row.classList.toggle('fail', !data.ok);
+        cell.status.textContent = data.ok ? `✅ ${data.latency_ms}ms` : '❌ 失效';
+      }
+      return data;
+    } catch (e) {
+      if (cell) { cell.row.classList.add('fail'); cell.status.textContent = '❌ 检测失败'; }
+      return { ok: false };
+    }
+  }
+
+  // 批量检测（ticket-19）：手动触发，并发 20，逐条异步更新（测完一个立即显示）
+  chProbeBtn.onclick = () => {
+    if (!channels.length) return;
+    chProbeBtn.disabled = true;
+    const total = channels.length;
+    let i = 0, done = 0;
+    chInfo.textContent = `批量检测 0/${total}`;
+    async function run() {
+      while (true) {
+        const idx = i++;
+        if (idx >= total) break;
+        await probeChannel(channels[idx].url);
+        done++;
+        chInfo.textContent = `批量检测 ${done}/${total}`;
+      }
+      if (done >= total) { chInfo.textContent = `批量检测完成 ${total}/${total}`; chProbeBtn.disabled = false; }
+    }
+    for (let k = 0; k < Math.min(20, total); k++) run();
+  };
+  chBtn.onclick = () => {
+    if (!chPanel.hidden) { chPanel.hidden = true; return; }
+    const u = urlEl.value.trim();
+    if (!/\.m3u($|\?)/i.test(u)) { setStatus('请先在输入框粘贴 .m3u 频道列表地址', true); return; }
+    loadChannels(u);
+  };
+
   function setStatus(msg, isErr) {
     statusEl.textContent = msg;
     statusEl.classList.toggle('err', !!isErr);
@@ -307,9 +445,12 @@
     }
   }
 
-  function connect() {
-    const url = urlEl.value.trim();
+  function connect(forceUrl) {
+    // forceUrl 可能是 onclick 传入的 Event 对象（startBtn.onclick = connect），只认字符串
+    const url = ((typeof forceUrl === 'string' && forceUrl) || urlEl.value).trim();
     if (!url) { setStatus('请输入流地址', true); return; }
+    // m3u 频道列表（ticket-19）：识别为列表则加载频道面板，不直接拉流
+    if (/\.m3u($|\?)/i.test(url)) { loadChannels(url); return; }
     logEvent('connect', url.slice(0, 120));
     // 旧会话清理：不关旧 WS 则旧 worker 继续推流串字幕；
     // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
@@ -331,16 +472,48 @@
     stopBtn.style.display = 'inline-block';
     currentEl.classList.remove('err');
     setStatus('连接中…');
-    // 画面走 video（静音），声音走隐藏 audio（B站音视频分离）；本地文件 audio 也能播。
+    // 画面走 video，声音按源类型分流（ticket-19）：HLS 音视频混在 TS 流里，
+    // 视频元素直接出声；B站 DASH / 本地文件走隐藏 audio（音视频分离）。
     // 不立即播放：等首条字幕到达后再播（源延迟 1.5s 补偿，字幕从一开始就同步）
     // 切换前必须清理旧 audioEl：若旧 src 加载失败（B站防盗链），浏览器会锁定 error 状态，
     // 仅赋新 src 不会触发重新加载 → 音频残留或无声。pause→清空→load→赋新 src 强制重置。
+    const isHls = /\.m3u8/i.test(url);
     audioEl.pause();
     audioEl.removeAttribute('src');
     audioEl.load();
-    player.src = `/video?url=${encodeURIComponent(url)}`;
-    player.load();  // 换源显式 load，避免旧源失败状态残留导致黑屏（ticket-11）
-    audioEl.src = `/audio?url=${encodeURIComponent(url)}`;
+    if (isHls && typeof Hls !== 'undefined' && Hls.isSupported()) {
+      // HLS（ticket-19）：hls.js 播放——Chrome 原生 HLS 只支持 fMP4 分片，
+      // IPTV 直播源几乎全是 MPEG-TS，需 hls.js 转封装成 fMP4 供 MSE 播放；
+      // 播放列表/分片均走本地代理（同源，无 CORS/防盗链问题）。
+      if (hlsPlayer) hlsPlayer.destroy();
+      player.removeAttribute('src');
+      player.load();
+      hlsPlayer = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 15 });
+      hlsPlayer.loadSource(`/video?url=${encodeURIComponent(url)}`);
+      hlsPlayer.attachMedia(player);
+      hlsPlayer.on(Hls.Events.ERROR, (_evt, data) => {
+        if (!data.fatal) return;
+        logEvent('hls_error', `${data.type}/${data.details}`);
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && hlsPlayer) {
+          hlsPlayer.startLoad();  // 网络抖动自动重连
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hlsPlayer) {
+          hlsPlayer.recoverMediaError();
+        } else {
+          currentEl.textContent = '⚠ 直播流播放失败（源可能失效，换个频道）';
+          currentEl.classList.add('err');
+        }
+      });
+      player.muted = false;  // HLS 直播：视频元素自带音轨
+    } else {
+      player.src = `/video?url=${encodeURIComponent(url)}`;
+      player.load();  // 换源显式 load，避免旧源失败状态残留导致黑屏（ticket-11）
+      if (isHls) {
+        player.muted = false;  // 原生 HLS（fMP4 等）：视频元素自带音轨
+      } else {
+        player.muted = true;
+        audioEl.src = `/audio?url=${encodeURIComponent(url)}`;
+      }
+    }
 
     ws.onopen = () => { logEvent('ws_open', ''); setStatus('已连接，引擎加载中…'); };
     ws.onmessage = (e) => {
@@ -441,7 +614,13 @@
   });
 
   startBtn.onclick = connect;
-  stopBtn.onclick = () => { if (ws) ws.close(); player.pause(); audioEl.pause(); setStatus('已停止'); };
+  stopBtn.onclick = () => {
+    if (ws) ws.close();
+    if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+    player.pause();
+    audioEl.pause();
+    setStatus('已停止');
+  };
   uploadBtn.onclick = () => fileEl.click();
   fileEl.addEventListener('change', async () => {
     const f = fileEl.files[0];

@@ -96,32 +96,62 @@ def _resolve_audio_url(user_input: str) -> str:
     return _resolve_stream_url(user_input, "ba", "audio")
 
 
-def _rewrite_hls_playlist(text: str, stream_url: str) -> str:
-    """HLS playlist 相对引用改写为绝对 CDN URL。
+def _proxy_media_url(target: str) -> str:
+    """媒体 URL → 本地代理 URL（浏览器只与本地通信，代理统一补 UA/Referer）。
 
-    普通行（ts 分片）直接 urljoin；# 行里的 URI 属性（EXT-X-KEY 密钥 /
-    EXT-X-MEDIA / EXT-X-STREAM-INF 变体）也要改写，否则浏览器按代理路径
-    解析 → 密钥/变体请求 404 → 视频黑屏（ticket-11）。"""
+    分片/密钥/变体直连上游会被 UA/防盗链检查挡（ticket-19 实测 err=4），
+    全部改走 /video?url= 代理；data: 等不可代理的保留原样。"""
+    from urllib.parse import quote
+
+    return "/video?url=" + quote(target, safe="")
+
+
+def _rewrite_hls_playlist(text: str, stream_url: str) -> str:
+    """HLS playlist 改写为本地代理 URL。
+
+    普通行（ts 分片 / 变体子列表）与 # 行 URI 属性（EXT-X-KEY 密钥 /
+    EXT-X-MEDIA / EXT-X-STREAM-INF 变体）统一 urljoin 后改写为 /video?url=，
+    浏览器全部媒体流量走本地代理（ticket-19）；另清洗 ##EXT 双井号瑕疵行。"""
     import re
 
     URI_ATTR = re.compile(r'(URI=")([^"]*)(")')
 
     def _rewrite_attr(m):
         uri = m.group(2)
-        if uri and not uri.startswith(("http://", "https://", "data:")):
-            return m.group(1) + urljoin(stream_url, uri) + m.group(3)
+        if uri and not uri.startswith("data:"):
+            return m.group(1) + _proxy_media_url(urljoin(stream_url, uri)) + m.group(3)
         return m.group(0)
 
     rewritten = []
     for line in text.splitlines():
         s = line.strip()
-        if s.startswith("#"):
+        if s.startswith("##"):
+            line = s[1:]  # 清洗双井号（实测源有 ##EXT-X-VERSION:3）
+        elif s.startswith("#"):
             if "URI=" in s:
                 line = URI_ATTR.sub(_rewrite_attr, s)
-        elif s and not s.startswith(("http://", "https://")):
-            line = urljoin(stream_url, s)
+        elif s and not s.startswith("/video?url="):
+            line = _proxy_media_url(urljoin(stream_url, s))
         rewritten.append(line)
     return "\n".join(rewritten)
+
+
+def parse_m3u(text: str) -> list:
+    """解析 m3u 频道列表：#EXTINF（频道名/group-title）→ 下一行 URL。
+
+    返回 [{group, name, url}]，跳过无 URL 的条目（含 header 行）。"""
+    import re
+
+    channels = []
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("#EXTINF"):
+            name = s.split(",", 1)[1].strip() if "," in s else ""
+            m = re.search(r'group-title="([^"]*)"', s)
+            channels.append({"group": m.group(1) if m else "", "name": name, "url": ""})
+        elif channels and s and not s.startswith("#") and not channels[-1]["url"]:
+            channels[-1]["url"] = s
+    return [c for c in channels if c["url"]]
 
 
 async def _proxy_stream(request: Request, stream_url: str):
@@ -197,11 +227,89 @@ async def audio_proxy(url: str, request: Request):
     return await _proxy_stream(request, url)
 
 
+@app.get("/channels")
+async def channels_proxy(url: str):
+    """解析 m3u 频道列表（URL 或本地路径）→ [{group, name, url}]（ticket-19）。
+
+    浏览器跨域不能直接读 m3u，统一走本地代理（补 UA/Referer）。"""
+    import httpx
+
+    if os.path.exists(url):
+        with open(url, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    else:
+        headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True, verify=False) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            text = resp.content.decode("utf-8", "replace")
+    return parse_m3u(text)
+
+
+_PROBE_CACHE: dict = {}  # url -> (ts, {ok, latency_ms})，缓存 5 分钟
+
+
+@app.get("/probe")
+async def probe_stream(url: str):
+    """频道连通性检测：拉播放列表（TTFB 计延迟）→ 首分片前 16KB 验证出流。
+
+    只测列表会有"列表能拉、分片 404"误报（ticket-19 实测）；结果内存缓存
+    5 分钟，批量检测并发调用时命中秒回。"""
+    import time
+
+    now = time.time()
+    hit = _PROBE_CACHE.get(url)
+    if hit and now - hit[0] < 300:
+        return hit[1]
+    result = {"ok": False, "latency_ms": 0}
+    headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(4.0, connect=3.0),
+                                     follow_redirects=True, verify=False) as client:
+            t0 = time.time()
+            async with client.stream("GET", url, headers=headers) as resp:
+                head = b""
+                async for chunk in resp.aiter_bytes():
+                    head += chunk
+                    if len(head) >= 8192:
+                        break
+                result["latency_ms"] = int((time.time() - t0) * 1000)
+                text = head.decode("utf-8", "replace")
+            if resp.status_code >= 400 or "#EXTM3U" not in text:
+                return result  # 列表都拉不到 → 失效
+            seg = next((ln.strip() for ln in text.splitlines()
+                        if ln.strip() and not ln.strip().startswith("#")), None)
+            if not seg:
+                return result  # 无分片条目（变体列表等）→ 不可播
+            seg_url = urljoin(url, seg)
+            async with client.stream("GET", seg_url, headers=headers) as sresp:
+                n = 0
+                async for chunk in sresp.aiter_bytes():
+                    n += len(chunk)
+                    if n >= 16384:
+                        break
+            result["ok"] = sresp.status_code < 400 and n > 0
+    except Exception as exc:  # noqa: BLE001 - 检测失败即频道失效
+        logger.warning("probe 失败 %s: %s", url[:60], exc)
+        result["ok"] = False
+    _PROBE_CACHE[url] = (time.time(), dict(result))
+    return result
+
+
 @app.get("/")
 def index():
     """返回单页（no-store 防浏览器缓存旧版 JS）"""
     with open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8") as f:
         return HTMLResponse(f.read(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/hls.min.js")
+def hls_js():
+    """hls.js（vendored 本地文件，ticket-19：Chrome 原生 HLS 不支持 TS 分片直播源）"""
+    return FileResponse(os.path.join(STATIC_DIR, "hls.min.js"),
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.post("/upload")
