@@ -206,6 +206,7 @@ async def ws_endpoint(ws: WebSocket):
     url = ws.query_params.get("url", "").strip()
     engine_name = ws.query_params.get("engine", "faster-whisper").strip()
     silence = ws.query_params.get("silence", "400").strip()
+    win_len = ws.query_params.get("win", "4").strip()
     if not url:
         await ws.send_json({"type": "error", "message": "缺少 url 参数"})
         await ws.close()
@@ -270,6 +271,14 @@ async def ws_endpoint(ws: WebSocket):
             src = StreamSource(real_url, http_headers=http_headers)
             chunk_sec = 0.1  # 拉流分块（秒）：帧粒度基准（0.1s = 3 帧 @30fps）
             try:
+                # 播放就绪信号（ticket-15）：处理满一个窗口（win_len 秒）的音频后
+                # 才让前端开播——一开播第一块字幕即完整
+                try:
+                    win_sec = float(win_len)
+                except ValueError:
+                    win_sec = 4.0
+                fed_sec = 0.0
+                ready_sent = False
                 last = time.monotonic()
                 for chunk in src.iter_chunks():
                     if stop.is_set():
@@ -287,6 +296,11 @@ async def ws_endpoint(ws: WebSocket):
                         time.sleep(wait)
                     last = time.monotonic()
                     o = engine.transcribe_chunk(s16_to_f32(chunk))
+                    if not ready_sent:
+                        fed_sec += chunk_sec
+                        if fed_sec >= win_sec:
+                            put({"type": "ready", "win": win_sec})
+                            ready_sent = True
                     if o[0] is not None:
                         emit(o)
                     # 异步引擎（API）积压的句子逐条取出（增量，含 partial）
