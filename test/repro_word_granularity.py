@@ -74,10 +74,9 @@ def main():
             while time.time() < deadline:
                 samples.append(page.evaluate("""() => {
                     const D = parseFloat(winLenEl.value) || 2;
-                    const guard = 1.0;  // 与显示端窗口公式一致（ticket-15）
                     return {
                         cur: currentEl.textContent.trim(),
-                        w0: Math.floor((player.currentTime - guard) / D) * D,
+                        w0: Math.floor(player.currentTime / D) * D,
                         dw0: displayedBlock ? displayedBlock.w0 : null,
                         nw: subs.length && subs[subs.length - 1].words
                             ? subs[subs.length - 1].words.length : 0,

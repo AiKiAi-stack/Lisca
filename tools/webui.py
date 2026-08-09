@@ -237,10 +237,19 @@ async def ws_endpoint(ws: WebSocket):
     def worker() -> None:
         import time
 
+        coverage = 0.0  # 转写覆盖度：已转写到的音频位置（秒）
+
         def emit(o) -> None:
             """推送当前句 partial（整句累计文本 + 可选字级 words，前端字级快照显示）"""
+            nonlocal coverage
             beg, end, text, words = o
             if text:
+                if words:
+                    cov = max((w[1] if w[1] is not None else w[0]) for w in words)
+                    if cov > coverage:
+                        coverage = cov
+                elif end and end > coverage:
+                    coverage = end
                 put({"type": "subtitle", "beg": beg, "end": end, "text": text,
                      "words": words})
 
@@ -271,12 +280,13 @@ async def ws_endpoint(ws: WebSocket):
             src = StreamSource(real_url, http_headers=http_headers)
             chunk_sec = 0.1  # 拉流分块（秒）：帧粒度基准（0.1s = 3 帧 @30fps）
             try:
-                # 播放就绪信号（ticket-15）：处理满一个窗口（win_len 秒）的音频后
-                # 才让前端开播——一开播第一块字幕即完整
+                # 播放就绪信号（直播延时技术，ticket-15 v4）：转写覆盖满第一个窗口
+                # （win_len+1s 保险）才让前端开播——开播时播放位置的字早已转写，
+                # 字幕直接显示当前窗口、完整且与画面同步。开场静音时按 fed 兜底。
                 try:
                     win_sec = float(win_len)
                 except ValueError:
-                    win_sec = 4.0
+                    win_sec = 2.0
                 fed_sec = 0.0
                 ready_sent = False
                 last = time.monotonic()
@@ -298,7 +308,7 @@ async def ws_endpoint(ws: WebSocket):
                     o = engine.transcribe_chunk(s16_to_f32(chunk))
                     if not ready_sent:
                         fed_sec += chunk_sec
-                        if fed_sec >= win_sec:
+                        if coverage >= win_sec + 1.0 or fed_sec >= win_sec + 4.0:
                             put({"type": "ready", "win": win_sec})
                             ready_sent = True
                     if o[0] is not None:
