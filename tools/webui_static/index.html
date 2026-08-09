@@ -167,6 +167,9 @@
       for (const w of target.words) {
         if (w[0] <= t + 0.2) text += w[2];
       }
+      // 快语速长句兜底（ticket-12）：VAD 无停顿则永不断句，显示改为滚动尾窗，
+      // 只显示最近 40 字——句子多长显示都有界（完整句仍在历史区）
+      if (text.length > 40) text = text.slice(-40);
       currentEl.textContent = text;
       return;
     }
@@ -175,6 +178,7 @@
     for (const s of subs) {
       if (t >= s.beg - 0.15 && t < s.end + 0.2) show = s.text;
     }
+    if (show.length > 40) show = show.slice(-40);
     currentEl.textContent = show;
   }
 
@@ -236,6 +240,7 @@
     audioEl.removeAttribute('src');
     audioEl.load();
     player.src = `/video?url=${encodeURIComponent(url)}`;
+    player.load();  // 换源显式 load，避免旧源失败状态残留导致黑屏（ticket-11）
     audioEl.src = `/audio?url=${encodeURIComponent(url)}`;
 
     ws.onopen = () => { logEvent('ws_open', ''); setStatus('已连接，引擎加载中…'); };
@@ -273,6 +278,17 @@
     currentEl.textContent = '⚠ 视频无法播放：容器/编码不受支持（建议 mp4/mp3/wav）或链接失效';
     currentEl.classList.add('err');
     setStatus('视频加载失败', true);
+  });
+  // 视频诊断（ticket-11）：stalled/waiting 等不触发 error 的状态也写入会话日志，
+  // 避免「黑屏但无任何错误日志」；error 附带 code 便于定位（4=不支持 3=解码失败）
+  ['error', 'stalled', 'waiting', 'suspend', 'emptied', 'abort'].forEach((evt) => {
+    player.addEventListener(evt, () => {
+      const err = player.error ? ` code=${player.error.code}` : '';
+      logEvent(`video_${evt}`, `ready=${player.readyState} net=${player.networkState}${err}`);
+    });
+  });
+  player.addEventListener('loadedmetadata', () => {
+    logEvent('video_ok', `dur=${(player.duration || 0).toFixed(1)}s`);
   });
   // 播放联动：video 控制画面与进度，audio 跟随出声；暂停时前后端都冻结（真正停止解析）
   player.addEventListener('play', () => {
