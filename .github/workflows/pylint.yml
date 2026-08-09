@@ -18,7 +18,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -e .
-        pip install pylint pytest
+        pip install pylint pytest playwright
     - name: Analysing the code with pylint
       run: |
         # 只查 error 级；E0611/E1101 为 av/cv2 等 C 扩展库的静态分析误报，
