@@ -131,8 +131,16 @@ async def _proxy_stream(request: Request, stream_url: str):
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
     client = httpx.AsyncClient(timeout=None, follow_redirects=True)
-    req = client.build_request("GET", stream_url, headers=headers)
-    upstream = await client.send(req, stream=True)
+    try:
+        req = client.build_request("GET", stream_url, headers=headers)
+        upstream = await client.send(req, stream=True)
+    except Exception as exc:  # noqa: BLE001 - 代理层失败要完整入日志（ticket-16）
+        logger.warning("代理请求失败 %s: %s", stream_url[:80], exc)
+        await client.aclose()
+        raise
+    if upstream.status_code >= 400:
+        logger.warning("代理上游非 2xx %s -> HTTP %s（%s）",
+                       stream_url[:80], upstream.status_code, request.url.path)
     pass_headers = {k: v for k, v in upstream.headers.items()
                     if k.lower() in ("content-type", "content-length", "accept-ranges", "content-range")}
     content_type = upstream.headers.get("content-type", "").lower()
