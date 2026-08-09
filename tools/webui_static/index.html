@@ -193,6 +193,13 @@
   // 字幕显示节奏：定时快照（250ms，整块替换，不逐字、不逐帧跳动）
   setInterval(syncSubtitle, 250);
   player.addEventListener('seeked', syncSubtitle);
+  // 本地文件容器/编码不受浏览器支持（如 .mkv）时 <video> 静默失败成黑屏
+  player.addEventListener('error', () => {
+    if (!player.error) return;
+    currentEl.textContent = '⚠ 视频无法播放：容器/编码不受支持（建议 mp4/mp3/wav）或链接失效';
+    currentEl.classList.add('err');
+    setStatus('视频加载失败', true);
+  });
   // 播放联动：video 控制画面与进度，audio 跟随出声；暂停时前后端都冻结（真正停止解析）
   player.addEventListener('play', () => {
     if (!playStarted) {
