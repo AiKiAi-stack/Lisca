@@ -32,6 +32,7 @@ def main():
     args = ap.parse_args()
 
     srt_writer = None
+    SubtitleEntry = None  # 延迟导入（仅 --srt 需要）；先声明避免 pylint E0606
     if args.srt:
         # streamparser 的 logger.py 在 import 时用 dictConfig 把 root 配成 INFO+stdout，
         # 会污染字幕输出流，这里压回 WARNING
