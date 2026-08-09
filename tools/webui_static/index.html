@@ -26,6 +26,9 @@
   #history { height: 18%; background: var(--panel); border-radius: 10px; padding: 10px 14px; overflow-y: auto; font-size: 14px; color: #9da7b3; }
   #history div { padding: 2px 0; }
   #history div span { color: #6e7681; margin-right: 8px; font-size: 12px; }
+  #logPanel { display: flex; flex-direction: column; gap: 8px; }
+  #logText { width: 100%; height: 140px; background: #0d1117; color: #9da7b3; border: 1px solid #30363d;
+    border-radius: 8px; padding: 10px 12px; font-family: monospace; font-size: 12px; resize: vertical; }
   .err { color: var(--err) !important; }
   video::-webkit-media-controls { opacity: 0.6; }
 </style>
@@ -42,6 +45,7 @@
   <button id="uploadBtn" title="上传本地音频/视频文件">📁 上传文件</button>
   <button id="start">开始</button>
   <button id="stop">停止</button>
+  <button id="logBtn" title="查看/复制会话日志，便于反馈问题">📋 日志</button>
   <div id="status">就绪</div>
 </header>
 <main>
@@ -51,6 +55,11 @@
     <div id="current">输入地址后点「开始」，边看视频边出字幕</div>
   </div>
   <div id="history"></div>
+  <div id="logPanel" hidden>
+    <textarea id="logText" readonly spellcheck="false"
+      placeholder="会话日志：connect/play/pause/seek/字幕/状态/错误…"></textarea>
+    <button id="copyLogBtn" style="align-self: flex-end;">📋 复制日志</button>
+  </div>
 </main>
 <script>
   const urlEl = document.getElementById('url');
@@ -70,9 +79,37 @@
   let playStarted = false; // 是否已触发视频播放（等字幕就绪）
   let holdingForSync = false; // 字幕未就绪时拦截手动播放产生的 pause，不冻结后端
 
+  // 会话日志：环形缓冲（200 条），供用户一键复制反馈问题
+  const logBtn = document.getElementById('logBtn');
+  const logPanel = document.getElementById('logPanel');
+  const logText = document.getElementById('logText');
+  const copyLogBtn = document.getElementById('copyLogBtn');
+  const logBuffer = [];
+  function logEvent(type, detail) {
+    const ts = new Date().toISOString().slice(11, 23);
+    logBuffer.push(`[${ts}] ${type}: ${detail}`);
+    if (logBuffer.length > 200) logBuffer.shift();
+    if (!logPanel.hidden) logText.value = logBuffer.join('\n');
+  }
+  logBtn.onclick = () => {
+    logPanel.hidden = !logPanel.hidden;
+    if (!logPanel.hidden) logText.value = logBuffer.join('\n');
+  };
+  copyLogBtn.onclick = () => {
+    const text = logText.value || logBuffer.join('\n');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    } else {
+      logText.select();
+      document.execCommand('copy');
+    }
+    setStatus('日志已复制');
+  };
+
   function setStatus(msg, isErr) {
     statusEl.textContent = msg;
     statusEl.classList.toggle('err', !!isErr);
+    logEvent(isErr ? 'error' : 'status', msg);
   }
 
   function appendHistory(beg, end, text) {
@@ -131,12 +168,14 @@
       // 新句：加入列表与历史
       subs.push({ beg: msg.beg, end: msg.end, text: msg.text });
       appendHistory(msg.beg, msg.end, msg.text);
+      logEvent('sub', `beg=${msg.beg.toFixed(1)} ${msg.text.slice(0, 24)}`);
     }
   }
 
   function connect() {
     const url = urlEl.value.trim();
     if (!url) { setStatus('请输入流地址', true); return; }
+    logEvent('connect', url.slice(0, 120));
     // 旧会话清理：不关旧 WS 则旧 worker 继续推流串字幕；
     // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
     if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); }
@@ -165,7 +204,7 @@
     player.src = `/video?url=${encodeURIComponent(url)}`;
     audioEl.src = `/audio?url=${encodeURIComponent(url)}`;
 
-    ws.onopen = () => setStatus('已连接，引擎加载中…');
+    ws.onopen = () => { logEvent('ws_open', ''); setStatus('已连接，引擎加载中…'); };
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if (msg.type === 'subtitle') {
@@ -183,8 +222,9 @@
         ws.close();
       }
     };
-    ws.onerror = () => setStatus('连接失败', true);
+    ws.onerror = () => logEvent('ws_error', '连接失败');
     ws.onclose = () => {
+      logEvent('ws_close', '');
       startBtn.style.display = 'inline-block';
       stopBtn.style.display = 'none';
     };
@@ -215,14 +255,19 @@
     audioEl.play().catch(() => {});
     if (ws && ws.readyState === 1) ws.send('resume');
     syncSubtitle();  // 播放起始立即同步（旧 2s 定时器会跳过首段短句）
+    logEvent('play', `t=${player.currentTime.toFixed(1)}`);
   });
   player.addEventListener('pause', () => {
     if (holdingForSync) return;  // 拦截产生的 pause，不冻结后端
     uiPaused = true;  // 立即冻结前端显示（丢弃在途 partial）
     audioEl.pause();
     if (ws && ws.readyState === 1) ws.send('pause');
+    logEvent('pause', `t=${player.currentTime.toFixed(1)}`);
   });
-  player.addEventListener('seeked', () => { audioEl.currentTime = player.currentTime; });
+  player.addEventListener('seeked', () => {
+    audioEl.currentTime = player.currentTime;
+    logEvent('seek', `t=${player.currentTime.toFixed(1)}`);
+  });
 
   startBtn.onclick = connect;
   stopBtn.onclick = () => { if (ws) ws.close(); player.pause(); audioEl.pause(); setStatus('已停止'); };
@@ -231,6 +276,7 @@
     const f = fileEl.files[0];
     if (!f) { setStatus('未选择文件', true); return; }
     setStatus(`上传 ${f.name}…`);
+    logEvent('upload', f.name);
     const fd = new FormData();
     fd.append('file', f);
     try {
