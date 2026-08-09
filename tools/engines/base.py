@@ -6,7 +6,9 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 
-Subtitle = Tuple[Optional[float], Optional[float], str]  # (beg_sec, end_sec, text)
+Subtitle = Tuple[Optional[float], Optional[float], str, Optional[list]]
+# (beg_sec, end_sec, text, words?)；words = [(begin_sec, end_sec_or_None, text)]
+# 字级时间戳，仅 API 引擎（aliyun fun-asr-realtime）提供，本地引擎为 None
 
 
 class Engine(ABC):
@@ -15,12 +17,13 @@ class Engine(ABC):
     @abstractmethod
     def transcribe_chunk(self, audio) -> Subtitle:
         """处理一个音频块（np.float32, 16kHz）。
-        返回已确认的句子 (beg, end, text)；无确认内容时返回 (None, None, "")。"""
+        返回已确认的句子 (beg, end, text, words?)；无确认内容时返回
+        (None, None, "", None)。"""
 
     def poll(self) -> Subtitle:
-        """只取缓冲中已就绪的句子（不推入音频），无则返回 (None, None, "")。
+        """只取缓冲中已就绪的句子（不推入音频），无则返回 (None, None, "", None)。
         异步引擎（API 回调）用；同步引擎默认无积压。"""
-        return (None, None, "")
+        return (None, None, "", None)
 
     @abstractmethod
     def finish(self) -> Subtitle:

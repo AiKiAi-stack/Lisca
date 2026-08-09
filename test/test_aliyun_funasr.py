@@ -20,8 +20,9 @@ def _patch_deps(monkeypatch, with_client=True):
     class FakeClient:
         instances = []
 
-        def __init__(self, settings, chunk_size=3200):
+        def __init__(self, settings, chunk_size=3200, **kwargs):
             self.settings = settings
+            self.kwargs = kwargs
             self.started = False
             FakeClient.instances.append(self)
 
@@ -77,4 +78,18 @@ def test_aliyun_success_constructs_client(monkeypatch):
     assert client.settings.api_key == "sk-test"
     assert client.settings.workspace_id == "ws-1"
     assert hasattr(eng, "transcribe_chunk") and hasattr(eng, "finish")
+    eng.close()
+
+
+def test_aliyun_passes_recognition_kwargs(monkeypatch):
+    """断句灵敏度/心跳/语种应透传 ASRClient → Recognition（ticket-10）"""
+    from engines import create_engine
+
+    FakeClient = _patch_deps(monkeypatch)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    eng = create_engine("aliyun-funasr", max_sentence_silence=800)
+    client = FakeClient.instances[-1]
+    assert client.kwargs["max_sentence_silence"] == 800
+    assert client.kwargs["heartbeat"] is True
+    assert client.kwargs["language_hints"] == ["zh"]
     eng.close()

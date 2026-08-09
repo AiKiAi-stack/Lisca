@@ -22,7 +22,9 @@ class FasterWhisperEngine(Engine):
 
     def transcribe_chunk(self, audio) -> Subtitle:
         self.online.insert_audio_chunk(audio)
-        return self.online.process_iter()
+        beg, end, text = self.online.process_iter()
+        return (beg, end, text, None)  # 本地引擎无字级时间戳
 
     def finish(self) -> Subtitle:
-        return self.online.finish()
+        beg, end, text = self.online.finish()
+        return (beg, end, text, None)

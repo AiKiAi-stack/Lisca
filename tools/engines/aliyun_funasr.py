@@ -18,7 +18,9 @@ DEFAULT_MODEL = "fun-asr-realtime"
 class AliyunFunASREngine(Engine):
     def __init__(self, language: str = "zh", model: str = DEFAULT_MODEL,
                  workspace_id: str = "", region: str = DEFAULT_REGION,
-                 api_key: str = "", chunk_size: int = 3200, model_dir: str = ""):
+                 api_key: str = "", chunk_size: int = 3200, model_dir: str = "",
+                 max_sentence_silence: int = 400, heartbeat: bool = True,
+                 language_hints=("zh",)):
         # model_dir 仅为兼容通用 CLI 传参（本地引擎使用），API 引擎忽略
         del model_dir
         self._api_key = api_key or os.environ.get("DASHSCOPE_API_KEY", "")
@@ -43,7 +45,17 @@ class AliyunFunASREngine(Engine):
             api_key=self._api_key, workspace_id=workspace_id,
             region=region, model=model,
         )
-        self.client = ASRClient(settings, chunk_size=chunk_size)
+        # 断句灵敏度（VAD 静音阈值 ms，官方 [200,6000]）+ 心跳防长静音断连
+        # + 固定中文语种（fun-asr-realtime 仅支持 1 个语种值）
+        recognition_kwargs = {}
+        if max_sentence_silence:
+            recognition_kwargs["max_sentence_silence"] = max_sentence_silence
+        if heartbeat:
+            recognition_kwargs["heartbeat"] = True
+        if language_hints:
+            recognition_kwargs["language_hints"] = list(language_hints)
+        self.client = ASRClient(settings, chunk_size=chunk_size,
+                                **recognition_kwargs)
         self.client.start()
 
     def _drain(self) -> Subtitle:
@@ -53,8 +65,8 @@ class AliyunFunASREngine(Engine):
             if entry.text:
                 beg = entry.start_time
                 end = entry.end_time if (entry.end_time and entry.end_time > beg) else beg + 1.0
-                return (beg, end, entry.text)
-        return (None, None, "")
+                return (beg, end, entry.text, entry.words)
+        return (None, None, "", None)
 
     def transcribe_chunk(self, audio) -> Subtitle:
         import numpy as np

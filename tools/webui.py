@@ -165,6 +165,7 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     url = ws.query_params.get("url", "").strip()
     engine_name = ws.query_params.get("engine", "faster-whisper").strip()
+    silence = ws.query_params.get("silence", "400").strip()
     if not url:
         await ws.send_json({"type": "error", "message": "缺少 url 参数"})
         await ws.close()
@@ -196,10 +197,11 @@ async def ws_endpoint(ws: WebSocket):
         import time
 
         def emit(o) -> None:
-            """推送当前句 partial（整句累计文本，前端定时快照成块显示）"""
-            beg, end, text = o
+            """推送当前句 partial（整句累计文本 + 可选字级 words，前端字级快照显示）"""
+            beg, end, text, words = o
             if text:
-                put({"type": "subtitle", "beg": beg, "end": end, "text": text})
+                put({"type": "subtitle", "beg": beg, "end": end, "text": text,
+                     "words": words})
 
         try:
             real_url = resolve_stream_url(url)
@@ -208,7 +210,14 @@ async def ws_endpoint(ws: WebSocket):
             if kind == "page":
                 p = urlparse(target)
                 http_headers = {"Referer": f"{p.scheme}://{p.netloc}"}
-            engine = create_engine(engine_name)
+            engine_kwargs = {}
+            if engine_name in ("aliyun-funasr", "aliyun", "api"):
+                # 断句灵敏度仅 API 引擎支持（本地引擎无该参数）
+                try:
+                    engine_kwargs["max_sentence_silence"] = int(silence)
+                except ValueError:
+                    engine_kwargs["max_sentence_silence"] = 400
+            engine = create_engine(engine_name, **engine_kwargs)
             put({"type": "status", "message": f"引擎就绪，开始拉流: {real_url[:60]}"})
             src = StreamSource(real_url, http_headers=http_headers)
             chunk_sec = 0.1  # 拉流分块（秒）：帧粒度基准（0.1s = 3 帧 @30fps）

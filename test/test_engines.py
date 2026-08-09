@@ -49,8 +49,8 @@ def test_faster_whisper_engine_delegates(monkeypatch):
     monkeypatch.setattr(fw, "OnlineASRProcessor", lambda asr: fake_online)
 
     eng = create_engine("faster-whisper", language="zh", model_dir="/fake/model")
-    assert eng.transcribe_chunk([0.1, 0.2]) == (0.0, 1.0, "测试字幕")
-    assert eng.finish() == (1.0, 2.0, "结束")
+    assert eng.transcribe_chunk([0.1, 0.2]) == (0.0, 1.0, "测试字幕", None)
+    assert eng.finish() == (1.0, 2.0, "结束", None)
     assert fake_online.chunks == [[0.1, 0.2]]
 
 

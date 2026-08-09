@@ -39,6 +39,15 @@ class _Callback(RecognitionCallback):
         if not isinstance(sentence, dict):
             return
         self._sentence_count[0] += 1
+        words = sentence.get("words") or []
+        word_list = []
+        for w in words:
+            if not isinstance(w, dict):
+                continue
+            beg = (w.get("begin_time") or 0) / 1000.0
+            end = w.get("end_time")
+            end_sec = end / 1000.0 if end is not None else None
+            word_list.append((beg, end_sec, w.get("text", "")))
         entry = SubtitleEntry(
             index=self._sentence_count[0],
             text=sentence.get("text", ""),
@@ -46,12 +55,14 @@ class _Callback(RecognitionCallback):
             start_time=(sentence.get("begin_time") or 0) / 1000.0,
             end_time=(sentence.get("end_time") or 0) / 1000.0,
             is_final=RecognitionResult.is_sentence_end(sentence),
+            words=word_list or None,
         )
         self._subtitle_buffer.append(entry)
 
 
 class ASRClient:
-    def __init__(self, settings: ASRSettings, chunk_size: int = 3200) -> None:
+    def __init__(self, settings: ASRSettings, chunk_size: int = 3200,
+                 **recognition_kwargs) -> None:
         self.settings = settings
         self.chunk_size = chunk_size
         self.state = ASRState.IDLE
@@ -64,6 +75,7 @@ class ASRClient:
             format="pcm",
             sample_rate=16000,
             callback=callback,
+            **recognition_kwargs,
         )
         self._input_queue: Queue = Queue()
         self._audio_buffer = bytearray()
