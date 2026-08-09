@@ -11,10 +11,12 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
 import shutil
 import sys
 import threading
+from collections import deque
 from urllib.parse import urljoin, urlparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whisper_streaming"))
@@ -36,6 +38,22 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "upl
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 UA = DEFAULT_UA
+
+# 服务端后台日志（ticket-14）：环形缓冲，经 WS 推给前端日志面板
+_SERVER_LOGS: deque = deque(maxlen=500)
+_LOG_SINKS: list = []  # 每连接的 put() 回调，实时推送新日志行
+logger = logging.getLogger("webui")  # 会话生命周期 INFO 日志（用户可见）
+
+
+class _ServerLogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            line = self.format(record)
+        except Exception:  # noqa: BLE001 - 格式化失败不阻断日志
+            return
+        _SERVER_LOGS.append(line)
+        for sink in list(_LOG_SINKS):
+            sink({"type": "log", "line": line})
 
 # yt-dlp 解析缓存（5 分钟）：播放器会发多个 range 请求，避免每次重复解析
 _CACHE: dict = {"ts": 0.0, "url": "", "video": "", "audio": ""}
@@ -225,6 +243,13 @@ async def ws_endpoint(ws: WebSocket):
                 put({"type": "subtitle", "beg": beg, "end": end, "text": text,
                      "words": words})
 
+        # 服务端日志（ticket-14）：连接即推环形缓冲快照，之后实时推送
+        for line in list(_SERVER_LOGS)[-200:]:
+            put({"type": "log", "line": line})
+        _LOG_SINKS.append(put)
+        logger.info("会话开始 url=%s engine=%s silence=%s",
+                    url[:80], engine_name, silence)
+
         try:
             real_url = resolve_stream_url(url)
             kind, target = classify(url)
@@ -241,6 +266,7 @@ async def ws_endpoint(ws: WebSocket):
                     engine_kwargs["max_sentence_silence"] = 400
             engine = create_engine(engine_name, **engine_kwargs)
             put({"type": "status", "message": f"引擎就绪，开始拉流: {real_url[:60]}"})
+            logger.info("引擎就绪 %s，拉流 %s", engine_name, real_url[:80])
             src = StreamSource(real_url, http_headers=http_headers)
             chunk_sec = 0.1  # 拉流分块（秒）：帧粒度基准（0.1s = 3 帧 @30fps）
             try:
@@ -281,8 +307,12 @@ async def ws_endpoint(ws: WebSocket):
             finally:
                 src.close()
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
+            logger.warning("worker 异常: %s", exc)
             put({"type": "error", "message": str(exc)[:300]})
         finally:
+            if put in _LOG_SINKS:
+                _LOG_SINKS.remove(put)
+            logger.info("会话结束")
             put({"type": "end"})
 
     threading.Thread(target=worker, daemon=True).start()
@@ -300,6 +330,17 @@ async def ws_endpoint(ws: WebSocket):
 
 
 def main():
+    # 服务端日志捕获（ticket-14）：webui INFO + 库 WARNING 写入环形缓冲
+    handler = _ServerLogHandler()
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    # 噪音源压到 WARNING：uvicorn 访问日志 / HTTP 客户端 / dashscope SDK
+    for noisy in ("uvicorn.access", "uvicorn.error", "httpx", "dashscope"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
     # 从用户 ~/Projects/.env 读取 DashScope key（如存在且未设置），不硬编码
     if not os.environ.get("DASHSCOPE_API_KEY"):
         env_path = os.path.expanduser("~/Projects/.env")
@@ -315,7 +356,9 @@ def main():
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
     print(f"实时字幕 webUI: http://{args.host}:{args.port}")
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    # log_config=None：禁用 uvicorn 默认日志配置，保留我们挂的环形缓冲 handler
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning",
+                log_config=None)
 
 
 if __name__ == "__main__":

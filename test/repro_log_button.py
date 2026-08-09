@@ -7,6 +7,7 @@
   ②b 再点后 #logPanel 隐藏
   ③ 开始会话后 #logText 含 connect/status 事件
   ④ 收到字幕后有 sub 事件
+  ⑤ 日志含服务端后台行（server: 前缀，ticket-14）
 一条命令:  .venv/bin/python test/repro_log_button.py
 """
 import os
@@ -82,13 +83,16 @@ def main():
             txt = page.evaluate("logBuffer.join('\\n')")
             ok3 = "connect" in txt and "status" in txt
             ok4 = "sub:" in txt
+            ok5 = "server:" in txt  # 服务端后台日志经 WS 进面板（ticket-14）
             print(f"[③] 日志含 connect/status: {'ok' if ok3 else 'RED'}")
             print(f"[④] 日志含 sub 事件: {'ok' if ok4 else 'RED'}")
+            print(f"[⑤] 日志含服务端行 server:: {'ok' if ok5 else 'RED'}")
             print(f"    日志长度: {len(txt)} 字符；样例:\n" +
                   "\n".join(f"      {l}" for l in txt.splitlines()[:8]))
             browser.close()
 
-            if not (vis and init_hidden and panel_visible and panel_hidden_again and ok3 and ok4):
+            if not (vis and init_hidden and panel_visible and panel_hidden_again
+                    and ok3 and ok4 and ok5):
                 print("[RED] 日志按钮功能不完整")
                 return 1
             print("[GREEN] 日志按钮可用")

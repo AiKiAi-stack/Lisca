@@ -1,11 +1,10 @@
-"""复现回路：字级渲染与断句粒度（ticket-10 / ADR-0001）
+"""复现回路：固定窗口分块字幕（ticket-13 / ADR-0002）
 
 断言：
-  ① 字级 words 到达：会话中某句的字级时间戳数量 ≥ 3（API 引擎下发 words）
-  ② 句内增量：同一句内 #current 文本多次增长（字级随播放进度逐字出现，
-     而非整句一次性成块出现）
-  ③ 空窗控制：播放采样窗口内字幕非空占比 ≥ 70%，最长连续空窗 ≤ 1s
-     （句间定格上一句 → 无「瞬间消失→成段出现」）
+  ① 字级 words 到达：会话中某句的字级时间戳数量 ≥ 3（分块由字级聚合）
+  ② 窗口稳定：同一窗口（w0 相同）内 #current 文本不逐字增长（无流式输出）
+  ③ 窗口切换：窗口边界处整体切换 ≥ 2 次（新窗口完整内容出现）
+  ④ 空窗合理：无说话窗口为空白——最长连续空窗 ≤ 8s、非空占比 ≥ 50%
 
 一条命令:  .venv/bin/python test/repro_word_granularity.py
 """
@@ -50,8 +49,8 @@ def main():
 
             page.fill("#url", VIDEO)
             page.select_option("#engine", "aliyun-funasr")
-            # 断句灵敏度默认 400ms（控件默认即 400，此处显式选择）
             page.select_option("#silence", "400")
+            page.select_option("#winLen", "4")
             page.click("#start")
 
             # 等播放起来且首条字幕已显示（排除视频开场静音/转写尚未覆盖的前导段）
@@ -73,64 +72,64 @@ def main():
             samples = []
             deadline = time.time() + 15
             while time.time() < deadline:
-                samples.append(page.evaluate("""() => ({
-                    cur: currentEl.textContent.trim(),
-                    beg: subs.length ? subs[subs.length - 1].beg : null,
-                    nw: subs.length && subs[subs.length - 1].words
-                        ? subs[subs.length - 1].words.length : 0,
-                })"""))
+                samples.append(page.evaluate("""() => {
+                    const D = parseFloat(winLenEl.value) || 4;
+                    return {
+                        cur: currentEl.textContent.trim(),
+                        w0: Math.floor(player.currentTime / D) * D,
+                        nw: subs.length && subs[subs.length - 1].words
+                            ? subs[subs.length - 1].words.length : 0,
+                    };
+                }"""))
                 time.sleep(0.5)
             browser.close()
 
-            def is_sub(cur):
-                return bool(cur) and not cur.startswith("⏳")
+            def is_blank(s):
+                return not s["cur"] or s["cur"].startswith("⏳")
 
             # ① words 到达
             max_words = max((s["nw"] for s in samples), default=0)
             ok1 = max_words >= 3
             print(f"[①] 字级 words 到达（单句最多 {max_words} 字）: {'ok' if ok1 else 'RED'}")
 
-            # ② 句内增量：同一 beg 下文本长度增长次数
-            growths = 0
-            prev_beg, prev_len = None, 0
-            for s in samples:
-                if s["beg"] is None or not is_sub(s["cur"]):
-                    prev_beg = None
-                    continue
-                if s["beg"] == prev_beg and len(s["cur"]) > prev_len:
-                    growths += 1
-                prev_beg = s["beg"]
-                prev_len = len(s["cur"])
-            ok2 = growths >= 2
-            print(f"[②] 同一句内文本增量增长 {growths} 次: {'ok' if ok2 else 'RED'}")
+            # ② 窗口稳定：同 w0 的相邻采样文本不得变化（逐字增长 = 流式 = 不合格）
+            violations = 0
+            for a, b in zip(samples, samples[1:]):
+                if a["w0"] == b["w0"] and not is_blank(a) and not is_blank(b) \
+                        and a["cur"] != b["cur"]:
+                    violations += 1
+            ok2 = violations <= 1
+            print(f"[②] 窗口内文本稳定（同窗口变化 {violations} 次）: {'ok' if ok2 else 'RED'}")
 
-            # ③ 空窗控制：非空占比 + 最长连续空窗
-            empties = []
+            # ③ 窗口切换：w0 变化且内容整体变化 ≥ 2 次
+            transitions = 0
+            for a, b in zip(samples, samples[1:]):
+                if a["w0"] != b["w0"] and not is_blank(a) and not is_blank(b) \
+                        and a["cur"] != b["cur"]:
+                    transitions += 1
+            ok3 = transitions >= 2
+            print(f"[③] 窗口边界整体切换 {transitions} 次: {'ok' if ok3 else 'RED'}")
+
+            # ④ 空窗：非空占比 + 最长连续空窗
             nonempty = 0
             longest = 0
             empty_run = 0
             for s in samples:
-                if is_sub(s["cur"]):
+                if is_blank(s):
+                    empty_run += 1
+                    longest = max(longest, empty_run)
+                else:
                     nonempty += 1
                     empty_run = 0
-                else:
-                    empty_run += 1
-                    if empty_run == 1:
-                        empties.append(s)
-                    longest = max(longest, empty_run)
             ratio = nonempty / len(samples) if samples else 0
-            ok3 = ratio >= 0.7 and longest <= 2
-            print(f"[③] 字幕非空占比 {ratio:.0%}，最长连续空窗 {longest * 0.5:.1f}s: "
-                  f"{'ok' if ok3 else 'RED'}")
-            if not ok3 and empties:
-                print("     空窗样本（cur/beg/nw）:")
-                for s in empties[:8]:
-                    print(f"     cur={s['cur'][:20]!r} beg={s['beg']} nw={s['nw']}")
+            ok4 = ratio >= 0.5 and longest <= 16  # 8s（4s 窗口 + 余量）
+            print(f"[④] 字幕非空占比 {ratio:.0%}，最长连续空窗 {longest * 0.5:.1f}s: "
+                  f"{'ok' if ok4 else 'RED'}")
 
-            if not (ok1 and ok2 and ok3):
-                print("[RED] 字级渲染验收不完整")
+            if not (ok1 and ok2 and ok3 and ok4):
+                print("[RED] 分块字幕验收不完整")
                 return 1
-            print("[GREEN] 字级渲染与断句粒度可用")
+            print("[GREEN] 固定窗口分块字幕可用")
             return 0
     finally:
         server.terminate()
