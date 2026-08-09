@@ -101,7 +101,7 @@
   let subEnabled = true; // 中间字幕显示开关（ticket-13）
   let displayedBlock = null; // 当前显示块 {w0, text}——窗口起点快照冻结，块内零变化
 
-  // 会话日志：环形缓冲（200 条），供用户一键复制反馈问题
+  // 会话日志：环形缓冲（500 条），供用户一键复制反馈问题（ticket-16 full log）
   const logBtn = document.getElementById('logBtn');
   const logPanel = document.getElementById('logPanel');
   const logText = document.getElementById('logText');
@@ -110,7 +110,7 @@
   function logEvent(type, detail) {
     const ts = new Date().toISOString().slice(11, 23);
     logBuffer.push(`[${ts}] ${type}: ${detail}`);
-    if (logBuffer.length > 200) logBuffer.shift();
+    if (logBuffer.length > 500) logBuffer.shift();
     if (!logPanel.hidden) logText.value = logBuffer.join('\n');
   }
   logBtn.onclick = () => {
@@ -297,15 +297,25 @@
   setInterval(syncSubtitle, 250);
   player.addEventListener('seeked', syncSubtitle);
   // 本地文件容器/编码不受浏览器支持（如 .mkv）时 <video> 静默失败成黑屏
+  // ticket-16：完整错误入日志（code/message/src/状态），code>0 即停会话（音频+API 停）
   player.addEventListener('error', () => {
     if (!player.error) return;
-    currentEl.textContent = '⚠ 视频无法播放：容器/编码不受支持（建议 mp4/mp3/wav）或链接失效';
+    const code = player.error.code || 0;
+    const emsg = player.error.message || '';
+    const esrc = (player.currentSrc || player.src || '').slice(0, 140);
+    logEvent('video_error_full',
+      `code=${code} msg=${emsg || '(无)'} src=${esrc} ready=${player.readyState} net=${player.networkState}`);
+    currentEl.textContent = '⚠ 视频无法播放：'
+      + (emsg || `错误码 ${code}（容器/编码不受支持或链接失效）`);
     currentEl.classList.add('err');
     setStatus('视频加载失败', true);
+    if (code > 0 && ws) {
+      logEvent('video_stop', `会话停止（视频不可播放 code=${code}）`);
+      try { ws.close(); } catch (e) {}  // 停音频处理与 API 调用（含 ws 未就绪时中止连接）
+    }
   });
-  // 视频诊断（ticket-11）：stalled/waiting 等不触发 error 的状态也写入会话日志，
-  // 避免「黑屏但无任何错误日志」；error 附带 code 便于定位（4=不支持 3=解码失败）
-  ['error', 'stalled', 'waiting', 'suspend', 'emptied', 'abort'].forEach((evt) => {
+  // 视频诊断（ticket-11/16）：stalled/waiting 等不触发 error 的状态也写入会话日志
+  ['stalled', 'waiting', 'suspend', 'emptied', 'abort'].forEach((evt) => {
     player.addEventListener(evt, () => {
       const err = player.error ? ` code=${player.error.code}` : '';
       logEvent(`video_${evt}`, `ready=${player.readyState} net=${player.networkState}${err}`);
