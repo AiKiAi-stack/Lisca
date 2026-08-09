@@ -195,12 +195,13 @@ def scenario_pause_freeze(page):
     else:
         return False, "未正常播放并显示字幕"
 
-    # 记录暂停前状态
+    # 暂停（后端 pause 有 ≤0.2s 生效窗口，途中 partial 落地属正常，先等它落完）
+    page.evaluate("player.pause()")
+    time.sleep(0.6)
+
+    # 记录暂停稳定后状态
     h1 = page.locator("#history div").count()
     frozen1 = page.locator("#current").inner_text()
-
-    # 暂停
-    page.evaluate("player.pause()")
     time.sleep(4)
 
     # 检查冻结
