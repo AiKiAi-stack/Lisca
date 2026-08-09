@@ -74,6 +74,34 @@ def _resolve_audio_url(user_input: str) -> str:
     return _resolve_stream_url(user_input, "ba", "audio")
 
 
+def _rewrite_hls_playlist(text: str, stream_url: str) -> str:
+    """HLS playlist 相对引用改写为绝对 CDN URL。
+
+    普通行（ts 分片）直接 urljoin；# 行里的 URI 属性（EXT-X-KEY 密钥 /
+    EXT-X-MEDIA / EXT-X-STREAM-INF 变体）也要改写，否则浏览器按代理路径
+    解析 → 密钥/变体请求 404 → 视频黑屏（ticket-11）。"""
+    import re
+
+    URI_ATTR = re.compile(r'(URI=")([^"]*)(")')
+
+    def _rewrite_attr(m):
+        uri = m.group(2)
+        if uri and not uri.startswith(("http://", "https://", "data:")):
+            return m.group(1) + urljoin(stream_url, uri) + m.group(3)
+        return m.group(0)
+
+    rewritten = []
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("#"):
+            if "URI=" in s:
+                line = URI_ATTR.sub(_rewrite_attr, s)
+        elif s and not s.startswith(("http://", "https://")):
+            line = urljoin(stream_url, s)
+        rewritten.append(line)
+    return "\n".join(rewritten)
+
+
 async def _proxy_stream(request: Request, stream_url: str):
     """转发流（补防盗链头），供前端 <video>/<audio> 播放。
 
@@ -100,13 +128,7 @@ async def _proxy_stream(request: Request, stream_url: str):
             text = body.decode("utf-8")
         except UnicodeDecodeError:
             text = body.decode("latin-1")
-        rewritten = []
-        for line in text.splitlines():
-            s = line.strip()
-            if s and not s.startswith("#") and not s.startswith(("http://", "https://")):
-                line = urljoin(stream_url, s)
-            rewritten.append(line)
-        new_body = "\n".join(rewritten)
+        new_body = _rewrite_hls_playlist(text, stream_url)
         pass_headers["content-length"] = str(len(new_body.encode()))
         return Response(new_body, status_code=upstream.status_code,
                         headers=pass_headers)
