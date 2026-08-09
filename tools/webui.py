@@ -20,7 +20,7 @@ from urllib.parse import urljoin, urlparse
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whisper_streaming"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi import FastAPI, File, Request, Response, UploadFile, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse  # noqa: E402
 from starlette.background import BackgroundTask  # noqa: E402
 import uvicorn  # noqa: E402
@@ -95,6 +95,7 @@ async def _proxy_stream(request: Request, stream_url: str):
     if is_hls:
         body = await upstream.aread()
         await upstream.aclose()
+        await client.aclose()
         try:
             text = body.decode("utf-8")
         except UnicodeDecodeError:
@@ -107,7 +108,6 @@ async def _proxy_stream(request: Request, stream_url: str):
             rewritten.append(line)
         new_body = "\n".join(rewritten)
         pass_headers["content-length"] = str(len(new_body.encode()))
-        from fastapi import Response
         return Response(new_body, status_code=upstream.status_code,
                         headers=pass_headers)
 
