@@ -50,10 +50,17 @@
     <option value="800">断句：标准 800ms</option>
     <option value="1300">断句：宽松 1300ms（服务端默认）</option>
   </select>
+  <select id="winLen" title="字幕窗口：窗口内音频内容完整显示，窗口到点整体切换或消失（1-4s）">
+    <option value="1">窗口 1s</option>
+    <option value="2">窗口 2s</option>
+    <option value="3">窗口 3s</option>
+    <option value="4" selected>窗口 4s</option>
+  </select>
   <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
   <button id="uploadBtn" title="上传本地音频/视频文件">📁 上传文件</button>
   <button id="start">开始</button>
   <button id="stop">停止</button>
+  <button id="subToggle" title="开关中间字幕显示">🎬 字幕：开</button>
   <button id="logBtn" title="查看/复制会话日志，便于反馈问题">📋 日志</button>
   <div id="status">就绪</div>
 </header>
@@ -74,6 +81,8 @@
   const urlEl = document.getElementById('url');
   const engineEl = document.getElementById('engine');
   const silenceEl = document.getElementById('silence');
+  const winLenEl = document.getElementById('winLen');
+  const subToggleBtn = document.getElementById('subToggle');
   const startBtn = document.getElementById('start');
   const stopBtn = document.getElementById('stop');
   const statusEl = document.getElementById('status');
@@ -89,6 +98,7 @@
   let playStarted = false; // 是否已触发视频播放（等字幕就绪）
   let holdingForSync = false; // 字幕未就绪时拦截手动播放产生的 pause，不冻结后端
   let seekPending = false; // seek 后清空当前句显示，等新数据（ADR-0001）
+  let subEnabled = true; // 中间字幕显示开关（ticket-13）
 
   // 会话日志：环形缓冲（200 条），供用户一键复制反馈问题
   const logBtn = document.getElementById('logBtn');
@@ -115,6 +125,14 @@
       document.execCommand('copy');
     }
     setStatus('日志已复制');
+  };
+
+  // 字幕开关（ticket-13）：同日志按钮，可关可开，默认开
+  subToggleBtn.onclick = () => {
+    subEnabled = !subEnabled;
+    subToggleBtn.textContent = subEnabled ? '🎬 字幕：开' : '🎬 字幕：关';
+    if (!subEnabled) currentEl.textContent = '';
+    logEvent('sub_toggle', subEnabled ? '开' : '关');
   };
 
   function setStatus(msg, isErr) {
@@ -146,6 +164,11 @@
     const t = player.currentTime;
     // 出错态：保留错误提示，不被占位符/字幕覆盖
     if (currentEl.classList.contains('err')) return;
+    // 字幕开关（ticket-13）：关闭则中间字幕不显示
+    if (!subEnabled) {
+      currentEl.textContent = '';
+      return;
+    }
     // seek 后清空显示，等新数据（防止定格旧句误导）
     if (seekPending) {
       currentEl.textContent = '⏳ 跳转中，字幕将随转写跟进…';
@@ -156,30 +179,20 @@
       currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
       return;
     }
-    // 字级渲染（ADR-0001）：取「已开始」的最新句（beg ≤ t），按字级 begin_time
-    // 累积显示已说出的字（begin ≤ t 的字）。对齐基准是播放进度：转写时间轴
-    // 落后播放属正常，字级 begin 直接对齐播放位置 → 随播放逐字推进、句间无空窗。
-    // 暂停时 t 不变 → 显示冻结。
-    let target = null;
-    for (const s of subs) if (s.beg <= t + 0.15) target = s;
-    if (target && target.words && target.words.length) {
-      let text = '';
-      for (const w of target.words) {
-        if (w[0] <= t + 0.2) text += w[2];
-      }
-      // 快语速长句兜底（ticket-12）：VAD 无停顿则永不断句，显示改为滚动尾窗，
-      // 只显示最近 40 字——句子多长显示都有界（完整句仍在历史区）
-      if (text.length > 40) text = text.slice(-40);
-      currentEl.textContent = text;
-      return;
-    }
-    // 无字级数据（本地引擎）回退：时间窗匹配 [beg-0.15, end+0.2]
-    let show = '';
+    // 固定窗口分块（ADR-0002）：窗口 [kD,(k+1)D) 内音频内容完整显示，
+    // 窗口到点整体切换；窗口内无字 → 空白（无人说话）。
+    // 转写时间轴领先播放 → 当前窗口的字必已转写，窗口内容总是完整可用。
+    const D = parseFloat(winLenEl.value) || 4;
+    const w0 = Math.floor(t / D) * D;
+    let text = '';
     for (const s of subs) {
-      if (t >= s.beg - 0.15 && t < s.end + 0.2) show = s.text;
+      if (!s.words || !s.words.length) continue;
+      for (const w of s.words) {
+        if (w[0] >= w0 && w[0] < w0 + D) text += w[2];
+      }
     }
-    if (show.length > 40) show = show.slice(-40);
-    currentEl.textContent = show;
+    currentEl.textContent = text;
+    return;
   }
 
   // 字幕处理：partial 实时数据（同句原地更新），显示由 2s 定时器快照（整块替换）
@@ -250,6 +263,8 @@
         onSubtitle(msg);
       } else if (msg.type === 'status') {
         setStatus(msg.message);
+      } else if (msg.type === 'log') {
+        logEvent('server', msg.line);  // 服务端后台日志（ticket-14）
       } else if (msg.type === 'error') {
         currentEl.textContent = '⚠ ' + msg.message;
         currentEl.classList.add('err');
