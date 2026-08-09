@@ -27,6 +27,9 @@
   #history div { padding: 2px 0; }
   #history div span { color: #6e7681; margin-right: 8px; font-size: 12px; }
   #logPanel { display: flex; flex-direction: column; gap: 8px; }
+  /* hidden 属性必须生效：作者 CSS 的 display:flex 会覆盖 UA 的 [hidden]{display:none}，
+     需显式声明，否则面板常驻显示、日志按钮失去作用 */
+  #logPanel[hidden] { display: none; }
   #logText { width: 100%; height: 140px; background: #0d1117; color: #9da7b3; border: 1px solid #30363d;
     border-radius: 8px; padding: 10px 12px; font-family: monospace; font-size: 12px; resize: vertical; }
   .err { color: var(--err) !important; }

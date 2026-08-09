@@ -2,7 +2,9 @@
 
 断言：
   ① #logBtn 存在且可见
+  ①b 初始 #logPanel 隐藏（hidden 属性生效，不被 #logPanel{display:flex} 覆盖）
   ② 点击后 #logPanel 显示
+  ②b 再点后 #logPanel 隐藏
   ③ 开始会话后 #logText 含 connect/status 事件
   ④ 收到字幕后有 sub 事件
 一条命令:  .venv/bin/python test/repro_log_button.py
@@ -52,10 +54,17 @@ def main():
             if not vis:
                 return 1
 
+            # ①b 初始隐藏：hidden 属性必须生效（曾被 #logPanel{display:flex} 覆盖导致常驻显示）
+            init_hidden = not page.is_visible("#logPanel")
+            print(f"[①b] 初始 #logPanel 隐藏: {'ok' if init_hidden else 'RED'}")
+
             # ② 面板可开合
             page.click("#logBtn")
             panel_visible = page.is_visible("#logPanel")
             print(f"[②] 点击后 #logPanel 显示: {'ok' if panel_visible else 'RED'}")
+            page.click("#logBtn")
+            panel_hidden_again = not page.is_visible("#logPanel")
+            print(f"[②b] 再点后 #logPanel 隐藏: {'ok' if panel_hidden_again else 'RED'}")
 
             # ③④ 会话事件记录
             page.fill("#url", VIDEO)
@@ -79,7 +88,7 @@ def main():
                   "\n".join(f"      {l}" for l in txt.splitlines()[:8]))
             browser.close()
 
-            if not (vis and panel_visible and ok3 and ok4):
+            if not (vis and init_hidden and panel_visible and panel_hidden_again and ok3 and ok4):
                 print("[RED] 日志按钮功能不完整")
                 return 1
             print("[GREEN] 日志按钮可用")
