@@ -190,8 +190,8 @@
     };
   }
 
-  // 字幕显示节奏：定时快照（每 2s 整块替换，不逐字、不逐帧跳动）
-  setInterval(syncSubtitle, 2000);
+  // 字幕显示节奏：定时快照（250ms，整块替换，不逐字、不逐帧跳动）
+  setInterval(syncSubtitle, 250);
   player.addEventListener('seeked', syncSubtitle);
   // 播放联动：video 控制画面与进度，audio 跟随出声；暂停时前后端都冻结（真正停止解析）
   player.addEventListener('play', () => {
@@ -207,6 +207,7 @@
     uiPaused = false;
     audioEl.play().catch(() => {});
     if (ws && ws.readyState === 1) ws.send('resume');
+    syncSubtitle();  // 播放起始立即同步（旧 2s 定时器会跳过首段短句）
   });
   player.addEventListener('pause', () => {
     if (holdingForSync) return;  // 拦截产生的 pause，不冻结后端
