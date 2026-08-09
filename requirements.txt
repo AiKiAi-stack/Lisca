@@ -1,5 +1,6 @@
 av
 dashscope
+librosa
 numpy
 concurrent-log-handler
 fastapi
