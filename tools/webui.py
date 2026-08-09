@@ -16,8 +16,12 @@ import os
 import shutil
 import sys
 import threading
+import warnings
 from collections import deque
 from urllib.parse import urljoin, urlparse
+
+# 代理 verify=False 的告警压掉（ticket-17）
+warnings.filterwarnings("ignore", message=".*InsecureRequestWarning.*")
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whisper_streaming"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -130,7 +134,9 @@ async def _proxy_stream(request: Request, stream_url: str):
     headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
-    client = httpx.AsyncClient(timeout=None, follow_redirects=True)
+    # verify=False（ticket-17）：B站 CDN 存在证书过期/异常，httpx 默认校验 TLS 会
+    # 代理 500 → 视频黑屏。流媒体代理标准做法（yt-dlp/ffmpeg 均不校验这些 CDN）。
+    client = httpx.AsyncClient(timeout=None, follow_redirects=True, verify=False)
     try:
         req = client.build_request("GET", stream_url, headers=headers)
         upstream = await client.send(req, stream=True)
