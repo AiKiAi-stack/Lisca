@@ -488,7 +488,18 @@
       if (hlsPlayer) hlsPlayer.destroy();
       player.removeAttribute('src');
       player.load();
-      hlsPlayer = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 15 });
+      // 慢源适配（2026-08-09 实测）：IPTV 分片常达 5MB+ 且上游带宽 ~1MB/s，
+      // 默认预缓冲 3 片（≈16s）期间分片逐个过期 → 启动极慢或直接卡死。
+      // 只缓冲 1 片尽快开播 + 贴近直播边缘 + 加大重试容错。
+      hlsPlayer = new Hls({
+        liveSyncDurationCount: 1,
+        maxBufferLength: 10,
+        backBufferLength: 0,
+        fragLoadingConcurrency: 1,  // 串行拉分片：不与他人（ASR 拉流）抢慢源带宽
+        fragLoadingMaxRetry: 6,
+        manifestLoadingMaxRetry: 6,
+        levelLoadingMaxRetry: 6,
+      });
       hlsPlayer.loadSource(`/video?url=${encodeURIComponent(url)}`);
       hlsPlayer.attachMedia(player);
       hlsPlayer.on(Hls.Events.ERROR, (_evt, data) => {
