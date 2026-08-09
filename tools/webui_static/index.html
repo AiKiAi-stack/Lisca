@@ -133,6 +133,8 @@
 
   function syncSubtitle() {
     const t = player.currentTime;
+    // 出错态：保留错误提示，不被占位符/字幕覆盖
+    if (currentEl.classList.contains('err')) return;
     // 视频未开始播放时不显示字幕（避免"字幕提前"的错觉）
     if (player.paused && t < 0.5) {
       currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
@@ -222,7 +224,7 @@
         ws.close();
       }
     };
-    ws.onerror = () => logEvent('ws_error', '连接失败');
+    ws.onerror = () => { logEvent('ws_error', '连接失败'); setStatus('连接失败', true); };
     ws.onclose = () => {
       logEvent('ws_close', '');
       startBtn.style.display = 'inline-block';

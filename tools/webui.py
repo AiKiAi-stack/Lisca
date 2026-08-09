@@ -15,7 +15,7 @@ import os
 import shutil
 import sys
 import threading
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whisper_streaming"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -75,7 +75,10 @@ def _resolve_audio_url(user_input: str) -> str:
 
 
 async def _proxy_stream(request: Request, stream_url: str):
-    """转发流（补防盗链头），供前端 <video>/<audio> 播放"""
+    """转发流（补防盗链头），供前端 <video>/<audio> 播放。
+
+    HLS playlist（m3u8）会被浏览器当作文本，相对 .ts/变体路径无法解析——
+    把相对行改写为绝对 CDN URL 后再返回。"""
     import httpx
 
     headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
@@ -86,6 +89,27 @@ async def _proxy_stream(request: Request, stream_url: str):
     upstream = await client.send(req, stream=True)
     pass_headers = {k: v for k, v in upstream.headers.items()
                     if k.lower() in ("content-type", "content-length", "accept-ranges", "content-range")}
+    content_type = upstream.headers.get("content-type", "").lower()
+
+    is_hls = "mpegurl" in content_type or ".m3u8" in stream_url.lower()
+    if is_hls:
+        body = await upstream.aread()
+        await upstream.aclose()
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError:
+            text = body.decode("latin-1")
+        rewritten = []
+        for line in text.splitlines():
+            s = line.strip()
+            if s and not s.startswith("#") and not s.startswith(("http://", "https://")):
+                line = urljoin(stream_url, s)
+            rewritten.append(line)
+        new_body = "\n".join(rewritten)
+        pass_headers["content-length"] = str(len(new_body.encode()))
+        from fastapi import Response
+        return Response(new_body, status_code=upstream.status_code,
+                        headers=pass_headers)
 
     async def _cleanup():
         await upstream.aclose()
@@ -99,18 +123,24 @@ async def _proxy_stream(request: Request, stream_url: str):
 
 @app.get("/video")
 async def video_proxy(url: str, request: Request):
-    """代理视频流（纯画面）；本地文件直接返回"""
+    """代理视频流（纯画面）；本地文件直接返回；m3u8 等直链不经 yt-dlp"""
     if os.path.exists(url):
         return FileResponse(url)
-    return await _proxy_stream(request, _resolve_video_url(url))
+    kind, _ = classify(url)
+    if kind == "page":
+        url = _resolve_video_url(url)
+    return await _proxy_stream(request, url)
 
 
 @app.get("/audio")
 async def audio_proxy(url: str, request: Request):
-    """代理音频流（声音）；本地文件直接返回（文件含音轨）"""
+    """代理音频流（声音）；本地文件直接返回；m3u8 等直链不经 yt-dlp"""
     if os.path.exists(url):
         return FileResponse(url)
-    return await _proxy_stream(request, _resolve_audio_url(url))
+    kind, _ = classify(url)
+    if kind == "page":
+        url = _resolve_audio_url(url)
+    return await _proxy_stream(request, url)
 
 
 @app.get("/")
