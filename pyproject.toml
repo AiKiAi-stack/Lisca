@@ -28,16 +28,9 @@ dependencies = [
     "concurrent-log-handler>=0.9.25",
     "dashscope>=1.25.0",
     "fastapi>=0.110.0",
-    "librosa>=0.10.0",
     "numpy>=1.24.0",
-    "opencv-python>=4.10.0.84",
-    "Pillow>=10.0.0",
-    "pyyaml>=6.0.2",
     "uvicorn[standard]>=0.27.0",
 ]
-
-[project.scripts]
-streamparser = "streamparser.entrypoint:main"
 
 [build-system]
 requires = ["hatchling"]
