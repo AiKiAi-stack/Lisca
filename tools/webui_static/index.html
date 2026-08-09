@@ -52,9 +52,9 @@
   </select>
   <select id="winLen" title="字幕窗口：窗口内音频内容完整显示，窗口到点整体切换或消失（1-4s）">
     <option value="1">窗口 1s</option>
-    <option value="2">窗口 2s</option>
+    <option value="2" selected>窗口 2s</option>
     <option value="3">窗口 3s</option>
-    <option value="4" selected>窗口 4s</option>
+    <option value="4">窗口 4s</option>
   </select>
   <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
   <button id="uploadBtn" title="上传本地音频/视频文件">📁 上传文件</button>
@@ -183,10 +183,10 @@
     // 固定窗口分块（ADR-0002 + ticket-15）：显示「刚结束的窗口」
     // [⌊(t-guard)/D⌋·D, ⌊(t-guard)/D⌋·D+D)。窗口起点对 subs 字级数据做一次
     // 快照并冻结到窗口结束——API partial 字级时间戳会随修正漂移，实时聚合会闪变，
-    // 快照冻结从构造上保证「块内零变化、不流式」。guard=2s 覆盖句终发射延迟，
-    // 快照时窗口字已基本齐。
-    const D = parseFloat(winLenEl.value) || 4;
-    const guard = 2.0;
+    // 快照冻结从构造上保证「块内零变化、不流式」。
+    // guard=1s + 默认窗口 2s：滞后 [1,3]s（用户 2026-08-09 定案，平衡完整性与跟手）
+    const D = parseFloat(winLenEl.value) || 2;
+    const guard = 1.0;
     const w0 = Math.floor((t - guard) / D) * D;
     if (!displayedBlock || displayedBlock.w0 !== w0) {
       let text = '';

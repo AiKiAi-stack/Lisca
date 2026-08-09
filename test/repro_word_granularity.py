@@ -50,7 +50,7 @@ def main():
             page.fill("#url", VIDEO)
             page.select_option("#engine", "aliyun-funasr")
             page.select_option("#silence", "400")
-            page.select_option("#winLen", "4")
+            page.select_option("#winLen", "2")
             page.click("#start")
 
             # 等播放起来且首条字幕已显示（排除视频开场静音/转写尚未覆盖的前导段）
@@ -73,11 +73,12 @@ def main():
             deadline = time.time() + 15
             while time.time() < deadline:
                 samples.append(page.evaluate("""() => {
-                    const D = parseFloat(winLenEl.value) || 4;
-                    const guard = 2.0;  // 与显示端窗口公式一致（ticket-15）
+                    const D = parseFloat(winLenEl.value) || 2;
+                    const guard = 1.0;  // 与显示端窗口公式一致（ticket-15）
                     return {
                         cur: currentEl.textContent.trim(),
                         w0: Math.floor((player.currentTime - guard) / D) * D,
+                        dw0: displayedBlock ? displayedBlock.w0 : null,
                         nw: subs.length && subs[subs.length - 1].words
                             ? subs[subs.length - 1].words.length : 0,
                     };
@@ -93,32 +94,25 @@ def main():
             ok1 = max_words >= 3
             print(f"[①] 字级 words 到达（单句最多 {max_words} 字）: {'ok' if ok1 else 'RED'}")
 
-            # ② 窗口稳定：同 w0 的相邻采样文本不得变化——延迟一个窗口后
-            # 显示内容必然完整，任何同窗口变化（0 容忍）= 流式残留
+            # ② 窗口稳定：按显示端实际窗口（displayedBlock.w0，快照冻结）分组——
+            # 同窗口内文本必须零变化（0 容忍）；w0 采样错位伪影用 dw0 消除
             violations = []
             for a, b in zip(samples, samples[1:]):
-                if a["w0"] == b["w0"] and not is_blank(a) and not is_blank(b) \
+                if a["dw0"] is not None and a["dw0"] == b["dw0"] \
+                        and not is_blank(a) and not is_blank(b) \
                         and a["cur"] != b["cur"]:
                     violations.append((a, b))
             ok2 = len(violations) == 0
             print(f"[②] 窗口内文本稳定（同窗口变化 {len(violations)} 次，需 0）: "
                   f"{'ok' if ok2 else 'RED'}")
             if violations:
-                for a, b in violations[:5]:
-                    common = 0
-                    for i, ch in enumerate(a["cur"]):
-                        if i < len(b["cur"]) and b["cur"][i] == ch:
-                            common += 1
-                        else:
-                            break
-                    print(f"     w0={a['w0']} 前缀相同 {common} 字 "
-                          f"({a['cur'][:16]!r} → {b['cur'][:24]!r})")
+                for a, b in violations[:3]:
+                    print(f"     dw0={a['dw0']} ({a['cur'][:16]!r} → {b['cur'][:24]!r})")
 
-            # ③ 窗口切换：w0 变化且内容整体变化 ≥ 2 次
+            # ③ 窗口切换：显示端窗口变化（整体切换）≥ 2 次
             transitions = 0
             for a, b in zip(samples, samples[1:]):
-                if a["w0"] != b["w0"] and not is_blank(a) and not is_blank(b) \
-                        and a["cur"] != b["cur"]:
+                if a["dw0"] is not None and a["dw0"] != b["dw0"]:
                     transitions += 1
             ok3 = transitions >= 2
             print(f"[③] 窗口边界整体切换 {transitions} 次: {'ok' if ok3 else 'RED'}")

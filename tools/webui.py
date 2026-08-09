@@ -206,7 +206,7 @@ async def ws_endpoint(ws: WebSocket):
     url = ws.query_params.get("url", "").strip()
     engine_name = ws.query_params.get("engine", "faster-whisper").strip()
     silence = ws.query_params.get("silence", "400").strip()
-    win_len = ws.query_params.get("win", "4").strip()
+    win_len = ws.query_params.get("win", "2").strip()
     if not url:
         await ws.send_json({"type": "error", "message": "缺少 url 参数"})
         await ws.close()
