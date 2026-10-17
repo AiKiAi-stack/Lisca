@@ -22,7 +22,7 @@
   #current { position: absolute; left: 0; right: 0; bottom: 12%; padding: 10px 32px; text-align: center;
     font-size: clamp(26px, 3.4vw, 38px); line-height: 1.4; font-weight: 600; letter-spacing: 1px;
     color: #fff; text-shadow: 2px 2px 4px #000, 0 0 12px #000; pointer-events: none;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    display: block; white-space: normal; overflow: visible; }
   #history { height: 18%; background: var(--panel); border-radius: 10px; padding: 10px 14px; overflow-y: auto; font-size: 14px; color: #9da7b3; }
   #history div { padding: 2px 0; }
   #history div span { color: #6e7681; margin-right: 8px; font-size: 12px; }
@@ -147,6 +147,7 @@
   let playStarted = false; // 是否已触发视频播放（等字幕就绪）
   let holdingForSync = false; // 字幕未就绪时拦截手动播放产生的 pause，不冻结后端
   let seekPending = false; // seek 后清空当前句显示，等新数据（ADR-0001）
+  let aligningInitialPlayback = false;
   let subEnabled = true; // 中间字幕显示开关（ticket-13）
   let displayedBlock = null; // 当前显示块 {w0, text}——窗口起点快照冻结，块内零变化
 
@@ -401,10 +402,10 @@
     historyItems.push(div);
     while (historyItems.length > 200) historyEl.removeChild(historyItems.shift());
     historyEl.scrollTop = historyEl.scrollHeight;
+    return div;
   }
 
-  function updateHistory(idx, msg) {
-    const div = historyItems[idx];
+  function updateHistory(div, msg) {
     if (!div) return;
     div.childNodes[0].textContent = `${msg.beg.toFixed(1)}s-${msg.end.toFixed(1)}s`;
     div.childNodes[1].textContent = msg.text;
@@ -429,26 +430,35 @@
       currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
       return;
     }
-    // 固定窗口分块（ADR-0002 + ticket-15 v4，直播延时技术）：视频播放比源延迟
-    // N 秒（后端转写覆盖满第一个窗口才发 ready），播放位置的字早已转写完成——
-    // 字幕直接显示「当前窗口」[w0, w0+D)，完整且与画面同步，无显示侧滞后。
-    // 窗口起点对 subs 字级数据快照一次并冻结到窗口结束（API partial 字级时间戳
-    // 会随修正漂移，实时聚合会闪变；快照冻结保证「块内零变化、不流式」）。
+    // 固定窗口分块（ADR-0002）：窗口与完整识别句相交时显示整句，不按字级时间戳
+    // 截断成短语片段。收到 ASR 修订时重算当前窗口，让完整句子及时替换旧文本。
     const D = parseFloat(winLenEl.value) || 2;
     const w0 = Math.floor(t / D) * D;
     if (!displayedBlock || displayedBlock.w0 !== w0) {
-      let text = '';
-      for (const s of subs) {
-        if (s.words && s.words.length) {
-          for (const w of s.words) {
-            if (w[0] >= w0 && w[0] < w0 + D) text += w[2];
-          }
-        } else if (s.beg != null && s.end != null && s.beg < w0 + D && s.end > w0) {
-          // File-mode engines may only provide sentence-level SRT timestamps.
-          text += s.text;
+      const candidates = subs.map(s => {
+        const wordStarts = (s.words || []).map(w => w[0]);
+        const wordEnds = (s.words || []).map(w => w[1] == null ? w[0] : w[1]);
+        return {
+          ...s,
+          captionBeg: wordStarts.length ? Math.min(s.beg, ...wordStarts) : s.beg,
+          captionEnd: wordEnds.length ? Math.max(s.end, ...wordEnds) : s.end,
+        };
+      }).filter(s => s.captionBeg != null && s.captionEnd != null
+        && s.captionBeg < w0 + D && s.captionEnd > w0 && s.text.trim())
+        .sort((a, b) => a.captionBeg - b.captionBeg);
+      const groups = [];
+      for (const caption of candidates) {
+        let group = groups.find(g => Math.abs(g.beg - caption.captionBeg) < 0.75
+          && g.end > caption.captionBeg && caption.captionEnd > g.beg);
+        if (!group) {
+          group = { beg: caption.captionBeg, end: caption.captionEnd, text: caption.text.trim() };
+          groups.push(group);
+        } else {
+          group.end = Math.max(group.end, caption.captionEnd);
+          if (caption.text.trim().length > group.text.length) group.text = caption.text.trim();
         }
       }
-      displayedBlock = { w0, text };
+      displayedBlock = { w0, text: groups.map(g => g.text).join(' ') };
     }
     currentEl.textContent = displayedBlock.text;
     return;
@@ -456,24 +466,58 @@
 
   // 字幕处理：partial 实时数据（同句原地更新），显示由 2s 定时器快照（整块替换）
   let uiPaused = false;  // 前端暂停标志：暂停期间忽略新数据（后端同时停止解析）
+  function sharedWordRatio(a, b) {
+    if (!a || !a.length || !b || !b.length) return 0;
+    let shared = 0;
+    for (const left of a) {
+      if (b.some(right => left[2] === right[2] && Math.abs(left[0] - right[0]) < 0.25)) shared++;
+    }
+    return shared / Math.min(a.length, b.length);
+  }
+
+  function sameSubtitle(a, b) {
+    // ASR partial revisions may shift their estimated sentence start by several
+    // hundred milliseconds, especially when corrected words change alignment.
+    const beginDrift = Math.abs(a.beg - b.beg);
+    const overlap = Math.max(0, Math.min(a.end, b.end) - Math.max(a.beg, b.beg));
+    const shorterDuration = Math.min(a.end - a.beg, b.end - b.beg);
+    if (beginDrift < 1.0 && shorterDuration > 0
+        && overlap / shorterDuration >= 0.5) return true;
+    if (sharedWordRatio(a.words, b.words) >= 0.5) return true;
+    return false;
+  }
+
   function onSubtitle(msg) {
     if (uiPaused) return;  // 暂停：丢弃在途 partial，恢复后重新同步
     seekPending = false;  // 新数据到达，解除 seek 等待
     if (!msg.text) return;
-    const idx = subs.findIndex(s => Math.abs(s.beg - msg.beg) < 0.05);
+    let idx = subs.findIndex(s => sameSubtitle(s, msg));
     if (idx >= 0) {
-      // 同一句的 partial 更新：文本原地替换（含修正）；words 同理整体替换——
-      // partial 携带累计 words（诊断确认），替换不含旧修订残留（ticket-15）
-      subs[idx].text = msg.text;
-      subs[idx].end = msg.end;
-      if (msg.words) subs[idx].words = msg.words;
-      updateHistory(idx, msg);
+      // Partial may move its begin timestamp slightly; matching shared word times
+      // keeps that revision in one history row and prevents duplicate overlay text.
+      const matched = subs[idx];
+      matched.beg = msg.beg;
+      matched.end = msg.end;
+      matched.text = msg.text;
+      if (msg.words) matched.words = msg.words;
+      updateHistory(matched.historyItem, msg);
+      for (let i = subs.length - 1; i >= 0; i--) {
+        if (i !== idx && sameSubtitle(matched, subs[i])) {
+          subs.splice(i, 1);
+          const duplicateRow = subs[i].historyItem;
+          duplicateRow?.remove();
+          historyItems = historyItems.filter(item => item !== duplicateRow);
+          if (i < idx) idx--;
+        }
+      }
     } else {
       // 新句：加入列表与历史
-      subs.push({ beg: msg.beg, end: msg.end, text: msg.text, words: msg.words || null });
-      appendHistory(msg.beg, msg.end, msg.text);
+      const historyItem = appendHistory(msg.beg, msg.end, msg.text);
+      subs.push({ beg: msg.beg, end: msg.end, text: msg.text, words: msg.words || null, historyItem });
       logEvent('sub', `beg=${msg.beg.toFixed(1)} ${msg.text.slice(0, 24)}`);
     }
+    displayedBlock = null;
+    syncSubtitle();
   }
 
   function connect(forceUrl) {
@@ -569,8 +613,10 @@
         // HLS 音频从 live_sync_position 起解，视频也 seek 到同一 ASR 时间点，
         // 避免 HLS.js 从直播边缘起播、PyAV 却从更早分片起解造成字幕落后。
         if (hlsPlayer && Number.isFinite(msg.start_at)) {
+          aligningInitialPlayback = true;
           try { player.currentTime = Math.max(0, msg.start_at); }
           catch (e) { logEvent('sync_seek_error', String(e)); }
+          setTimeout(() => { aligningInitialPlayback = false; }, 3000);
           logEvent('sync_start', `t=${Number(msg.start_at).toFixed(1)}s`);
         }
         playStarted = true;
@@ -661,6 +707,14 @@
   });
   player.addEventListener('seeked', () => {
     audioEl.currentTime = player.currentTime;
+    if (aligningInitialPlayback) {
+      aligningInitialPlayback = false;
+      seekPending = false;
+      displayedBlock = null;
+      logEvent('sync_seeked', `t=${player.currentTime.toFixed(1)}`);
+      syncSubtitle();
+      return;
+    }
     seekPending = true;  // 跳转后清空当前句显示，等新数据（ADR-0001）
     displayedBlock = null;  // 跳转后重新快照（ticket-15）
     currentEl.textContent = '⏳ 跳转中，字幕将随转写跟进…';

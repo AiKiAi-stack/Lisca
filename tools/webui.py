@@ -453,8 +453,12 @@ async def ws_endpoint(ws: WebSocket):
                             # The browser waits 1.5s after ready before playback.
                             # Start up to (window - 1.5s) earlier so the ASR lead
                             # fills the whole first fixed subtitle window.
-                            start_at = (timeline_offset + max(coverage, fed_sec)
-                                        - max(0.0, win_sec - 1.5))
+                            # Do not use fed_sec here: it counts submitted audio, not
+                            # audio for which ASR has produced usable subtitle data.
+                            # Start one full caption window behind actual coverage;
+                            # the browser's 1.5s startup delay then leaves a safety lead
+                            # for API partials to settle before each window is shown.
+                            start_at = timeline_offset + max(0.0, coverage - win_sec)
                             put({"type": "ready", "win": win_sec,
                                  "start_at": start_at})
                             ready_sent = True
