@@ -503,8 +503,8 @@
       updateHistory(matched.historyItem, msg);
       for (let i = subs.length - 1; i >= 0; i--) {
         if (i !== idx && sameSubtitle(matched, subs[i])) {
-          subs.splice(i, 1);
           const duplicateRow = subs[i].historyItem;
+          subs.splice(i, 1);
           duplicateRow?.remove();
           historyItems = historyItems.filter(item => item !== duplicateRow);
           if (i < idx) idx--;

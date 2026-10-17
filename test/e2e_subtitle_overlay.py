@@ -36,6 +36,14 @@ def main():
           onSubtitle({beg:31.0, end:33.0, text:'A separate sentence in the next playback window.', words:[]});
           const nextFrame = currentEl.textContent;
           const playbackHistoryCount = historyEl.children.length;
+          const duplicateA = {beg:40.0, end:42.0, text:'older duplicate', words:[],
+            historyItem:appendHistory(40.0, 42.0, 'older duplicate')};
+          const duplicateB = {beg:40.1, end:42.0, text:'second duplicate', words:[],
+            historyItem:appendHistory(40.1, 42.0, 'second duplicate')};
+          subs.push(duplicateA, duplicateB);
+          onSubtitle({beg:40.2, end:42.0, text:'corrected duplicate', words:[]});
+          const duplicateCleanup = historyEl.innerText.includes('corrected duplicate')
+            && !historyEl.innerText.includes('second duplicate');
           Object.defineProperty(player, 'currentTime', {configurable:true, get:()=>1000});
           for (let i = 0; i < 205; i++) {
             const beg = 100 + i * 2;
@@ -44,7 +52,7 @@ def main():
           onSubtitle({beg:508.2, end:509, text:'Corrected latest history item', words:[]});
           const cappedHistoryCount = historyEl.children.length;
           const latestHistoryRow = historyEl.lastElementChild.textContent;
-          return {first, updated, nextFrame, historyCount:playbackHistoryCount, fitsPlayer,
+          return {first, updated, nextFrame, historyCount:playbackHistoryCount, fitsPlayer, duplicateCleanup,
             cappedHistoryCount, latestHistoryRow};
         }""")
         browser.close()
@@ -54,6 +62,7 @@ def main():
     assert result["nextFrame"] == "A separate sentence in the next playback window.", result
     assert result["historyCount"] == 2, result
     assert result["fitsPlayer"], result
+    assert result["duplicateCleanup"], result
     assert result["cappedHistoryCount"] == 200, result
     assert "Corrected latest history item" in result["latestHistoryRow"], result
     print("PASS: long caption fits; corrected partial merges; next playback window updates independently")
