@@ -446,7 +446,8 @@ async def ws_endpoint(ws: WebSocket):
                     engine_kwargs["max_sentence_silence"] = int(silence)
                 except ValueError:
                     engine_kwargs["max_sentence_silence"] = 400
-            put({"type": "status", "message": f"正在检查直播源: {real_url[:60]}"})
+            if urlparse(real_url).path.lower().endswith(".m3u8"):
+                put({"type": "status", "message": f"正在检查直播源: {real_url[:60]}"})
             src = StreamSource(real_url, http_headers=http_headers)
             timeline_offset = getattr(src, "timeline_offset_sec", 0.0)
             try:
