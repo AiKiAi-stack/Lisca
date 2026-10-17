@@ -9,6 +9,8 @@
     for chunk_bytes in src.iter_chunks(chunk_sec=0.1):
         audio_f32 = s16_to_f32(chunk_bytes)   # np.float32, 值域 [-1, 1]
 """
+from urllib.parse import urlparse
+
 import av
 import numpy as np
 
@@ -31,12 +33,19 @@ class StreamSource:
     def __init__(self, url_or_path: str, chunk_sec: float = 0.1,
                  http_headers: dict = None):
         self.url_or_path = url_or_path
+        self.timeline_offset_sec = 0.0
+        self.first_pts_sec = None
         options = {}
         if url_or_path.startswith(("http://", "https://")):
             hdrs = {"User-Agent": DEFAULT_UA}
             hdrs.update(http_headers or {})
             # libavformat http 协议要求 headers 以 CRLF 结尾
             options["headers"] = "".join(f"{k}: {v}\r\n" for k, v in hdrs.items())
+            if urlparse(url_or_path).path.lower().endswith(".m3u8"):
+                # Decode a few segments behind the edge for a stable startup.
+                # Alignment uses the decoded PTS, never the duration of a
+                # separately fetched sliding playlist.
+                options["live_start_index"] = "-3"
         self.container = av.open(url_or_path, options=options)
         if not self.container.streams.audio:
             self.container.close()
@@ -54,6 +63,8 @@ class StreamSource:
         try:
             for frame in self.container.decode(self.stream):
                 for rf in self.resampler.resample(frame):
+                    if self.first_pts_sec is None and rf.pts is not None and rf.time_base is not None:
+                        self.first_pts_sec = float(rf.pts * rf.time_base)
                     self._buf += rf.to_ndarray()[0].tobytes()
                     while len(self._buf) >= self.chunk_samples * 2:
                         chunk = self._buf[: self.chunk_samples * 2]

@@ -1,6 +1,6 @@
 import queue
 import threading
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, Mock, patch, call
 import pytest
 from streamparser.asr_client import ASRClient, ASRState
 from streamparser.asr_config import ASRSettings
@@ -59,6 +59,73 @@ class TestASRClient:
         client.stop()
 
     @patch("streamparser.asr_client.Recognition")
+    def test_stop_flushes_partial_audio_frame(self, mock_rec):
+        """结束流时也要把不足一帧的尾部音频送给识别服务。"""
+        mock_instance = MagicMock()
+        mock_rec.return_value = mock_instance
+        client = ASRClient(ASRSettings(api_key="sk-test"), chunk_size=3200)
+        client.start()
+
+        tail = b"\x01" * 1600
+        client.feed_audio(tail)
+        client.stop()
+
+        mock_instance.send_audio_frame.assert_called_once_with(tail)
+        mock_instance.stop.assert_called_once()
+
+    @patch("streamparser.asr_client.Recognition")
+    def test_stop_drains_queued_audio_before_stopping_recognition(self, mock_rec):
+        """stop 应排空已接收队列，且在最后一帧发送后才关闭 SDK。"""
+        mock_instance = MagicMock()
+        mock_rec.return_value = mock_instance
+        recorder = Mock()
+        recorder.attach_mock(mock_instance.send_audio_frame, "send_audio_frame")
+        recorder.attach_mock(mock_instance.stop, "stop")
+        client = ASRClient(ASRSettings(api_key="sk-test"), chunk_size=3200)
+        client.start()
+        frames = [b"\x01" * 3200, b"\x02" * 1600]
+        for frame in frames:
+            client.feed_audio(frame)
+
+        client.stop()
+
+        assert recorder.mock_calls == [
+            call.send_audio_frame(frames[0]),
+            call.send_audio_frame(frames[1]),
+            call.stop(),
+        ]
+
+    @patch("streamparser.asr_client.Recognition")
+    def test_callback_exposes_sdk_errors(self, mock_rec):
+        """SDK 的异步错误必须可由引擎轮询并反馈给用户。"""
+        mock_instance = MagicMock()
+        mock_rec.return_value = mock_instance
+        client = ASRClient(ASRSettings(api_key="sk-test"))
+        callback = mock_rec.call_args.kwargs["callback"]
+
+        class FakeResult:
+            def get_message(self):
+                return "invalid audio format"
+
+        callback.on_error(FakeResult())
+
+        with pytest.raises(RuntimeError, match="invalid audio format"):
+            client.raise_if_error()
+
+    @patch("streamparser.asr_client.Recognition")
+    def test_callback_reports_error_when_sdk_stringification_fails(self, mock_rec):
+        client = ASRClient(ASRSettings(api_key="sk-test"))
+        callback = mock_rec.call_args.kwargs["callback"]
+
+        class BrokenResult:
+            def __str__(self):
+                raise AttributeError("headers")
+
+        callback.on_error(BrokenResult())
+        with pytest.raises(RuntimeError, match="DashScope recognition failed"):
+            client.raise_if_error()
+
+    @patch("streamparser.asr_client.Recognition")
     def test_subtitle_buffer_accessible(self, mock_rec):
         """subtitle_buffer should be an accessible deque attribute."""
         mock_instance = MagicMock()
@@ -77,11 +144,12 @@ class TestASRClient:
 
         ASRClient(ASRSettings(api_key="sk-test"),
                   max_sentence_silence=400, heartbeat=True,
-                  language_hints=["zh"])
+                  language_hints=["zh"], multi_threshold_mode_enabled=True)
         kwargs = mock_rec.call_args.kwargs
         assert kwargs["max_sentence_silence"] == 400
         assert kwargs["heartbeat"] is True
         assert kwargs["language_hints"] == ["zh"]
+        assert kwargs["multi_threshold_mode_enabled"] is True
 
     @patch("streamparser.asr_client.Recognition")
     def test_callback_extracts_words(self, mock_rec):
@@ -97,9 +165,10 @@ class TestASRClient:
             def get_sentence(self):
                 return self._sentence
 
-        cb = _Callback(deque(), [0])
+        cb = _Callback(deque(), [0], queue.Queue())
         cb.on_event(FakeResult({
             "text": "你好世界", "begin_time": 1000, "end_time": 3000,
+            "sentence_id": 12,
             "words": [
                 {"begin_time": 1000, "end_time": 1500, "text": "你"},
                 {"begin_time": 1500, "end_time": 2000, "text": "好"},
@@ -108,6 +177,7 @@ class TestASRClient:
         }))
         entry = cb._subtitle_buffer.popleft()  # noqa: SLF001 - 测试直接访问
         assert entry.words == [(1.0, 1.5, "你"), (1.5, 2.0, "好"), (2.0, 3.0, "世界")]
+        assert entry.sentence_id == 12
 
         # partial：中间结果尾字缺 end_time → None（句终才补）
         cb.on_event(FakeResult({

@@ -3,8 +3,8 @@
 单页：输入流地址/文件路径 → 引擎选择 → 大字号实时字幕（WebSocket 推送）。
 
 用法:
-    python webui.py [--host 127.0.0.1] [--port 8000]
-    # SSH 远程访问: ssh -L 8000:localhost:8000 user@host 后浏览器开 localhost:8000
+    python webui.py [--host 127.0.0.1] [--port 8002]
+    # SSH 远程访问: ssh -L 8002:localhost:8002 user@host 后浏览器开 localhost:8002
 
 注意: 本地引擎需要 CUDA 运行库在 LD_LIBRARY_PATH（建议经 run_subs.sh 的环境启动）。
 """
@@ -26,12 +26,13 @@ warnings.filterwarnings("ignore", message=".*InsecureRequestWarning.*")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whisper_streaming"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, File, Request, Response, UploadFile, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse  # noqa: E402
 from starlette.background import BackgroundTask  # noqa: E402
 import uvicorn  # noqa: E402
 
 from engines import create_engine  # noqa: E402
+from caption_preview import StableCaptionPreview  # noqa: E402
 from input_resolver import classify, resolve_stream_url  # noqa: E402
 from stream_source import DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
 
@@ -142,6 +143,11 @@ def parse_m3u(text: str) -> list:
     返回 [{group, name, url}]，跳过无 URL 的条目（含 header 行）。"""
     import re
 
+    # A single HLS media playlist is also an .m3u8 file, but its EXTINF lines
+    # describe timed media segments rather than selectable TV channels.
+    if re.search(r"(?m)^\s*#EXT-X-(?:TARGETDURATION|MEDIA-SEQUENCE|STREAM-INF|ENDLIST|PART|PROGRAM-DATE-TIME)\b", text, re.I):
+        raise ValueError("这是单路 HLS 播放流，不是频道列表；请直接播放该地址，频道列表请使用 IPTV M3U 清单。")
+
     channels = []
     for line in text.splitlines():
         s = line.strip()
@@ -243,7 +249,10 @@ async def channels_proxy(url: str):
             resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             text = resp.content.decode("utf-8", "replace")
-    return parse_m3u(text)
+    try:
+        return parse_m3u(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 _PROBE_CACHE: dict = {}  # url -> (ts, {ok, latency_ms})，缓存 5 分钟
@@ -332,7 +341,11 @@ async def ws_endpoint(ws: WebSocket):
     url = ws.query_params.get("url", "").strip()
     engine_name = ws.query_params.get("engine", "faster-whisper").strip()
     silence = ws.query_params.get("silence", "400").strip()
-    win_len = ws.query_params.get("win", "2").strip()
+    delay = ws.query_params.get("delay", "1").strip()
+    try:
+        delay_sec = max(0.1, min(float(delay), 30.0))
+    except ValueError:
+        delay_sec = 1.0
     if not url:
         await ws.send_json({"type": "error", "message": "缺少 url 参数"})
         await ws.close()
@@ -363,21 +376,53 @@ async def ws_endpoint(ws: WebSocket):
     def worker() -> None:
         import time
 
-        coverage = 0.0  # 转写覆盖度：已转写到的音频位置（秒）
+        timeline_offset = 0.0
+        fed_sec = 0.0
+        playback_ceiling = None
+        pending_sentences = []
 
         def emit(o) -> None:
-            """推送当前句 partial（整句累计文本 + 可选字级 words，前端字级快照显示）"""
-            nonlocal coverage
-            beg, end, text, words = o
+            """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
+            beg, end, text, words = o[:4]
+            is_final = bool(o[4]) if len(o) > 4 else True
+            sentence_id = o[5] if len(o) > 5 else None
             if text:
+                # Use the API sentence id when available. Nearby sentence starts
+                # can be less than a second apart and must not share one hold.
+                match = next((i for i, item in enumerate(pending_sentences)
+                              if sentence_id is not None and item["id"] == sentence_id), None)
+                if match is None and sentence_id is None:
+                    nearest = min(((abs(item["beg"] - beg), i)
+                                   for i, item in enumerate(pending_sentences)
+                                   if item["id"] is None), default=(float("inf"), None))
+                    match = nearest[1] if nearest[0] < 0.75 else None
+                if is_final:
+                    if match is not None:
+                        pending_sentences.pop(match)
+                elif match is None:
+                    preview = StableCaptionPreview(beg)
+                    preview.observe(text, words)
+                    pending_sentences.append({"id": sentence_id, "beg": beg,
+                                              "preview": preview})
+                else:
+                    item = pending_sentences[match]
+                    item["beg"] = min(item["beg"], beg)
+                    for clause_beg, clause_end, clause_text in item["preview"].observe(text, words):
+                        put({"type": "preview", "beg": clause_beg + timeline_offset,
+                             "end": clause_end + timeline_offset, "text": clause_text,
+                             "sentence_id": sentence_id})
+                shifted_words = None
                 if words:
-                    cov = max((w[1] if w[1] is not None else w[0]) for w in words)
-                    if cov > coverage:
-                        coverage = cov
-                elif end and end > coverage:
-                    coverage = end
-                put({"type": "subtitle", "beg": beg, "end": end, "text": text,
-                     "words": words})
+                    shifted_words = [
+                        (word_beg + timeline_offset,
+                         word_end + timeline_offset if word_end is not None else None,
+                         word_text)
+                        for word_beg, word_end, word_text in words
+                    ]
+                put({"type": "subtitle", "beg": beg + timeline_offset,
+                     "end": end + timeline_offset if end is not None else None,
+                     "text": text, "words": shifted_words, "is_final": is_final,
+                     "sentence_id": sentence_id})
 
         # 服务端日志（ticket-14）：连接即推环形缓冲快照，之后实时推送
         for line in list(_SERVER_LOGS)[-200:]:
@@ -386,6 +431,7 @@ async def ws_endpoint(ws: WebSocket):
         logger.info("会话开始 url=%s engine=%s silence=%s",
                     url[:80], engine_name, silence)
 
+        engine = None
         try:
             real_url = resolve_stream_url(url)
             kind, target = classify(url)
@@ -400,25 +446,40 @@ async def ws_endpoint(ws: WebSocket):
                     engine_kwargs["max_sentence_silence"] = int(silence)
                 except ValueError:
                     engine_kwargs["max_sentence_silence"] = 400
-            engine = create_engine(engine_name, **engine_kwargs)
-            put({"type": "status", "message": f"引擎就绪，开始拉流: {real_url[:60]}"})
-            logger.info("引擎就绪 %s，拉流 %s", engine_name, real_url[:80])
+            if urlparse(real_url).path.lower().endswith(".m3u8"):
+                put({"type": "status", "message": f"正在检查直播源: {real_url[:60]}"})
             src = StreamSource(real_url, http_headers=http_headers)
-            chunk_sec = 0.1  # 拉流分块（秒）：帧粒度基准（0.1s = 3 帧 @30fps）
+            timeline_offset = getattr(src, "timeline_offset_sec", 0.0)
             try:
-                # 播放就绪信号（直播延时技术，ticket-15 v4）：转写覆盖满第一个窗口
-                # （win_len+1s 保险）才让前端开播——开播时播放位置的字早已转写，
-                # 字幕直接显示当前窗口、完整且与画面同步。开场静音时按 fed 兜底。
-                try:
-                    win_sec = float(win_len)
-                except ValueError:
-                    win_sec = 2.0
-                fed_sec = 0.0
+                if urlparse(real_url).path.lower().endswith(".m3u8") and hasattr(src, "container"):
+                    video_streams = src.container.streams.video
+                    if not video_streams:
+                        raise ValueError("直播源没有视频轨，已停止识别以避免黑屏时继续调用 API")
+                    codec = video_streams[0].codec_context.name
+                    if codec == "mpeg2video":
+                        raise ValueError("直播源使用 MPEG-2 视频编码，浏览器无法播放；已停止识别。请换 H.264 频道")
+                engine = create_engine(engine_name, **engine_kwargs)
+                batch_mode = getattr(engine, "batch_mode", False)
+                if batch_mode and not os.path.isfile(real_url):
+                    raise ValueError("FunASR Vulkan（文件模式）只支持本地媒体文件；直播流请使用实时引擎")
+                put({"type": "status", "message": f"引擎就绪，开始拉流: {real_url[:60]}"})
+                logger.info("引擎就绪 %s，拉流 %s", engine_name, real_url[:80])
+                # 音频持续送入 ASR；视频元素同时承载 HLS 音轨，并保持在已送入音频的
+                # delay 秒之后播放。这样延迟覆盖整个画面和声音，而非只延迟字幕。
                 ready_sent = False
+                clock_sent = False
                 last = time.monotonic()
+                playback_ceiling = timeline_offset
                 for chunk in src.iter_chunks():
                     if stop.is_set():
                         break
+                    if not clock_sent and urlparse(real_url).path.lower().endswith('.m3u8'):
+                        first_pts = getattr(src, 'first_pts_sec', None)
+                        if first_pts is not None:
+                            timeline_offset = 0.0
+                            playback_ceiling = 0.0
+                            put({'type': 'timeline', 'audio_pts': first_pts})
+                        clock_sent = True
                     # 客户端暂停：停止推流解析（字幕冻结，省 API 调用）
                     while paused.is_set():
                         if stop.is_set():
@@ -426,17 +487,16 @@ async def ws_endpoint(ws: WebSocket):
                         time.sleep(0.2)
                     if stop.is_set():
                         break
-                    # 按实时速率推流：每 chunk 对应 chunk_sec 秒音频
-                    wait = chunk_sec - (time.monotonic() - last)
-                    if wait > 0:
-                        time.sleep(wait)
-                    last = time.monotonic()
+                    # Pace by the actual PCM duration (including a short tail).
+                    chunk_sec = len(chunk) / (16000 * 2)
+                    if not batch_mode:
+                        wait = chunk_sec - (time.monotonic() - last)
+                        if wait > 0:
+                            time.sleep(wait)
+                        last = time.monotonic()
                     o = engine.transcribe_chunk(s16_to_f32(chunk))
-                    if not ready_sent:
+                    if not batch_mode:
                         fed_sec += chunk_sec
-                        if coverage >= win_sec + 1.0 or fed_sec >= win_sec + 4.0:
-                            put({"type": "ready", "win": win_sec})
-                            ready_sent = True
                     if o[0] is not None:
                         emit(o)
                     # 异步引擎（API）积压的句子逐条取出（增量，含 partial）
@@ -445,6 +505,23 @@ async def ws_endpoint(ws: WebSocket):
                         if o2[0] is None:
                             break
                         emit(o2)
+                    if not batch_mode:
+                        # Keep the configured live delay as a floor. If ASR has an
+                        # unfinished sentence, hold before it; when final arrives,
+                        # resume at real time without jumping over buffered A/V.
+                        feed_target = timeline_offset + max(0.0, fed_sec - delay_sec)
+                        pending_target = min(
+                            (timeline_offset + item["preview"].emitted_end
+                             for item in pending_sentences),
+                            default=float("inf"),
+                        )
+                        playback_ceiling = max(playback_ceiling, min(feed_target, pending_target))
+                        put({"type": "buffer", "play_at": playback_ceiling})
+                        if not ready_sent and fed_sec >= delay_sec \
+                                and playback_ceiling >= timeline_offset + 0.25:
+                            put({"type": "ready", "delay": delay_sec,
+                                 "start_at": timeline_offset})
+                            ready_sent = True
                 o = engine.finish()
                 if o[0] is not None:
                     emit(o)
@@ -454,12 +531,22 @@ async def ws_endpoint(ws: WebSocket):
                     if o2[0] is None:
                         break
                     emit(o2)
+                # Batch engines finish the whole file before the player starts.
+                # Send ready only after subtitles have reached the browser.
+                if not ready_sent:
+                    put({"type": "ready", "delay": delay_sec, "start_at": timeline_offset})
+                    ready_sent = True
             finally:
                 src.close()
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
             logger.warning("worker 异常: %s", exc)
             put({"type": "error", "message": str(exc)[:300]})
         finally:
+            if engine is not None and callable(getattr(engine, "close", None)):
+                try:
+                    engine.close()
+                except Exception as exc:  # noqa: BLE001 - 断开连接时仍需结束会话
+                    logger.warning("引擎关闭失败: %s", exc)
             if put in _LOG_SINKS:
                 _LOG_SINKS.remove(put)
             logger.info("会话结束")
@@ -503,7 +590,7 @@ def main():
 
     ap = argparse.ArgumentParser(description="实时字幕 webUI")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--port", type=int, default=8002)
     args = ap.parse_args()
     print(f"实时字幕 webUI: http://{args.host}:{args.port}")
     # log_config=None：禁用 uvicorn 默认日志配置，保留我们挂的环形缓冲 handler

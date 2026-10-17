@@ -8,6 +8,8 @@ EXT-X-MEDIA / EXT-X-STREAM-INF 变体）改写为本地代理 URL（ticket-19—
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 
 from webui import _rewrite_hls_playlist, parse_m3u  # noqa: E402
@@ -93,3 +95,18 @@ def test_parse_m3u_skips_entries_without_url():
     chs = parse_m3u(text)
     assert len(chs) == 1
     assert chs[0]["name"] == "HasUrl"
+
+
+def test_parse_m3u_rejects_single_hls_media_playlist():
+    text = (
+        "#EXTM3U\n"
+        "#EXT-X-VERSION:3\n"
+        "#EXT-X-TARGETDURATION:6\n"
+        "#EXT-X-MEDIA-SEQUENCE:120\n"
+        "#EXTINF:6.0,\n"
+        "segment120.ts\n"
+        "#EXTINF:6.0,\n"
+        "segment121.ts\n"
+    )
+    with pytest.raises(ValueError, match="单路 HLS 播放流"):
+        parse_m3u(text)

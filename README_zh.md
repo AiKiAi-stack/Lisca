@@ -99,6 +99,10 @@ output/
 └── 1_20260709_143030.srt
 ```
 
+### 本地 FunASR Vulkan（无 API Key，文件模式）
+
+Windows Vulkan GGUF 安装可通过本机 HTTP 服务接入 WebUI。该模式对本地音视频文件整段转写，完成后开始播放；不支持直播实时字幕。服务启动与 WebUI 使用步骤见[本地 FunASR Vulkan 指南](docs/funasr-vulkan.md)。
+
 ## 配置说明
 
 ### 流媒体设置 (`config.yml`)

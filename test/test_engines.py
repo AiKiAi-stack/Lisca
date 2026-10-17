@@ -32,6 +32,12 @@ def test_create_engine_unknown_raises():
         create_engine("nonexistent")
 
 
+def test_create_engine_funasr_gguf_is_file_mode():
+    engine = create_engine("funasr-gguf", base_url="http://127.0.0.1:8765")
+    assert engine.batch_mode is True
+    assert engine.base_url == "http://127.0.0.1:8765"
+
+
 def test_create_engine_aliyun_requires_key(monkeypatch):
     import engines.aliyun_funasr as af
 
