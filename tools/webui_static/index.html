@@ -65,6 +65,7 @@
   <select id="engine">
     <option value="faster-whisper">本地 faster-whisper</option>
     <option value="aliyun-funasr">阿里云 FunASR API（推荐）</option>
+    <option value="funasr-gguf">FunASR Vulkan（文件模式）</option>
     <option value="demo">演示字幕（无识别，仅验证链路）</option>
   </select>
   <select id="silence" title="断句灵敏度：语音后静音多久判定一句结束（越小切句越频繁，仅 API 引擎生效）">
@@ -438,9 +439,13 @@
     if (!displayedBlock || displayedBlock.w0 !== w0) {
       let text = '';
       for (const s of subs) {
-        if (!s.words || !s.words.length) continue;
-        for (const w of s.words) {
-          if (w[0] >= w0 && w[0] < w0 + D) text += w[2];
+        if (s.words && s.words.length) {
+          for (const w of s.words) {
+            if (w[0] >= w0 && w[0] < w0 + D) text += w[2];
+          }
+        } else if (s.beg != null && s.end != null && s.beg < w0 + D && s.end > w0) {
+          // File-mode engines may only provide sentence-level SRT timestamps.
+          text += s.text;
         }
       }
       displayedBlock = { w0, text };

@@ -99,6 +99,10 @@ output/
 └── 1_20260709_143030.srt
 ```
 
+### Local FunASR Vulkan (no API key, file mode)
+
+A Windows Vulkan GGUF install can be connected to the WebUI through a local HTTP service. This mode transcribes an entire local audio/video file before playback; it does not provide live captions. See the [local FunASR Vulkan guide](docs/funasr-vulkan.md) for setup and usage.
+
 ## Configuration
 
 ### Stream settings (`config.yml`)

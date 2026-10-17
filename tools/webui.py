@@ -401,6 +401,9 @@ async def ws_endpoint(ws: WebSocket):
                 except ValueError:
                     engine_kwargs["max_sentence_silence"] = 400
             engine = create_engine(engine_name, **engine_kwargs)
+            batch_mode = getattr(engine, "batch_mode", False)
+            if batch_mode and not os.path.isfile(real_url):
+                raise ValueError("FunASR Vulkan（文件模式）只支持本地媒体文件；直播流请使用实时引擎")
             put({"type": "status", "message": f"引擎就绪，开始拉流: {real_url[:60]}"})
             logger.info("引擎就绪 %s，拉流 %s", engine_name, real_url[:80])
             src = StreamSource(real_url, http_headers=http_headers)
@@ -427,12 +430,13 @@ async def ws_endpoint(ws: WebSocket):
                     if stop.is_set():
                         break
                     # 按实时速率推流：每 chunk 对应 chunk_sec 秒音频
-                    wait = chunk_sec - (time.monotonic() - last)
-                    if wait > 0:
-                        time.sleep(wait)
-                    last = time.monotonic()
+                    if not batch_mode:
+                        wait = chunk_sec - (time.monotonic() - last)
+                        if wait > 0:
+                            time.sleep(wait)
+                        last = time.monotonic()
                     o = engine.transcribe_chunk(s16_to_f32(chunk))
-                    if not ready_sent:
+                    if not batch_mode and not ready_sent:
                         fed_sec += chunk_sec
                         if coverage >= win_sec + 1.0 or fed_sec >= win_sec + 4.0:
                             put({"type": "ready", "win": win_sec})
@@ -454,6 +458,11 @@ async def ws_endpoint(ws: WebSocket):
                     if o2[0] is None:
                         break
                     emit(o2)
+                # Batch engines finish the whole file before the player starts.
+                # Send ready only after subtitles have reached the browser.
+                if batch_mode and not ready_sent:
+                    put({"type": "ready", "win": win_sec})
+                    ready_sent = True
             finally:
                 src.close()
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
