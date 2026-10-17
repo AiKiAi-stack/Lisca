@@ -21,8 +21,10 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
+import threading
 from typing import Iterable, Optional
 from urllib.parse import urlparse
 
@@ -37,6 +39,7 @@ class ServerConfig:
     extra_args: list[str] = field(default_factory=list)
     work_dir: str = field(default_factory=tempfile.gettempdir)
     timeout: float = 600.0
+    max_upload_bytes: int = 1024 * 1024 * 1024
 
 
 def build_command(config: ServerConfig, audio_path: str) -> list[str]:
@@ -145,6 +148,14 @@ class FunASRGGUFHandler(BaseHTTPRequestHandler):
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0:
+                raise ValueError("missing or invalid Content-Length")
+            if length > self.config.max_upload_bytes:
+                self._send_json(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    _error_payload("uploaded file exceeds the configured size limit"),
+                )
+                return
             content_type = self.headers.get("Content-Type", "")
             audio_bytes, filename = parse_multipart_file(content_type, self.rfile.read(length))
         except Exception as exc:
@@ -162,7 +173,10 @@ class FunASRGGUFHandler(BaseHTTPRequestHandler):
             ) as tmp:
                 tmp.write(audio_bytes)
                 tmp_path = tmp.name
-            transcript = transcribe_file(self.config, tmp_path)
+            # The Vulkan CLI uses a single local GPU; serialize inference while
+            # still allowing health checks and upload parsing concurrently.
+            with self.server.inference_lock:  # type: ignore[attr-defined]
+                transcript = transcribe_file(self.config, tmp_path)
         except subprocess.CalledProcessError as exc:
             message = (exc.stderr or "").strip() or (exc.stdout or "").strip() or str(exc)
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, _error_payload(message))
@@ -187,6 +201,7 @@ class FunASRHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address, handler_class, config: ServerConfig):
         super().__init__(server_address, handler_class)
         self.config = config
+        self.inference_lock = threading.Lock()
 
 
 def create_server(host: str, port: int, config: ServerConfig) -> FunASRHTTPServer:
@@ -196,14 +211,14 @@ def create_server(host: str, port: int, config: ServerConfig) -> FunASRHTTPServe
 def _parse_extra_args(values: Optional[Iterable[str]]) -> list[str]:
     args: list[str] = []
     for value in values or []:
-        args.extend(value.split())
+        args.extend(shlex.split(value))
     return args
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Serve a FunASR llama.cpp / GGUF binary over HTTP.")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--binary", required=True, help="Path to llama-funasr-sensevoice or llama-funasr-paraformer.")
     parser.add_argument("--model", required=True, help="Path to the model GGUF passed as -m.")
     parser.add_argument("--vad", help="Optional FSMN-VAD GGUF passed as --vad.")
@@ -211,6 +226,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--srt", action="store_true", help="Return the binary's SRT output in the response text.")
     parser.add_argument("--work-dir", default=tempfile.gettempdir(), help="Directory for temporary uploaded audio files.")
     parser.add_argument("--timeout", type=float, default=600.0, help="Per-request subprocess timeout in seconds.")
+    parser.add_argument(
+        "--max-upload-mb", type=int, default=1024,
+        help="Maximum multipart request size in MiB (default: 1024).",
+    )
     parser.add_argument(
         "--extra-arg",
         action="append",
@@ -231,6 +250,7 @@ def main() -> None:
         extra_args=_parse_extra_args(args.extra_arg),
         work_dir=args.work_dir,
         timeout=args.timeout,
+        max_upload_bytes=args.max_upload_mb * 1024 * 1024,
     )
     httpd = create_server(args.host, args.port, config)
     print(f"Serving FunASR GGUF transcription on http://{args.host}:{httpd.server_port}")

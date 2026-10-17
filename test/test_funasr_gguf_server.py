@@ -4,7 +4,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 
-from funasr_gguf_server import ServerConfig, build_command  # noqa: E402
+from funasr_gguf_server import (  # noqa: E402
+    ServerConfig, _parse_extra_args, build_arg_parser, build_command,
+)
 
 
 def test_build_command_forwards_model_vulkan_and_srt():
@@ -20,3 +22,12 @@ def test_build_command_forwards_model_vulkan_and_srt():
         "-a", r"D:\work\audio.wav",
         "--backend", "vulkan", "--srt",
     ]
+
+
+def test_server_defaults_to_approved_loopback_port():
+    defaults = build_arg_parser().parse_args(["--binary", "funasr", "--model", "model.gguf"])
+    assert (defaults.host, defaults.port) == ("127.0.0.1", 8765)
+
+
+def test_extra_args_respect_quoted_values():
+    assert _parse_extra_args(['--name "path with spaces"']) == ["--name", "path with spaces"]

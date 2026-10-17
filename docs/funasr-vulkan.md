@@ -27,6 +27,10 @@ The service listens only on loopback by default. Check it with:
 Invoke-RestMethod http://127.0.0.1:8765/health
 ```
 
+The default listen port is `8765`. Uploads are limited to 1024 MiB by
+default; change that limit with `--max-upload-mb`. Inference runs one request
+at a time so concurrent clients do not launch overlapping Vulkan model jobs.
+
 To submit a WAV directly:
 
 ```powershell
