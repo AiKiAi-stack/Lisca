@@ -1,13 +1,15 @@
-"""复现回路：本地视频两条路径（R3）
+"""复现回路：本地视频两条路径（无 API key / ASR 模型）
 
 用户症状：本地视频"无法正常使用"。
 本回路覆盖两条路径，各断言 overlay 同步命中：
   路径 A：直接输入本地文件路径 → 开始
   路径 B：上传按钮（set_input_files 触发 /upload → connect）
 
-一条命令:  .venv/bin/python test/repro_local_video.py
+用法: python test/repro_local_video.py --video /path/to/video.mp4
+也可将视频放到 uploads/ 后直接运行；若目录有多段视频会取前两段。
 退出码: 0=全绿 1=复现症状(红) 2=环境错误
 """
+import argparse
 import os
 import socket
 import subprocess
@@ -17,9 +19,8 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORT = 8126
 BASE = f"http://127.0.0.1:{PORT}"
-VID_A = os.path.join(ROOT, "uploads", "demo.mp4")
-VID_B = os.path.join(ROOT, "uploads", "0_20260709_223807.mp4")
 PLACEHOLDER_MARKS = ("输入地址", "点击下方播放", "准备中", "⚠")
+VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov", ".webm", ".avi", ".wav", ".mp3", ".m4a", ".flac")
 
 
 def wait_port(port, timeout=20):
@@ -35,12 +36,11 @@ def wait_port(port, timeout=20):
 def run_scenario(page, mode, video):
     """返回 (ok, 命中数, 详情)"""
     page.goto(BASE)
+    page.select_option("#engine", "demo")
     if mode == "direct":
         page.fill("#url", video)
-        page.select_option("#engine", "aliyun-funasr")
         page.click("#start")
-    else:  # upload
-        page.select_option("#engine", "aliyun-funasr")
+    else:
         page.set_input_files("#file", video)
     hits = 0
     started = False
@@ -67,6 +67,22 @@ def run_scenario(page, mode, video):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--video", help="本地视频/音频文件；直接路径与上传路径都会验证")
+    args = parser.parse_args()
+    if args.video:
+        videos = [os.path.abspath(args.video)]
+    else:
+        upload_dir = os.path.join(ROOT, "uploads")
+        videos = sorted(
+            os.path.join(upload_dir, name) for name in os.listdir(upload_dir)
+            if name.lower().endswith(VIDEO_EXTENSIONS)
+        )[:2] if os.path.isdir(upload_dir) else []
+    videos = [path for path in videos if os.path.isfile(path)]
+    if not videos:
+        print("[ERR] 找不到媒体文件。请用 --video <本地文件> 指定，或放入 uploads/。")
+        return 2
+    scenarios = [("direct", videos[0]), ("upload", videos[1] if len(videos) > 1 else videos[0])]
     server = subprocess.Popen(
         [sys.executable, os.path.join(ROOT, "tools", "webui.py"),
          "--host", "127.0.0.1", "--port", str(PORT)],
@@ -81,7 +97,7 @@ def main():
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 args=["--autoplay-policy=no-user-gesture-required"])
-            for mode, video in (("direct", VID_A), ("upload", VID_B)):
+            for mode, video in scenarios:
                 page = browser.new_page()
                 ok, hits, err = run_scenario(page, mode, video)
                 results[mode] = (ok, hits, err)
@@ -92,7 +108,7 @@ def main():
             print(f"[{mode}] 本地路径: overlay 命中 {hits} 次"
                   f"{' ✅' if ok else f' ❌ {err}'}")
         if all(ok for ok, _, _ in results.values()):
-            print("[GREEN] 本地视频两路径均正常")
+            print("[GREEN] 本地媒体实时链路两路径均正常（字幕为演示内容，不代表识别效果）")
             return 0
         print("[RED] 本地视频存在异常")
         return 1
