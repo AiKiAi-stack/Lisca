@@ -17,10 +17,11 @@ class ASRState(Enum):
 
 
 class _Callback(RecognitionCallback):
-    def __init__(self, subtitle_buffer: deque, sentence_count: list) -> None:
+    def __init__(self, subtitle_buffer: deque, sentence_count: list, errors: Queue) -> None:
         super().__init__()
         self._subtitle_buffer = subtitle_buffer
         self._sentence_count = sentence_count
+        self._errors = errors
 
     def on_open(self) -> None:
         pass
@@ -32,7 +33,16 @@ class _Callback(RecognitionCallback):
         pass
 
     def on_error(self, result: RecognitionResult) -> None:
-        pass
+        message = ""
+        get_message = getattr(result, "get_message", None)
+        if callable(get_message):
+            try:
+                message = str(get_message() or "")
+            except Exception:  # noqa: BLE001 - SDK callback must not throw
+                message = ""
+        if not message:
+            message = str(result)
+        self._errors.put(message or "DashScope ASR returned an unspecified error")
 
     def on_event(self, result: RecognitionResult) -> None:
         sentence = result.get_sentence()
@@ -69,7 +79,8 @@ class ASRClient:
         self.subtitle_buffer: deque = deque()
         self._sentence_count = [0]
 
-        callback = _Callback(self.subtitle_buffer, self._sentence_count)
+        self._errors: Queue = Queue()
+        callback = _Callback(self.subtitle_buffer, self._sentence_count, self._errors)
         self._recognition = Recognition(
             model=settings.model or "fun-asr-realtime",
             format="pcm",
@@ -94,19 +105,34 @@ class ASRClient:
         self._running.clear()
         if self._worker is not None:
             self._worker.join(timeout=5)
+            if self._worker.is_alive():
+                raise RuntimeError("ASR audio worker did not stop within 5 seconds")
         self._recognition.stop()
+
+    def raise_if_error(self) -> None:
+        """Raise the next asynchronous SDK error on the caller's thread."""
+        try:
+            message = self._errors.get_nowait()
+        except Empty:
+            return
+        raise RuntimeError(f"DashScope ASR error: {message}")
 
     def feed_audio(self, data: bytes) -> None:
         self._input_queue.put(data)
 
     def _worker_loop(self) -> None:
-        while self._running.is_set():
+        while True:
             try:
                 chunk = self._input_queue.get(timeout=0.1)
             except Empty:
+                if not self._running.is_set():
+                    break
                 continue
             self._audio_buffer.extend(chunk)
             while len(self._audio_buffer) >= self.chunk_size:
                 send_data = bytes(self._audio_buffer[: self.chunk_size])
                 self._audio_buffer = self._audio_buffer[self.chunk_size :]
                 self._recognition.send_audio_frame(send_data)
+        if self._audio_buffer:
+            self._recognition.send_audio_frame(bytes(self._audio_buffer))
+            self._audio_buffer.clear()

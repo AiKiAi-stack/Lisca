@@ -60,6 +60,7 @@ class AliyunFunASREngine(Engine):
 
     def _drain(self) -> Subtitle:
         """FIFO 取出一条待显示句子（partial 实时文本，前端定时快照成块显示）"""
+        self.client.raise_if_error()
         while self.client.subtitle_buffer:
             entry = self.client.subtitle_buffer.popleft()
             if entry.text:
@@ -84,6 +85,7 @@ class AliyunFunASREngine(Engine):
         if not getattr(self, "_stopped", False):
             self.client.stop()
             self._stopped = True
+        self.client.raise_if_error()
         return self._drain()
 
     def close(self) -> None:
