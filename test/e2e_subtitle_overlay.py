@@ -19,10 +19,15 @@ def main():
         page = browser.new_page()
         page.goto(BASE, wait_until="domcontentloaded")
         result = page.evaluate("""() => {
-          Object.defineProperty(player, 'currentTime', {configurable:true, get:()=>24.5});
+          Object.defineProperty(player, 'currentTime', {configurable:true, get:()=>24.3});
           Object.defineProperty(player, 'paused', {configurable:true, get:()=>false});
-          onSubtitle({beg:22.0, end:24.0, text:'In 2017, Chen Guangwei turned attention',
+          onSubtitle({beg:22.0, end:24.5, text:'In 2017, Chen Guangwei turned attention',
             words:[[24.1,24.5,'attention']],});
+          Object.defineProperty(player, 'currentTime', {configurable:true, get:()=>21.5});
+          syncSubtitle();
+          const beforeSentence = currentEl.textContent;
+          Object.defineProperty(player, 'currentTime', {configurable:true, get:()=>24.3});
+          syncSubtitle();
           const first = currentEl.textContent;
           onSubtitle({beg:22.8, end:26.0, text:'In 2017, Chen Guangwei turned his attention to the sea and nearby islands to collect trash, no matter the weather.',
             words:[[22.8,23.0,'In'],[23.0,23.4,'2017'],[23.4,23.8,'Chen'],
@@ -32,6 +37,9 @@ def main():
           const playerRect = playerWrap.getBoundingClientRect();
           const captionRect = currentEl.getBoundingClientRect();
           const fitsPlayer = captionRect.top >= playerRect.top && captionRect.bottom <= playerRect.bottom;
+          Object.defineProperty(player, 'currentTime', {configurable:true, get:()=>26.5});
+          syncSubtitle();
+          const afterSentence = currentEl.textContent;
           Object.defineProperty(player, 'currentTime', {configurable:true, get:()=>31.5});
           onSubtitle({beg:31.0, end:33.0, text:'A separate sentence in the next playback window.', words:[]});
           const nextFrame = currentEl.textContent;
@@ -52,19 +60,23 @@ def main():
           onSubtitle({beg:508.2, end:509, text:'Corrected latest history item', words:[]});
           const cappedHistoryCount = historyEl.children.length;
           const latestHistoryRow = historyEl.lastElementChild.textContent;
-          return {first, updated, nextFrame, historyCount:playbackHistoryCount, fitsPlayer, duplicateCleanup,
-            cappedHistoryCount, latestHistoryRow};
+          return {beforeSentence, first, updated, afterSentence, nextFrame, historyCount:playbackHistoryCount, fitsPlayer, duplicateCleanup,
+            cappedHistoryCount, latestHistoryRow,
+            delayOptions:[...delayEl.options].map(option=>option.value)};
         }""")
         browser.close()
 
+    assert result["beforeSentence"] == "", result
     assert result["first"] == "In 2017, Chen Guangwei turned attention", result
     assert result["updated"] == "In 2017, Chen Guangwei turned his attention to the sea and nearby islands to collect trash, no matter the weather.", result
     assert result["nextFrame"] == "A separate sentence in the next playback window.", result
+    assert result["afterSentence"] == "", result
     assert result["historyCount"] == 2, result
     assert result["fitsPlayer"], result
     assert result["duplicateCleanup"], result
     assert result["cappedHistoryCount"] == 200, result
     assert "Corrected latest history item" in result["latestHistoryRow"], result
+    assert result["delayOptions"] == ["0.1", "1", "5"], result
     print("PASS: long caption fits; corrected partial merges; next playback window updates independently")
 
 

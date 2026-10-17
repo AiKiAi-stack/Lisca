@@ -74,11 +74,10 @@
     <option value="800">断句：标准 800ms</option>
     <option value="1300">断句：宽松 1300ms（服务端默认）</option>
   </select>
-  <select id="winLen" title="字幕窗口：窗口内音频内容完整显示，窗口到点整体切换或消失（1-4s）">
-    <option value="1">窗口 1s</option>
-    <option value="2" selected>窗口 2s</option>
-    <option value="3">窗口 3s</option>
-    <option value="4">窗口 4s</option>
+  <select id="delay" title="HLS 直播回放相对 ASR 转写进度的延迟；延迟越长，句子越有时间完整修订">
+    <option value="0.1">字幕延迟 100ms</option>
+    <option value="1" selected>字幕延迟 1s</option>
+    <option value="5">字幕延迟 5s</option>
   </select>
   <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
   <button id="uploadBtn" title="上传本地音频/视频文件">📁 上传文件</button>
@@ -129,7 +128,7 @@
   const urlEl = document.getElementById('url');
   const engineEl = document.getElementById('engine');
   const silenceEl = document.getElementById('silence');
-  const winLenEl = document.getElementById('winLen');
+  const delayEl = document.getElementById('delay');
   const subToggleBtn = document.getElementById('subToggle');
   const startBtn = document.getElementById('start');
   const stopBtn = document.getElementById('stop');
@@ -149,7 +148,6 @@
   let seekPending = false; // seek 后清空当前句显示，等新数据（ADR-0001）
   let aligningInitialPlayback = false;
   let subEnabled = true; // 中间字幕显示开关（ticket-13）
-  let displayedBlock = null; // 当前显示块 {w0, text}——窗口起点快照冻结，块内零变化
 
   // 会话日志：环形缓冲（500 条），供用户一键复制反馈问题（ticket-16 full log）
   const logBtn = document.getElementById('logBtn');
@@ -430,21 +428,19 @@
       currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
       return;
     }
-    // 固定窗口分块（ADR-0002）：窗口与完整识别句相交时显示整句，不按字级时间戳
-    // 截断成短语片段。收到 ASR 修订时重算当前窗口，让完整句子及时替换旧文本。
-    const D = parseFloat(winLenEl.value) || 2;
-    const w0 = Math.floor(t / D) * D;
-    if (!displayedBlock || displayedBlock.w0 !== w0) {
-      const candidates = subs.map(s => {
+    // 按识别句真实时间范围显示整句：句子开始时出现，结束时自然消失。
+    const candidates = subs.map(s => {
         const wordStarts = (s.words || []).map(w => w[0]);
         const wordEnds = (s.words || []).map(w => w[1] == null ? w[0] : w[1]);
+        const sentenceBeg = Number.isFinite(s.beg) ? s.beg : (wordStarts[0] ?? null);
+        const sentenceEnd = Number.isFinite(s.end) ? s.end : (wordEnds.length ? Math.max(...wordEnds) : null);
         return {
           ...s,
-          captionBeg: wordStarts.length ? Math.min(s.beg, ...wordStarts) : s.beg,
-          captionEnd: wordEnds.length ? Math.max(s.end, ...wordEnds) : s.end,
+          captionBeg: sentenceBeg,
+          captionEnd: sentenceEnd,
         };
       }).filter(s => s.captionBeg != null && s.captionEnd != null
-        && s.captionBeg < w0 + D && s.captionEnd > w0 && s.text.trim())
+        && s.captionBeg <= t && s.captionEnd > t && s.text.trim())
         .sort((a, b) => a.captionBeg - b.captionBeg);
       const groups = [];
       for (const caption of candidates) {
@@ -458,13 +454,11 @@
           if (caption.text.trim().length > group.text.length) group.text = caption.text.trim();
         }
       }
-      displayedBlock = { w0, text: groups.map(g => g.text).join(' ') };
-    }
-    currentEl.textContent = displayedBlock.text;
+    currentEl.textContent = groups.map(g => g.text).join(' ');
     return;
   }
 
-  // 字幕处理：partial 实时数据（同句原地更新），显示由 2s 定时器快照（整块替换）
+  // 字幕处理：partial 原地修订；画面按播放时间命中句子的起止区间显示。
   let uiPaused = false;  // 前端暂停标志：暂停期间忽略新数据（后端同时停止解析）
   function sharedWordRatio(a, b) {
     if (!a || !a.length || !b || !b.length) return 0;
@@ -516,7 +510,6 @@
       subs.push({ beg: msg.beg, end: msg.end, text: msg.text, words: msg.words || null, historyItem });
       logEvent('sub', `beg=${msg.beg.toFixed(1)} ${msg.text.slice(0, 24)}`);
     }
-    displayedBlock = null;
     syncSubtitle();
   }
 
@@ -538,11 +531,18 @@
     holdingForSync = false;
     uiPaused = false;
     seekPending = false;
-    displayedBlock = null;
     currentEl.classList.remove('err');
     currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
     lastBlockEnd = -1;
-    const params = new URLSearchParams({ url, engine: engineEl.value, silence: silenceEl.value, win: winLenEl.value });
+    const isHls = /\.m3u8/i.test(url);
+    delayEl.disabled = !isHls;
+    delayEl.title = isHls
+      ? 'HLS 直播回放相对 ASR 转写进度的延迟；延迟越长，句子越有时间完整修订'
+      : '字幕延迟仅适用于 HLS 直播流';
+    const params = new URLSearchParams({
+      url, engine: engineEl.value, silence: silenceEl.value,
+      delay: isHls ? delayEl.value : '0.1',
+    });
     ws = new WebSocket(`ws://${location.host}/ws?${params}`);
     startBtn.style.display = 'none';
     stopBtn.style.display = 'inline-block';
@@ -550,10 +550,9 @@
     setStatus('连接中…');
     // 画面走 video，声音按源类型分流（ticket-19）：HLS 音视频混在 TS 流里，
     // 视频元素直接出声；B站 DASH / 本地文件走隐藏 audio（音视频分离）。
-    // 不立即播放：等首条字幕到达后再播（源延迟 1.5s 补偿，字幕从一开始就同步）
+    // 不立即播放：等待后端按所选 HLS 延迟对齐好时间轴。
     // 切换前必须清理旧 audioEl：若旧 src 加载失败（B站防盗链），浏览器会锁定 error 状态，
     // 仅赋新 src 不会触发重新加载 → 音频残留或无声。pause→清空→load→赋新 src 强制重置。
-    const isHls = /\.m3u8/i.test(url);
     audioEl.pause();
     audioEl.removeAttribute('src');
     audioEl.load();
@@ -608,11 +607,10 @@
       if (msg.type === 'subtitle') {
         onSubtitle(msg);
       } else if (msg.type === 'ready') {
-        // 播放就绪（ticket-15）：后端已处理满一个窗口的音频，字幕第一块将完整——
-        // 此时才开播（+1.5s 让转写先跟上），不再由首条字幕触发。
+        // 播放就绪：视频从 ASR 覆盖位置前方 delay 秒启动，预留时间让句子补全修订。
         // HLS 音频从 live_sync_position 起解，视频也 seek 到同一 ASR 时间点，
         // 避免 HLS.js 从直播边缘起播、PyAV 却从更早分片起解造成字幕落后。
-        if (hlsPlayer && Number.isFinite(msg.start_at)) {
+        if (isHls && Number.isFinite(msg.start_at)) {
           aligningInitialPlayback = true;
           try { player.currentTime = Math.max(0, msg.start_at); }
           catch (e) { logEvent('sync_seek_error', String(e)); }
@@ -621,8 +619,8 @@
         }
         playStarted = true;
         holdingForSync = false;
-        logEvent('ready', `win=${msg.win}s，开始播放`);
-        setTimeout(() => { player.play().catch(() => {}); }, 1500);
+        logEvent('ready', `字幕延迟=${msg.delay}s，开始播放`);
+        player.play().catch(() => {});
         // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 时间轴损坏时，
         // 视频可能长时间 waiting/不前进却无 error 事件（无声卡死）——2s 轮询，
         // 就绪后 15s 内 t 从未前进（>0.5s）则判定源不可播，明确提示换源
@@ -710,13 +708,11 @@
     if (aligningInitialPlayback) {
       aligningInitialPlayback = false;
       seekPending = false;
-      displayedBlock = null;
       logEvent('sync_seeked', `t=${player.currentTime.toFixed(1)}`);
       syncSubtitle();
       return;
     }
     seekPending = true;  // 跳转后清空当前句显示，等新数据（ADR-0001）
-    displayedBlock = null;  // 跳转后重新快照（ticket-15）
     currentEl.textContent = '⏳ 跳转中，字幕将随转写跟进…';
     logEvent('seek', `t=${player.currentTime.toFixed(1)}`);
   });

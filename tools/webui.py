@@ -332,7 +332,11 @@ async def ws_endpoint(ws: WebSocket):
     url = ws.query_params.get("url", "").strip()
     engine_name = ws.query_params.get("engine", "faster-whisper").strip()
     silence = ws.query_params.get("silence", "400").strip()
-    win_len = ws.query_params.get("win", "2").strip()
+    delay = ws.query_params.get("delay", "1").strip()
+    try:
+        delay_sec = max(0.1, min(float(delay), 30.0))
+    except ValueError:
+        delay_sec = 1.0
     if not url:
         await ws.send_json({"type": "error", "message": "缺少 url 参数"})
         await ws.close()
@@ -420,13 +424,7 @@ async def ws_endpoint(ws: WebSocket):
             timeline_offset = getattr(src, "timeline_offset_sec", 0.0)
             chunk_sec = 0.1  # 拉流分块（秒）：帧粒度基准（0.1s = 3 帧 @30fps）
             try:
-                # 播放就绪信号（直播延时技术，ticket-15 v4）：转写覆盖满第一个窗口
-                # （win_len+1s 保险）才让前端开播——开播时播放位置的字早已转写，
-                # 字幕直接显示当前窗口、完整且与画面同步。开场静音时按 fed 兜底。
-                try:
-                    win_sec = float(win_len)
-                except ValueError:
-                    win_sec = 2.0
+                # 直播按用户设定的字幕安全延迟启动，给 ASR 留出补全/修订时间。
                 fed_sec = 0.0
                 ready_sent = False
                 last = time.monotonic()
@@ -449,17 +447,17 @@ async def ws_endpoint(ws: WebSocket):
                     o = engine.transcribe_chunk(s16_to_f32(chunk))
                     if not batch_mode and not ready_sent:
                         fed_sec += chunk_sec
-                        if coverage >= win_sec + 1.0 or fed_sec >= win_sec + 4.0:
-                            # The browser waits 1.5s after ready before playback.
-                            # Start up to (window - 1.5s) earlier so the ASR lead
-                            # fills the whole first fixed subtitle window.
-                            # Do not use fed_sec here: it counts submitted audio, not
-                            # audio for which ASR has produced usable subtitle data.
-                            # Start one full caption window behind actual coverage;
-                            # the browser's 1.5s startup delay then leaves a safety lead
-                            # for API partials to settle before each window is shown.
-                            start_at = timeline_offset + max(0.0, coverage - win_sec)
-                            put({"type": "ready", "win": win_sec,
+                        if coverage >= delay_sec + 1.0:
+                            ready_coverage = coverage
+                        elif fed_sec - coverage >= delay_sec + 4.0:
+                            # Long silence (or an empty opening) cannot advance ASR coverage.
+                            # Only fall back after the untranscribed gap itself is long enough.
+                            ready_coverage = fed_sec
+                        else:
+                            ready_coverage = None
+                        if ready_coverage is not None:
+                            start_at = timeline_offset + max(0.0, ready_coverage - delay_sec)
+                            put({"type": "ready", "delay": delay_sec,
                                  "start_at": start_at})
                             ready_sent = True
                     if o[0] is not None:
@@ -482,7 +480,7 @@ async def ws_endpoint(ws: WebSocket):
                 # Batch engines finish the whole file before the player starts.
                 # Send ready only after subtitles have reached the browser.
                 if batch_mode and not ready_sent:
-                    put({"type": "ready", "win": win_sec})
+                    put({"type": "ready", "delay": delay_sec})
                     ready_sent = True
             finally:
                 src.close()
