@@ -3,16 +3,19 @@
 单页：输入流地址/文件路径 → 引擎选择 → 大字号实时字幕（WebSocket 推送）。
 
 用法:
-    python webui.py [--host 127.0.0.1] [--port 8002]
+    python webui.py [--host 0.0.0.0] [--port 8002]
     # SSH 远程访问: ssh -L 8002:localhost:8002 user@host 后浏览器开 localhost:8002
 
+管理页面只允许主机本机访问；观众通过应用内生成的随机链接从局域网只读观看。
 注意: 本地引擎需要 CUDA 运行库在 LD_LIBRARY_PATH（建议经 run_subs.sh 的环境启动）。
 """
 import argparse
 import asyncio
+import ipaddress
 import json
 import logging
 import os
+import socket
 import shutil
 import sys
 import threading
@@ -35,6 +38,7 @@ from engines import create_engine  # noqa: E402
 from caption_preview import StableCaptionPreview  # noqa: E402
 from input_resolver import classify, resolve_stream_url  # noqa: E402
 from stream_source import DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
+from live_share import LiveShare, MAX_VIEWERS  # noqa: E402
 
 app = FastAPI(title="实时字幕")
 
@@ -48,6 +52,146 @@ UA = DEFAULT_UA
 _SERVER_LOGS: deque = deque(maxlen=500)
 _LOG_SINKS: list = []  # 每连接的 put() 回调，实时推送新日志行
 logger = logging.getLogger("webui")  # 会话生命周期 INFO 日志（用户可见）
+_SHARES: dict[str, LiveShare] = {}
+_SHARE_LOCK = threading.RLock()
+
+
+def _is_local_host(host: str | None) -> bool:
+    if host in ("localhost", "testclient"):
+        return True
+    try:
+        address = ipaddress.ip_address(host or "")
+        if getattr(address, "ipv4_mapped", None):
+            address = address.ipv4_mapped
+        return address.is_loopback
+    except ValueError:
+        return False
+
+
+def _is_lan_host(host: str | None) -> bool:
+    if _is_local_host(host):
+        return True
+    try:
+        address = ipaddress.ip_address(host or "")
+        if getattr(address, "ipv4_mapped", None):
+            address = address.ipv4_mapped
+        return address.is_private or address.is_link_local
+    except ValueError:
+        return False
+
+
+@app.middleware("http")
+async def keep_admin_routes_local(request: Request, call_next):
+    """Expose only capability-based viewer routes to other LAN devices."""
+    path = request.url.path
+    viewer_route = path == "/hls.min.js" or path.startswith("/share/")
+    client_host = request.client.host if request.client else None
+    if viewer_route and path.startswith("/share/") and not _is_lan_host(client_host):
+        return Response("分享链接仅允许局域网设备访问", status_code=403)
+    if not viewer_route and not _is_local_host(client_host):
+        return Response("管理页面仅允许在主机本机访问", status_code=403)
+    return await call_next(request)
+
+
+def _lan_ipv4_candidates() -> list[str]:
+    """List this host's private IPv4 addresses so multi-adapter PCs can choose."""
+    try:
+        addresses = socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        addresses = []
+    candidates = []
+    for value in addresses:
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            continue
+        if address.version == 4 and address.is_private and not address.is_loopback \
+                and not address.is_link_local and value not in candidates:
+            candidates.append(value)
+    return candidates
+
+
+@app.post("/share/start")
+async def start_share(request: Request):
+    if not _is_local_host(request.client.host if request.client else None):
+        raise HTTPException(status_code=403, detail="只有主机本机可以创建分享")
+    data = await request.json()
+    url = str(data.get("url", "")).strip()
+    if not url:
+        raise HTTPException(status_code=422, detail="缺少直播地址")
+    with _SHARE_LOCK:
+        if any(share.active for share in _SHARES.values()):
+            raise HTTPException(status_code=409, detail="已有直播会话正在运行")
+        share = LiveShare(url, str(data.get("engine", "faster-whisper")),
+                          str(data.get("silence", "400")),
+                          str(data.get("delay", "5")))
+        share.video_id = share.register_media(url, "video")
+        share.audio_id = share.register_media(url, "audio")
+        _SHARES[share.token] = share
+    addresses = _lan_ipv4_candidates()
+    if not addresses:
+        with _SHARE_LOCK:
+            _SHARES.pop(share.token, None)
+        raise HTTPException(status_code=500, detail="无法确定本机局域网 IPv4 地址")
+    port = request.url.port or 8002
+    urls = [f"http://{ip}:{port}/share/{share.token}" for ip in addresses]
+    return {"token": share.token, "url": urls[0], "urls": urls,
+            "max_viewers": MAX_VIEWERS}
+
+
+@app.post("/share/stop/{token}")
+async def stop_share(token: str, request: Request):
+    if not _is_local_host(request.client.host if request.client else None):
+        raise HTTPException(status_code=403, detail="只有主机本机可以停止直播")
+    with _SHARE_LOCK:
+        share = _SHARES.get(token)
+        if not share:
+            return {"ok": True}
+        share.stop()
+        _SHARES.pop(token, None)
+    return {"ok": True}
+
+
+def _active_share(token: str) -> LiveShare:
+    with _SHARE_LOCK:
+        share = _SHARES.get(token)
+    if not share or not share.active:
+        raise HTTPException(status_code=404, detail="这场直播已结束或分享链接已失效")
+    return share
+
+
+@app.get("/share/{token}")
+async def share_page(token: str):
+    _active_share(token)
+    with open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8") as f:
+        return HTMLResponse(f.read(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/share/{token}/info")
+async def share_info(token: str):
+    share = _active_share(token)
+    return {"is_hls": urlparse(share.url).path.lower().endswith(".m3u8"),
+            "video": f"/share/{token}/media/{share.video_id}",
+            "audio": f"/share/{token}/media/{share.audio_id}"}
+
+
+@app.get("/share/{token}/media/{media_id}")
+async def share_media(token: str, media_id: str, request: Request):
+    share = _active_share(token)
+    entry = share.media_url(media_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="媒体链接无效")
+    url, role = entry
+    if not share.active:
+        raise HTTPException(status_code=404, detail="直播已结束")
+    if classify(url)[0] == "page":
+        try:
+            url = _resolve_audio_url(url) if role == "audio" else _resolve_video_url(url)
+        except Exception as exc:  # noqa: BLE001 - page resolver errors are user-visible
+            raise HTTPException(status_code=502, detail=f"直播源解析失败: {str(exc)[:180]}") from exc
+    if os.path.isfile(url):
+        return FileResponse(url)
+    return await _proxy_stream(request, url, share=share)
 
 
 class _ServerLogHandler(logging.Handler):
@@ -97,17 +241,21 @@ def _resolve_audio_url(user_input: str) -> str:
     return _resolve_stream_url(user_input, "ba", "audio")
 
 
-def _proxy_media_url(target: str) -> str:
+def _proxy_media_url(target: str, share: LiveShare | None = None) -> str:
     """媒体 URL → 本地代理 URL（浏览器只与本地通信，代理统一补 UA/Referer）。
 
     分片/密钥/变体直连上游会被 UA/防盗链检查挡（ticket-19 实测 err=4），
     全部改走 /video?url= 代理；data: 等不可代理的保留原样。"""
     from urllib.parse import quote
 
+    if share:
+        media_id = share.register_media(target)
+        return f"/share/{share.token}/media/{media_id}"
     return "/video?url=" + quote(target, safe="")
 
 
-def _rewrite_hls_playlist(text: str, stream_url: str) -> str:
+def _rewrite_hls_playlist(text: str, stream_url: str,
+                          share: LiveShare | None = None) -> str:
     """HLS playlist 改写为本地代理 URL。
 
     普通行（ts 分片 / 变体子列表）与 # 行 URI 属性（EXT-X-KEY 密钥 /
@@ -120,7 +268,7 @@ def _rewrite_hls_playlist(text: str, stream_url: str) -> str:
     def _rewrite_attr(m):
         uri = m.group(2)
         if uri and not uri.startswith("data:"):
-            return m.group(1) + _proxy_media_url(urljoin(stream_url, uri)) + m.group(3)
+            return m.group(1) + _proxy_media_url(urljoin(stream_url, uri), share) + m.group(3)
         return m.group(0)
 
     rewritten = []
@@ -132,7 +280,7 @@ def _rewrite_hls_playlist(text: str, stream_url: str) -> str:
             if "URI=" in s:
                 line = URI_ATTR.sub(_rewrite_attr, s)
         elif s and not s.startswith("/video?url="):
-            line = _proxy_media_url(urljoin(stream_url, s))
+            line = _proxy_media_url(urljoin(stream_url, s), share)
         rewritten.append(line)
     return "\n".join(rewritten)
 
@@ -160,7 +308,8 @@ def parse_m3u(text: str) -> list:
     return [c for c in channels if c["url"]]
 
 
-async def _proxy_stream(request: Request, stream_url: str):
+async def _proxy_stream(request: Request, stream_url: str,
+                        share: LiveShare | None = None):
     """转发流（补防盗链头），供前端 <video>/<audio> 播放。
 
     HLS playlist（m3u8）会被浏览器当作文本，相对 .ts/变体路径无法解析——
@@ -196,7 +345,7 @@ async def _proxy_stream(request: Request, stream_url: str):
             text = body.decode("utf-8")
         except UnicodeDecodeError:
             text = body.decode("latin-1")
-        new_body = _rewrite_hls_playlist(text, stream_url)
+        new_body = _rewrite_hls_playlist(text, stream_url, share)
         pass_headers["content-length"] = str(len(new_body.encode()))
         return Response(new_body, status_code=upstream.status_code,
                         headers=pass_headers)
@@ -337,8 +486,18 @@ async def upload(file: UploadFile = File(...)):
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
+    if not _is_local_host(ws.client.host if ws.client else None):
+        await ws.close(code=4403, reason="管理连接仅允许主机本机访问")
+        return
     await ws.accept()
     url = ws.query_params.get("url", "").strip()
+    share_token = ws.query_params.get("share", "").strip()
+    with _SHARE_LOCK:
+        share = _SHARES.get(share_token) if share_token else None
+    if share_token and (not share or not share.active or share.url != url):
+        await ws.send_json({"type": "error", "message": "直播分享会话无效"})
+        await ws.close()
+        return
     engine_name = ws.query_params.get("engine", "faster-whisper").strip()
     silence = ws.query_params.get("silence", "400").strip()
     delay = ws.query_params.get("delay", "1").strip()
@@ -353,11 +512,15 @@ async def ws_endpoint(ws: WebSocket):
 
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
-    stop = threading.Event()
+    stop = share.stop_event if share else threading.Event()
     paused = threading.Event()  # 客户端暂停 → 后端停止推流解析，字幕冻结
 
     def put(item: dict) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, item)
+        def dispatch() -> None:
+            queue.put_nowait(item)
+            if share:
+                share.publish(item)
+        loop.call_soon_threadsafe(dispatch)
 
     async def receive_loop() -> None:
         """接收客户端控制消息（pause/resume）"""
@@ -564,6 +727,51 @@ async def ws_endpoint(ws: WebSocket):
         pass
     finally:
         stop.set()
+        if share:
+            share.stop()
+            with _SHARE_LOCK:
+                _SHARES.pop(share.token, None)
+
+
+@app.websocket("/share/{token}/ws")
+async def share_ws_endpoint(ws: WebSocket, token: str):
+    if not _is_lan_host(ws.client.host if ws.client else None):
+        await ws.close(code=4403, reason="分享链接仅允许局域网设备访问")
+        return
+    try:
+        share = _active_share(token)
+    except HTTPException:
+        await ws.close(code=4404, reason="分享链接已失效")
+        return
+    await ws.accept()
+    joined = share.subscribe()
+    if joined is None:
+        await ws.send_json({"type": "error", "message": "观众人数已满，最多允许 3 台设备同时观看"})
+        await ws.close(code=4429, reason="最多允许 3 台观众设备同时观看")
+        return
+    queue, snapshot = joined
+    try:
+        for event in snapshot:
+            await ws.send_json(event)
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=15)
+            except asyncio.TimeoutError:
+                await ws.send_json({"type": "heartbeat"})
+                continue
+            # Status and logs can contain source URLs; guests only need playback data.
+            if event.get("type") in ("subtitle", "preview", "timeline", "ready",
+                                      "buffer", "error", "end"):
+                if event.get("type") == "error":
+                    await ws.send_json({"type": "error", "message": "主播端直播处理发生错误"})
+                else:
+                    await ws.send_json(event)
+            if event.get("type") == "end":
+                break
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        share.unsubscribe(queue)
 
 
 def main():
@@ -589,7 +797,7 @@ def main():
                         break
 
     ap = argparse.ArgumentParser(description="实时字幕 webUI")
-    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8002)
     args = ap.parse_args()
     print(f"实时字幕 webUI: http://{args.host}:{args.port}")

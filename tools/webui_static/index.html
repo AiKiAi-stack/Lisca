@@ -15,6 +15,7 @@
   select, button { padding: 9px 14px; font-size: 14px; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: var(--fg); cursor: pointer; }
   button#start { background: var(--accent); border-color: var(--accent); font-weight: 600; }
   button#stop { background: var(--panel); display: none; }
+  button#shareCopy { background: #238636; border-color: #238636; display: none; }
   #status { width: 100%; color: #8b949e; font-size: 13px; }
   main { flex: 1; display: flex; flex-direction: column; padding: 16px 24px; gap: 12px; min-height: 0; }
   #playerWrap { position: relative; flex: 1; min-height: 0; background: #000; border-radius: 12px; overflow: hidden; }
@@ -83,6 +84,8 @@
   <button id="uploadBtn" title="上传本地音频/视频文件">📁 上传文件</button>
   <button id="start">开始</button>
   <button id="stop">停止</button>
+  <button id="shareCopy" title="复制只读局域网观众链接">🔗复制观众链接</button>
+  <select id="shareAddress" title="选择观众设备所在局域网对应的主机地址" hidden></select>
   <button id="subToggle" title="开关中间字幕显示">🎬 字幕：开</button>
   <button id="logBtn" title="查看/复制会话日志，便于反馈问题">📋 日志</button>
   <button id="styleBtn" title="实时调整叠加字幕的字体、大小、位置（自动记住）">🎨 字幕样式</button>
@@ -132,6 +135,8 @@
   const subToggleBtn = document.getElementById('subToggle');
   const startBtn = document.getElementById('start');
   const stopBtn = document.getElementById('stop');
+  const shareCopyBtn = document.getElementById('shareCopy');
+  const shareAddressEl = document.getElementById('shareAddress');
   const statusEl = document.getElementById('status');
   const currentEl = document.getElementById('current');
   const historyEl = document.getElementById('history');
@@ -151,6 +156,9 @@
   let seekPending = false; // seek 后清空当前句显示，等新数据（ADR-0001）
   let aligningInitialPlayback = false;
   let subEnabled = true; // 中间字幕显示开关（ticket-13）
+  let activeShareToken = null;
+  let sharedViewerActive = false;
+  let viewerInfo = null;
 
   // 会话日志：环形缓冲（500 条），供用户一键复制反馈问题（ticket-16 full log）
   const logBtn = document.getElementById('logBtn');
@@ -747,9 +755,23 @@
     return msg;
   }
 
-  function connect(forceUrl) {
+  async function connect(forceUrl, shareToken = null) {
+    sharedViewerActive = !!shareToken;
+    viewerInfo = null;
+    if (shareToken) {
+      try {
+        const response = await fetch(`/share/${encodeURIComponent(shareToken)}/info`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        viewerInfo = data;
+      } catch (error) {
+        setStatus('分享链接不可用：' + error.message, true);
+        return;
+      }
+    }
     // forceUrl 可能是 onclick 传入的 Event 对象（startBtn.onclick = connect），只认字符串
-    const url = ((typeof forceUrl === 'string' && forceUrl) || urlEl.value).trim();
+    const url = sharedViewerActive ? (viewerInfo.is_hls ? 'shared.m3u8' : 'shared.mp4')
+      : ((typeof forceUrl === 'string' && forceUrl) || urlEl.value).trim();
     if (!url) { setStatus('请输入流地址', true); return; }
     if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
     // m3u 频道列表（ticket-19）：识别为列表则加载频道面板，不直接拉流
@@ -791,13 +813,39 @@
     delayEl.title = isHls
       ? 'HLS 画面和声音相对直播源的整体延迟；延迟期间音频持续送给 ASR'
       : '音视频整体延迟仅适用于 HLS 直播流';
-    const params = new URLSearchParams({
-      url, engine: engineEl.value, silence: silenceEl.value,
-      delay: isHls ? delayEl.value : '0.1',
-    });
-    ws = new WebSocket(`ws://${location.host}/ws?${params}`);
+    let params;
+    if (!sharedViewerActive) {
+      try {
+        const response = await fetch('/share/start', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({url, engine:engineEl.value, silence:silenceEl.value,
+            delay:isHls ? delayEl.value : '0.1'})});
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        activeShareToken = data.token;
+        shareAddressEl.replaceChildren();
+        (data.urls || [data.url]).forEach(url => {
+          const option = document.createElement('option');
+          option.value = url;
+          option.textContent = new URL(url).hostname;
+          shareAddressEl.appendChild(option);
+        });
+        shareAddressEl.hidden = shareAddressEl.options.length < 2;
+        shareCopyBtn.dataset.url = data.url;
+        shareCopyBtn.style.display = 'inline-block';
+      } catch (error) {
+        setStatus('无法创建观众链接：' + error.message, true);
+        return;
+      }
+      params = new URLSearchParams({url, engine:engineEl.value,
+        silence:silenceEl.value, delay:isHls ? delayEl.value : '0.1',
+        share:activeShareToken});
+    }
+    ws = new WebSocket(sharedViewerActive
+      ? `ws://${location.host}/share/${encodeURIComponent(shareToken)}/ws`
+      : `ws://${location.host}/ws?${params}`);
     startBtn.style.display = 'none';
-    stopBtn.style.display = 'inline-block';
+    stopBtn.style.display = sharedViewerActive ? 'none' : 'inline-block';
     currentEl.classList.remove('err');
     setStatus('连接中…');
     // 画面走 video，声音按源类型分流（ticket-19）：HLS 音视频混在 TS 流里，
@@ -828,7 +876,8 @@
         manifestLoadingMaxRetry: 6,
         levelLoadingMaxRetry: 6,
       });
-      hlsPlayer.loadSource(`/video?url=${encodeURIComponent(url)}`);
+      hlsPlayer.loadSource(sharedViewerActive ? viewerInfo.video
+        : `/video?url=${encodeURIComponent(url)}`);
       hlsPlayer.attachMedia(player);
       hlsPlayer.on(Hls.Events.INIT_PTS_FOUND, (_evt, data) => {
         if (data.id !== 'main' || videoClockPts != null) return;
@@ -849,13 +898,15 @@
       });
       player.muted = false;  // HLS 直播：视频元素自带音轨
     } else {
-      player.src = `/video?url=${encodeURIComponent(url)}`;
+      player.src = sharedViewerActive ? viewerInfo.video
+        : `/video?url=${encodeURIComponent(url)}`;
       player.load();  // 换源显式 load，避免旧源失败状态残留导致黑屏（ticket-11）
       if (isHls) {
         player.muted = false;  // 原生 HLS（fMP4 等）：视频元素自带音轨
       } else {
         player.muted = true;
-        audioEl.src = `/audio?url=${encodeURIComponent(url)}`;
+        audioEl.src = sharedViewerActive ? viewerInfo.audio
+          : `/audio?url=${encodeURIComponent(url)}`;
       }
     }
 
@@ -877,11 +928,13 @@
       } else if (msg.type === 'preview') {
         onPreview(msg);
       } else if (msg.type === 'buffer') {
-        playbackLimit = Number.isFinite(msg.play_at) ? msg.play_at : playbackLimit;
-        syncPlaybackToBuffer();
+        if (!sharedViewerActive) {
+          playbackLimit = Number.isFinite(msg.play_at) ? msg.play_at : playbackLimit;
+          syncPlaybackToBuffer();
+        }
       } else if (msg.type === 'ready') {
         // 音视频一起从输入进度前方 delay 秒启动；后续 buffer 消息持续控制播放上限。
-        if (isHls && Number.isFinite(msg.start_at)) {
+        if (!sharedViewerActive && isHls && Number.isFinite(msg.start_at)) {
           aligningInitialPlayback = true;
           try { player.currentTime = Math.max(0, msg.start_at); }
           catch (e) { logEvent('sync_seek_error', String(e)); }
@@ -921,10 +974,18 @@
     }
     ws.onmessage = (e) => receiveMessage(JSON.parse(e.data));
     ws.onerror = () => { logEvent('ws_error', '连接失败'); setStatus('连接失败', true); };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       logEvent('ws_close', '');
-      startBtn.style.display = 'inline-block';
-      stopBtn.style.display = 'none';
+      if (sharedViewerActive) {
+        if (event.code === 4429) setStatus('观众人数已满（最多 3 台设备），请稍后再试', true);
+        else if (!currentEl.classList.contains('err')) setStatus('直播已结束或连接已断开');
+      } else {
+        startBtn.style.display = 'inline-block';
+        stopBtn.style.display = 'none';
+        shareCopyBtn.style.display = 'none';
+        shareAddressEl.hidden = true;
+        activeShareToken = null;
+      }
     };
   }
 
@@ -1013,14 +1074,41 @@
   });
 
   startBtn.onclick = connect;
-  stopBtn.onclick = () => {
+  shareCopyBtn.onclick = async () => {
+    const url = shareCopyBtn.dataset.url;
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus('观众链接已复制，可发给同一局域网内的设备');
+    } catch (error) {
+      window.prompt('复制此局域网观众链接：', url);
+    }
+  };
+  shareAddressEl.onchange = () => { shareCopyBtn.dataset.url = shareAddressEl.value; };
+  stopBtn.onclick = async () => {
     if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
+    if (activeShareToken) {
+      await fetch(`/share/stop/${encodeURIComponent(activeShareToken)}`, {method:'POST'}).catch(() => {});
+      activeShareToken = null;
+      shareCopyBtn.style.display = 'none';
+      shareAddressEl.hidden = true;
+    }
     if (ws) ws.close();
     if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
     player.pause();
     audioEl.pause();
     setStatus('已停止');
   };
+  const sharedPath = location.pathname.match(/^\/share\/([^/]+)$/);
+  if (sharedPath) {
+    sharedViewerActive = true;
+    document.title = '直播字幕';
+    document.querySelector('header h1').textContent = '📺 直播字幕（观众）';
+    ['url', 'engine', 'silence', 'delay', 'uploadBtn', 'start', 'stop', 'shareCopy', 'shareAddress',
+      'logBtn', 'chBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
+    document.getElementById('status').textContent = '正在加入直播…';
+    connect(null, decodeURIComponent(sharedPath[1]));
+  }
   uploadBtn.onclick = () => fileEl.click();
   fileEl.addEventListener('change', async () => {
     const f = fileEl.files[0];

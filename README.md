@@ -99,6 +99,12 @@ output/
 └── 1_20260709_143030.srt
 ```
 
+### Share a live caption stream on your LAN
+
+Start the WebUI on the computer hosting the stream, enter the source, and click **Start**. The service listens on LAN interfaces by default, while the management page remains accessible only from the host computer. After the live session starts, click **Copy viewer link** and send it to devices on the same Wi-Fi/LAN. If the host has multiple network adapters, first select the address reachable from the viewer devices. Viewers can open the link in a browser without entering the source or starting another ASR session.
+
+Each live session allows up to three concurrent viewer devices. Viewer links are read-only and expire when the stream stops; a new stream gets a new link. Video is relayed through the host, so allow the WebUI port (default `8002`) through the host firewall on private networks. The link is not accessible from outside the LAN.
+
 ### Local FunASR Vulkan (no API key, file mode)
 
 A Windows Vulkan GGUF install can be connected to the WebUI through a local HTTP service. This mode transcribes an entire local audio/video file before playback; it does not provide live captions. See the [local FunASR Vulkan guide](docs/funasr-vulkan.md) for setup and usage.
