@@ -760,7 +760,8 @@
     viewerInfo = null;
     if (shareToken) {
       try {
-        const response = await fetch(`/share/${encodeURIComponent(shareToken)}/info`);
+        const response = await fetch(`/share/${encodeURIComponent(shareToken)}/join`,
+          {method:'POST'});
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
         viewerInfo = data;
@@ -842,7 +843,7 @@
         share:activeShareToken});
     }
     ws = new WebSocket(sharedViewerActive
-      ? `ws://${location.host}/share/${encodeURIComponent(shareToken)}/ws`
+      ? `ws://${location.host}/share/${encodeURIComponent(shareToken)}/ws?viewer_id=${encodeURIComponent(viewerInfo.viewer_id)}`
       : `ws://${location.host}/ws?${params}`);
     startBtn.style.display = 'none';
     stopBtn.style.display = sharedViewerActive ? 'none' : 'inline-block';

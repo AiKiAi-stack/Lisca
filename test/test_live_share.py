@@ -84,8 +84,10 @@ def test_lan_viewer_receives_captions_from_the_host_asr_session(monkeypatch):
                 while not any(event.get("type") == "subtitle" for event in host_events):
                     host_events.append(host_socket.receive_json())
 
+                joined = viewer.post(f"/share/{share['token']}/join")
+                assert joined.status_code == 200
                 with viewer.websocket_connect(
-                    f"/share/{share['token']}/ws"
+                    f"/share/{share['token']}/ws?viewer_id={joined.json()['viewer_id']}"
                 ) as viewer_socket:
                     viewer_events = []
                     while not any(event.get("type") == "subtitle" for event in viewer_events):
@@ -107,18 +109,76 @@ def test_share_stops_accepting_viewers_after_three_live_connections(monkeypatch)
         webui.app, client=("192.168.1.20", 50000)
     ) as viewer:
         share = _start_share(host)
-        with viewer.websocket_connect(f"/share/{share['token']}/ws") as first:
-            with viewer.websocket_connect(f"/share/{share['token']}/ws") as second:
-                with viewer.websocket_connect(f"/share/{share['token']}/ws") as third:
-                    with viewer.websocket_connect(
-                        f"/share/{share['token']}/ws"
-                    ) as fourth:
-                        rejected = fourth.receive_json()
-                    assert rejected["type"] == "error"
-                    assert "最多允许 3 台" in rejected["message"]
-        with viewer.websocket_connect(f"/share/{share['token']}/ws") as replacement:
+        admissions = [viewer.post(f"/share/{share['token']}/join") for _ in range(3)]
+        assert all(response.status_code == 200 for response in admissions)
+        viewer_ids = [response.json()["viewer_id"] for response in admissions]
+        assert viewer.post(f"/share/{share['token']}/join").status_code == 429
+        with viewer.websocket_connect(
+            f"/share/{share['token']}/ws?viewer_id={viewer_ids[0]}"
+        ) as first:
+            with viewer.websocket_connect(
+                f"/share/{share['token']}/ws?viewer_id={viewer_ids[1]}"
+            ) as second:
+                with viewer.websocket_connect(
+                    f"/share/{share['token']}/ws?viewer_id={viewer_ids[2]}"
+                ) as third:
+                    assert first and second and third
+        replacement = viewer.post(f"/share/{share['token']}/join")
+        assert replacement.status_code == 200
+        with viewer.websocket_connect(
+            f"/share/{share['token']}/ws?viewer_id={replacement.json()['viewer_id']}"
+        ) as replacement_socket:
             assert host.post(f"/share/stop/{share['token']}").status_code == 200
-            assert replacement.receive_json()["type"] == "end"
+            assert replacement_socket.receive_json()["type"] == "end"
+
+
+def test_fourth_viewer_is_rejected_before_receiving_media_access(monkeypatch):
+    monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
+    with TestClient(webui.app) as host, TestClient(
+        webui.app, client=("192.168.1.20", 50000)
+    ) as viewer:
+        share = _start_share(host)
+        joins = [
+            viewer.post(f"/share/{share['token']}/join")
+            for _ in range(4)
+        ]
+
+        assert [response.status_code for response in joins] == [200, 200, 200, 429]
+        assert "最多允许 3 台" in joins[3].json()["detail"]
+        assert "viewer_id" in joins[0].json()
+        assert "/viewer/" in joins[0].json()["video"]
+        assert host.post(f"/share/stop/{share['token']}").status_code == 200
+
+
+def test_viewer_media_url_cannot_be_reused_from_another_lan_device(monkeypatch):
+    proxy_calls = []
+
+    async def fake_proxy(*_args, **_kwargs):
+        proxy_calls.append(True)
+        from fastapi import Response
+        return Response("media")
+
+    monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
+    monkeypatch.setattr(webui, "_proxy_stream", fake_proxy)
+    with TestClient(webui.app) as host, TestClient(
+        webui.app, client=("192.168.1.20", 50000)
+    ) as admitted_device, TestClient(
+        webui.app, client=("192.168.1.21", 50001)
+    ) as other_device:
+        share = _start_share(host)
+        joined = admitted_device.post(f"/share/{share['token']}/join")
+        media_path = joined.json()["video"]
+
+        assert admitted_device.get(media_path).status_code == 200
+        assert other_device.get(media_path).status_code == 404
+        assert len(proxy_calls) == 1
+        with other_device.websocket_connect(
+            f"/share/{share['token']}/ws?viewer_id={joined.json()['viewer_id']}"
+        ) as other_socket:
+            rejection = other_socket.receive_json()
+            assert rejection["type"] == "error"
+            assert "绑定到其他设备" in rejection["message"]
+        assert host.post(f"/share/stop/{share['token']}").status_code == 200
 
 
 def test_viewer_routes_are_lan_only_and_admin_routes_are_local_only(monkeypatch):
@@ -131,7 +191,7 @@ def test_viewer_routes_are_lan_only_and_admin_routes_are_local_only(monkeypatch)
             assert viewer.post("/share/start", json={"url": SOURCE_URL}).status_code == 403
         with TestClient(webui.app, client=("8.8.8.8", 50000)) as outside:
             assert outside.get(f"/share/{share['token']}").status_code == 403
-            assert outside.get(f"/share/{share['token']}/info").status_code == 403
+            assert outside.post(f"/share/{share['token']}/join").status_code == 403
         assert host.post(f"/share/stop/{share['token']}").status_code == 200
 
 
@@ -198,6 +258,10 @@ def test_share_proxy_rejects_media_not_registered_to_the_session(monkeypatch):
     monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
     with TestClient(webui.app) as host:
         share = _start_share(host)
-        response = host.get(f"/share/{share['token']}/media/not-registered")
+        joined = host.post(f"/share/{share['token']}/join")
+        viewer_id = joined.json()["viewer_id"]
+        response = host.get(
+            f"/share/{share['token']}/viewer/{viewer_id}/media/not-registered"
+        )
         assert response.status_code == 404
         assert host.post(f"/share/stop/{share['token']}").status_code == 200

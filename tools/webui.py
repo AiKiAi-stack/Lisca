@@ -122,9 +122,7 @@ async def start_share(request: Request):
     with _SHARE_LOCK:
         if any(share.active for share in _SHARES.values()):
             raise HTTPException(status_code=409, detail="已有直播会话正在运行")
-        share = LiveShare(url, str(data.get("engine", "faster-whisper")),
-                          str(data.get("silence", "400")),
-                          str(data.get("delay", "5")))
+        share = LiveShare(url)
         share.video_id = share.register_media(url, "video")
         share.audio_id = share.register_media(url, "audio")
         _SHARES[share.token] = share
@@ -171,13 +169,27 @@ async def share_page(token: str):
 async def share_info(token: str):
     share = _active_share(token)
     return {"is_hls": urlparse(share.url).path.lower().endswith(".m3u8"),
-            "video": f"/share/{token}/media/{share.video_id}",
-            "audio": f"/share/{token}/media/{share.audio_id}"}
+            "is_live": True}
 
 
-@app.get("/share/{token}/media/{media_id}")
-async def share_media(token: str, media_id: str, request: Request):
+@app.post("/share/{token}/join")
+async def share_join(token: str, request: Request):
     share = _active_share(token)
+    viewer_id = share.reserve_viewer(request.client.host if request.client else "")
+    if viewer_id is None:
+        raise HTTPException(status_code=429, detail="观众人数已满，最多允许 3 台设备同时观看")
+    return {"viewer_id": viewer_id,
+            "is_hls": urlparse(share.url).path.lower().endswith(".m3u8"),
+            "video": f"/share/{token}/viewer/{viewer_id}/media/{share.video_id}",
+            "audio": f"/share/{token}/viewer/{viewer_id}/media/{share.audio_id}"}
+
+
+@app.get("/share/{token}/viewer/{viewer_id}/media/{media_id}")
+async def share_media(token: str, viewer_id: str, media_id: str, request: Request):
+    share = _active_share(token)
+    client_host = request.client.host if request.client else ""
+    if not share.has_viewer(viewer_id, client_host):
+        raise HTTPException(status_code=404, detail="观众链接无效或已过期")
     entry = share.media_url(media_id)
     if not entry:
         raise HTTPException(status_code=404, detail="媒体链接无效")
@@ -191,7 +203,7 @@ async def share_media(token: str, media_id: str, request: Request):
             raise HTTPException(status_code=502, detail=f"直播源解析失败: {str(exc)[:180]}") from exc
     if os.path.isfile(url):
         return FileResponse(url)
-    return await _proxy_stream(request, url, share=share)
+    return await _proxy_stream(request, url, share=share, viewer_id=viewer_id)
 
 
 class _ServerLogHandler(logging.Handler):
@@ -241,7 +253,8 @@ def _resolve_audio_url(user_input: str) -> str:
     return _resolve_stream_url(user_input, "ba", "audio")
 
 
-def _proxy_media_url(target: str, share: LiveShare | None = None) -> str:
+def _proxy_media_url(target: str, share: LiveShare | None = None,
+                     viewer_id: str | None = None) -> str:
     """媒体 URL → 本地代理 URL（浏览器只与本地通信，代理统一补 UA/Referer）。
 
     分片/密钥/变体直连上游会被 UA/防盗链检查挡（ticket-19 实测 err=4），
@@ -250,12 +263,15 @@ def _proxy_media_url(target: str, share: LiveShare | None = None) -> str:
 
     if share:
         media_id = share.register_media(target)
+        if viewer_id:
+            return f"/share/{share.token}/viewer/{viewer_id}/media/{media_id}"
         return f"/share/{share.token}/media/{media_id}"
     return "/video?url=" + quote(target, safe="")
 
 
 def _rewrite_hls_playlist(text: str, stream_url: str,
-                          share: LiveShare | None = None) -> str:
+                          share: LiveShare | None = None,
+                          viewer_id: str | None = None) -> str:
     """HLS playlist 改写为本地代理 URL。
 
     普通行（ts 分片 / 变体子列表）与 # 行 URI 属性（EXT-X-KEY 密钥 /
@@ -268,7 +284,9 @@ def _rewrite_hls_playlist(text: str, stream_url: str,
     def _rewrite_attr(m):
         uri = m.group(2)
         if uri and not uri.startswith("data:"):
-            return m.group(1) + _proxy_media_url(urljoin(stream_url, uri), share) + m.group(3)
+            return m.group(1) + _proxy_media_url(
+                urljoin(stream_url, uri), share, viewer_id
+            ) + m.group(3)
         return m.group(0)
 
     rewritten = []
@@ -280,7 +298,7 @@ def _rewrite_hls_playlist(text: str, stream_url: str,
             if "URI=" in s:
                 line = URI_ATTR.sub(_rewrite_attr, s)
         elif s and not s.startswith("/video?url="):
-            line = _proxy_media_url(urljoin(stream_url, s), share)
+            line = _proxy_media_url(urljoin(stream_url, s), share, viewer_id)
         rewritten.append(line)
     return "\n".join(rewritten)
 
@@ -309,7 +327,8 @@ def parse_m3u(text: str) -> list:
 
 
 async def _proxy_stream(request: Request, stream_url: str,
-                        share: LiveShare | None = None):
+                        share: LiveShare | None = None,
+                        viewer_id: str | None = None):
     """转发流（补防盗链头），供前端 <video>/<audio> 播放。
 
     HLS playlist（m3u8）会被浏览器当作文本，相对 .ts/变体路径无法解析——
@@ -345,7 +364,7 @@ async def _proxy_stream(request: Request, stream_url: str,
             text = body.decode("utf-8")
         except UnicodeDecodeError:
             text = body.decode("latin-1")
-        new_body = _rewrite_hls_playlist(text, stream_url, share)
+        new_body = _rewrite_hls_playlist(text, stream_url, share, viewer_id)
         pass_headers["content-length"] = str(len(new_body.encode()))
         return Response(new_body, status_code=upstream.status_code,
                         headers=pass_headers)
@@ -743,11 +762,13 @@ async def share_ws_endpoint(ws: WebSocket, token: str):
     except HTTPException:
         await ws.close(code=4404, reason="分享链接已失效")
         return
+    viewer_id = ws.query_params.get("viewer_id", "")
+    client_host = ws.client.host if ws.client else ""
     await ws.accept()
-    joined = share.subscribe()
+    joined = share.subscribe(viewer_id, client_host)
     if joined is None:
-        await ws.send_json({"type": "error", "message": "观众人数已满，最多允许 3 台设备同时观看"})
-        await ws.close(code=4429, reason="最多允许 3 台观众设备同时观看")
+        await ws.send_json({"type": "error", "message": "观众链接无效或已绑定到其他设备"})
+        await ws.close(code=4403, reason="观众凭证无效")
         return
     queue, snapshot = joined
     try:
@@ -771,7 +792,7 @@ async def share_ws_endpoint(ws: WebSocket, token: str):
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        share.unsubscribe(queue)
+        share.unsubscribe(viewer_id)
 
 
 def main():
