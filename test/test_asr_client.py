@@ -113,6 +113,19 @@ class TestASRClient:
             client.raise_if_error()
 
     @patch("streamparser.asr_client.Recognition")
+    def test_callback_reports_error_when_sdk_stringification_fails(self, mock_rec):
+        client = ASRClient(ASRSettings(api_key="sk-test"))
+        callback = mock_rec.call_args.kwargs["callback"]
+
+        class BrokenResult:
+            def __str__(self):
+                raise AttributeError("headers")
+
+        callback.on_error(BrokenResult())
+        with pytest.raises(RuntimeError, match="DashScope recognition failed"):
+            client.raise_if_error()
+
+    @patch("streamparser.asr_client.Recognition")
     def test_subtitle_buffer_accessible(self, mock_rec):
         """subtitle_buffer should be an accessible deque attribute."""
         mock_instance = MagicMock()
@@ -131,11 +144,12 @@ class TestASRClient:
 
         ASRClient(ASRSettings(api_key="sk-test"),
                   max_sentence_silence=400, heartbeat=True,
-                  language_hints=["zh"])
+                  language_hints=["zh"], multi_threshold_mode_enabled=True)
         kwargs = mock_rec.call_args.kwargs
         assert kwargs["max_sentence_silence"] == 400
         assert kwargs["heartbeat"] is True
         assert kwargs["language_hints"] == ["zh"]
+        assert kwargs["multi_threshold_mode_enabled"] is True
 
     @patch("streamparser.asr_client.Recognition")
     def test_callback_extracts_words(self, mock_rec):
@@ -154,6 +168,7 @@ class TestASRClient:
         cb = _Callback(deque(), [0], queue.Queue())
         cb.on_event(FakeResult({
             "text": "你好世界", "begin_time": 1000, "end_time": 3000,
+            "sentence_id": 12,
             "words": [
                 {"begin_time": 1000, "end_time": 1500, "text": "你"},
                 {"begin_time": 1500, "end_time": 2000, "text": "好"},
@@ -162,6 +177,7 @@ class TestASRClient:
         }))
         entry = cb._subtitle_buffer.popleft()  # noqa: SLF001 - 测试直接访问
         assert entry.words == [(1.0, 1.5, "你"), (1.5, 2.0, "好"), (2.0, 3.0, "世界")]
+        assert entry.sentence_id == 12
 
         # partial：中间结果尾字缺 end_time → None（句终才补）
         cb.on_event(FakeResult({

@@ -74,10 +74,10 @@
     <option value="800">断句：标准 800ms</option>
     <option value="1300">断句：宽松 1300ms（服务端默认）</option>
   </select>
-  <select id="delay" title="HLS 直播回放相对 ASR 转写进度的延迟；延迟越长，句子越有时间完整修订">
-    <option value="0.1">字幕延迟 100ms</option>
-    <option value="1" selected>字幕延迟 1s</option>
-    <option value="5">字幕延迟 5s</option>
+  <select id="delay" title="HLS 音视频相对直播源的整体延迟；延迟期间音频持续送给 ASR，5 秒更有利于完整断句">
+    <option value="0.1">音视频延迟 100ms</option>
+    <option value="1">音视频延迟 1s</option>
+    <option value="5" selected>音视频延迟 5s</option>
   </select>
   <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
   <button id="uploadBtn" title="上传本地音频/视频文件">📁 上传文件</button>
@@ -86,7 +86,7 @@
   <button id="subToggle" title="开关中间字幕显示">🎬 字幕：开</button>
   <button id="logBtn" title="查看/复制会话日志，便于反馈问题">📋 日志</button>
   <button id="styleBtn" title="实时调整叠加字幕的字体、大小、位置（自动记住）">🎨 字幕样式</button>
-  <button id="chBtn" title="加载 m3u 频道列表并选台播放（先在输入框粘贴 .m3u 地址）">📺 频道</button>
+  <button id="chBtn" title="加载 .m3u/.m3u8 频道列表并选台播放（先在输入框粘贴频道列表地址）">📺 频道</button>
   <div id="stylePanel" hidden>
     <label>字号 <input type="range" id="sizeRange" min="16" max="64" step="1" value="30"><span class="val" id="sizeVal">30px</span></label>
     <label>位置 <input type="range" id="posRange" min="0" max="30" step="1" value="12"><span class="val" id="posVal">12%</span></label>
@@ -142,9 +142,12 @@
   let ws = null;
   let hlsPlayer = null;  // hls.js 实例（HLS 直播，ticket-19）
   let subs = [];        // [{beg, end, text, words}] 句子列表（partial 累计，同句原地更新）
+  let previewSubs = []; // 连续两个 partial 均未改动的完整短句，等待整句 final 时也能播放
   let historyItems = []; // 与 subs 对应的 history DOM 元素
   let playStarted = false; // 是否已触发视频播放（等字幕就绪）
   let holdingForSync = false; // 字幕未就绪时拦截手动播放产生的 pause，不冻结后端
+  let holdingForBuffer = false;
+  let playbackLimit = null;
   let seekPending = false; // seek 后清空当前句显示，等新数据（ADR-0001）
   let aligningInitialPlayback = false;
   let subEnabled = true; // 中间字幕显示开关（ticket-13）
@@ -254,19 +257,29 @@
   const chList = document.getElementById('chList');
   let channels = [];       // [{group, name, url}]
   let chRows = new Map();  // url -> {row, status}
+  let loadedChannelListUrl = '';
 
   async function loadChannels(m3uUrl) {
     setStatus('加载频道列表…');
     logEvent('channels_load', m3uUrl.slice(0, 100));
+    channels = [];
+    chRows = new Map();
+    chList.innerHTML = '';
+    chPanel.hidden = true;
+    chInfo.textContent = '';
     try {
       const resp = await fetch('/channels?url=' + encodeURIComponent(m3uUrl));
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || ('HTTP ' + resp.status));
+      }
       channels = await resp.json();
     } catch (e) {
       setStatus('频道列表加载失败: ' + e, true);
       return;
     }
     if (!channels.length) { setStatus('频道列表为空（源可能失效）', true); return; }
+    loadedChannelListUrl = m3uUrl;
     renderChannels();
     chPanel.hidden = false;
     setStatus(`频道列表 ${channels.length} 个，点击频道开始观看`);
@@ -355,11 +368,22 @@
     }
     for (let k = 0; k < Math.min(20, total); k++) run();
   };
-  chBtn.onclick = () => {
+  chBtn.onclick = async () => {
     if (!chPanel.hidden) { chPanel.hidden = true; return; }
     const u = urlEl.value.trim();
-    if (!/\.m3u($|\?)/i.test(u)) { setStatus('请先在输入框粘贴 .m3u 频道列表地址', true); return; }
-    loadChannels(u);
+    // Selecting a channel replaces the playback input with its stream URL.
+    // Reopen the original IPTV list instead of parsing that stream's segments.
+    if (channels.length && (u === loadedChannelListUrl || channels.some(ch => ch.url === u))) {
+      chPanel.hidden = false;
+      setStatus(`频道列表 ${channels.length} 个，点击频道开始观看`);
+      return;
+    }
+    if (!/\.m3u8?(?:$|[?#])/i.test(u)) {
+      chPanel.hidden = true;
+      setStatus('请先在输入框粘贴 .m3u 或 .m3u8 频道列表地址', true);
+      return;
+    }
+    await loadChannels(u);
   };
 
   // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 损坏时视频无声卡死
@@ -393,7 +417,8 @@
   function appendHistory(beg, end, text) {
     const div = document.createElement('div');
     const time = document.createElement('span');
-    time.textContent = `${beg.toFixed(1)}s-${end.toFixed(1)}s`;
+    const endLabel = Number.isFinite(end) && end > beg ? `${end.toFixed(1)}s` : '…';
+    time.textContent = `${beg.toFixed(1)}s-${endLabel}`;
     div.appendChild(time);
     div.appendChild(document.createTextNode(text));
     historyEl.appendChild(div);
@@ -405,8 +430,159 @@
 
   function updateHistory(div, msg) {
     if (!div) return;
-    div.childNodes[0].textContent = `${msg.beg.toFixed(1)}s-${msg.end.toFixed(1)}s`;
+    const endLabel = Number.isFinite(msg.end) && msg.end > msg.beg ? `${msg.end.toFixed(1)}s` : '…';
+    div.childNodes[0].textContent = `${msg.beg.toFixed(1)}s-${endLabel}`;
     div.childNodes[1].textContent = msg.text;
+  }
+
+  // A finalized ASR event may contain several sentences (or a long monologue).
+  // Keep the full result in history, but reveal short timed phrases on video.
+  function captionSegments(s) {
+    const words = (s.words || []).filter(w => Array.isArray(w) && Number.isFinite(w[0])
+      && Number.isFinite(w[1]) && typeof w[2] === 'string' && w[2].trim());
+    const normalize = value => value.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+    const sourceText = typeof s.text === 'string' ? s.text : '';
+    const spokenText = normalize(words.map(w => w[2]).join(''));
+    const expectedText = normalize(sourceText);
+    if (words.length >= 2 && expectedText && spokenText === expectedText) {
+      // Use the finalized sentence as the text source. ASR word timestamps can
+      // split one spelling across adjacent tokens ("wh" + "istles"); adding
+      // spaces between those tokens corrupts the video caption while history
+      // still looks correct because it uses s.text directly.
+      const sourceRanges = [];
+      let rawIndex = 0;
+      for (const char of sourceText) {
+        const normalizedChar = normalize(char);
+        for (let i = 0; i < normalizedChar.length; i++) {
+          sourceRanges.push({start: rawIndex, end: rawIndex + char.length});
+        }
+        rawIndex += char.length;
+      }
+
+      const alignedWords = [];
+      let searchFrom = 0;
+      let aligned = true;
+      for (const word of words) {
+        const token = normalize(word[2].trim());
+        if (!token) continue;
+        const start = expectedText.indexOf(token, searchFrom);
+        const end = start + token.length;
+        if (start < 0 || end > sourceRanges.length) {
+          aligned = false;
+          break;
+        }
+        let rawEnd = sourceRanges[end - 1].end;
+        while (rawEnd < sourceText.length && /[.!?。！？；;，,:]/u.test(sourceText[rawEnd])) rawEnd++;
+        alignedWords.push({beg: word[0], end: word[1], start,
+          rawStart: sourceRanges[start].start, rawEnd});
+        searchFrom = end;
+      }
+
+      // Consecutive Latin/digit fragments with no textual separator belong to
+      // one displayed word. Keep their complete timing span before chunking so
+      // a 10-token or duration boundary cannot cut through that word.
+      const displayWords = [];
+      for (const word of alignedWords) {
+        const previous = displayWords[displayWords.length - 1];
+        const separator = previous ? sourceText.slice(previous.rawEnd, word.rawStart) : '';
+        const joinsWord = previous && /^[’'ʼ-]*$/u.test(separator)
+          && /[\p{Script=Latin}\p{N}]$/u.test(sourceText.slice(0, previous.rawEnd))
+          && /^[\p{Script=Latin}\p{N}]/u.test(sourceText.slice(word.rawStart));
+        if (joinsWord) {
+          previous.end = Math.max(previous.end, word.end);
+          previous.rawEnd = word.rawEnd;
+        } else {
+          displayWords.push({...word});
+        }
+      }
+
+      if (aligned && displayWords.length >= 2) {
+        const result = [];
+        let clause = [];
+        const pushSpan = span => {
+          if (!span.length) return;
+          const first = span[0];
+          const last = span[span.length - 1];
+          result.push({beg:first.beg, end:last.end,
+            text:sourceText.slice(first.rawStart, last.rawEnd).trim()});
+        };
+        const flushClause = () => {
+          if (!clause.length) return;
+          const text = sourceText.slice(clause[0].rawStart, clause[clause.length - 1].rawEnd);
+          const hasHan = /\p{Script=Han}/u.test(text);
+          const maxChars = hasHan ? 26 : 48;
+          if (text.length <= maxChars) {
+            pushSpan(clause);
+          } else {
+            // Split an overlong clause into balanced pieces at ASR word
+            // boundaries. A fixed 10-token/4s cutoff left "她对" orphaned
+            // before "俺挺好的" even though the final transcript was correct.
+            let from = 0;
+            while (from < clause.length) {
+              const remaining = sourceText.slice(clause[from].rawStart,
+                clause[clause.length - 1].rawEnd).length;
+              if (remaining <= maxChars) {
+                pushSpan(clause.slice(from));
+                break;
+              }
+              const pieces = Math.ceil(remaining / maxChars);
+              const target = remaining / pieces;
+              let best = from + 1;
+              let bestDistance = Infinity;
+              for (let i = from + 1; i < clause.length; i++) {
+                const leftLength = sourceText.slice(clause[from].rawStart, clause[i - 1].rawEnd).length;
+                const rightLength = sourceText.slice(clause[i].rawStart, clause[clause.length - 1].rawEnd).length;
+                if (leftLength > maxChars || rightLength < 4) break;
+                const gap = clause[i].beg - clause[i - 1].end;
+                const distance = Math.abs(leftLength - target) - Math.min(0.8, Math.max(0, gap));
+                if (distance < bestDistance) { bestDistance = distance; best = i; }
+              }
+              pushSpan(clause.slice(from, best));
+              from = best;
+            }
+          }
+          clause = [];
+        };
+        for (const word of displayWords) {
+          clause.push(word);
+          if (/[，,。.!?！？；;]$/.test(sourceText.slice(word.rawStart, word.rawEnd)))
+            flushClause();
+        }
+        flushClause();
+        if (result.length > 1) return result;
+      }
+    }
+
+    const beg = Number.isFinite(s.beg) ? s.beg : null;
+    const end = Number.isFinite(s.end) && s.end > beg ? s.end : null;
+    const rawParts = (s.text.match(/[^.!?。！？；;，,]+[.!?。！？；;，,]?/g) || [s.text])
+      .map(part => part.trim()).filter(Boolean);
+    const parts = rawParts.flatMap(part => {
+      if (/\p{Script=Han}/u.test(part)) {
+        if (part.length <= 26) return [part];
+        const count = Math.ceil(part.length / 26);
+        const size = Math.ceil(part.length / count);
+        return Array.from({length:count}, (_, index) => part.slice(index * size,
+          (index + 1) * size).trim()).filter(Boolean);
+      }
+      if (part.length <= 48) return [part];
+      const tokens = part.match(/\S+\s*/g) || [part];
+      return tokens.reduce((chunks, token) => {
+        const current = chunks[chunks.length - 1] || '';
+        if (current.length && (current + token).trim().length > 44) chunks.push(token.trim());
+        else chunks[chunks.length - 1] = current + token;
+        return chunks;
+      }, ['']).map(chunk => chunk.trim()).filter(Boolean);
+    });
+    if (!Number.isFinite(beg) || !Number.isFinite(end) || parts.length <= 1)
+      return [{beg, end, text: s.text.trim()}];
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    let offset = beg;
+    return parts.map((part, index) => {
+      const segmentBeg = offset;
+      offset = index === parts.length - 1 ? end : offset + (end - beg) * part.length / total;
+      return {beg: segmentBeg, end: offset, text: part};
+    });
   }
 
   function syncSubtitle() {
@@ -418,36 +594,59 @@
       currentEl.textContent = '';
       return;
     }
-    // seek 后清空显示，等新数据（防止定格旧句误导）
-    if (seekPending) {
-      currentEl.textContent = '⏳ 跳转中，字幕将随转写跟进…';
-      return;
-    }
     // 视频未开始播放时不显示字幕（避免"字幕提前"的错觉）
-    if (player.paused && t < 0.5) {
+    if (!playStarted && player.paused && t < 0.5) {
       currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
       return;
     }
     // 按识别句真实时间范围显示整句：句子开始时出现，结束时自然消失。
-    const candidates = subs.map(s => {
-        const wordStarts = (s.words || []).map(w => w[0]);
-        const wordEnds = (s.words || []).map(w => w[1] == null ? w[0] : w[1]);
-        const sentenceBeg = Number.isFinite(s.beg) ? s.beg : (wordStarts[0] ?? null);
-        const sentenceEnd = Number.isFinite(s.end) ? s.end : (wordEnds.length ? Math.max(...wordEnds) : null);
+    const sortedSubs = [...subs].sort((a, b) => a.beg - b.beg);
+    const nextBegBySubtitle = new Map();
+    let nextBeg = Infinity;
+    for (let i = sortedSubs.length - 1; i >= 0; i--) {
+      const item = sortedSubs[i];
+      nextBegBySubtitle.set(item, nextBeg);
+      if (item.beg < nextBeg) nextBeg = item.beg;
+    }
+    let candidates = subs.filter(s => s.isFinal !== false).flatMap(s => captionSegments(s).map((segment, segmentIndex) => {
+        const sentenceBeg = Number.isFinite(segment.beg) ? segment.beg : s.beg;
+        // Some final entries omit a sentence end. Keep that caption visible until
+        // the next sentence begins instead of
+        // inventing a one-second duration and dropping it while speech continues.
+        // A 60s ceiling clears abandoned partials if the API stops sending updates.
+        const sentenceEnd = Number.isFinite(s.end) && s.end > sentenceBeg
+          ? s.end : Math.min(nextBegBySubtitle.get(s) ?? Infinity, sentenceBeg + 60);
         return {
           ...s,
+          text: segment.text,
+          sourceId: subs.indexOf(s),
+          segmentIndex,
           captionBeg: sentenceBeg,
-          captionEnd: sentenceEnd,
+          captionEnd: Number.isFinite(segment.end) && segment.end > sentenceBeg
+            ? segment.end : sentenceEnd,
         };
-      }).filter(s => s.captionBeg != null && s.captionEnd != null
+      })).filter(s => s.captionBeg != null && s.captionEnd != null
         && s.captionBeg <= t && s.captionEnd > t && s.text.trim())
         .sort((a, b) => a.captionBeg - b.captionBeg);
+    if (!candidates.length) {
+      candidates = previewSubs.filter(s => s.beg <= t && s.end > t)
+        .map((s, index) => ({...s, captionBeg:s.beg, captionEnd:s.end,
+          sourceId:`preview-${index}`, segmentIndex:0}));
+    }
+    // A seek can land inside finalized history already received from ASR. Show
+    // that timed caption immediately; wait only when the destination is unknown.
+    if (seekPending && candidates.length === 0) {
+      currentEl.textContent = '⏳ 跳转中，字幕将随转写跟进…';
+      return;
+    }
+    if (candidates.length) seekPending = false;
       const groups = [];
       for (const caption of candidates) {
-        let group = groups.find(g => Math.abs(g.beg - caption.captionBeg) < 0.75
+        let group = groups.find(g => g.sourceId !== caption.sourceId
+          && Math.abs(g.beg - caption.captionBeg) < 0.75
           && g.end > caption.captionBeg && caption.captionEnd > g.beg);
         if (!group) {
-          group = { beg: caption.captionBeg, end: caption.captionEnd, text: caption.text.trim() };
+          group = { beg: caption.captionBeg, end: caption.captionEnd, text: caption.text.trim(), sourceId: caption.sourceId };
           groups.push(group);
         } else {
           group.end = Math.max(group.end, caption.captionEnd);
@@ -458,7 +657,7 @@
     return;
   }
 
-  // 字幕处理：partial 原地修订；画面按播放时间命中句子的起止区间显示。
+  // 历史原地修订 partial；视频叠层只显示 API 已确认的完整句子。
   let uiPaused = false;  // 前端暂停标志：暂停期间忽略新数据（后端同时停止解析）
   function sharedWordRatio(a, b) {
     if (!a || !a.length || !b || !b.length) return 0;
@@ -470,9 +669,13 @@
   }
 
   function sameSubtitle(a, b) {
+    const aId = a.sentenceId ?? a.sentence_id;
+    const bId = b.sentenceId ?? b.sentence_id;
+    if (aId != null && bId != null) return aId === bId;
     // ASR partial revisions may shift their estimated sentence start by several
     // hundred milliseconds, especially when corrected words change alignment.
     const beginDrift = Math.abs(a.beg - b.beg);
+    if (beginDrift < 1.0 && (!Number.isFinite(a.end) || !Number.isFinite(b.end))) return true;
     const overlap = Math.max(0, Math.min(a.end, b.end) - Math.max(a.beg, b.beg));
     const shorterDuration = Math.min(a.end - a.beg, b.end - b.beg);
     if (beginDrift < 1.0 && shorterDuration > 0
@@ -482,7 +685,8 @@
   }
 
   function onSubtitle(msg) {
-    if (uiPaused) return;  // 暂停：丢弃在途 partial，恢复后重新同步
+    // In-flight final revisions remain valid while the user has paused.
+    // Preserve them for playback instead of dropping transcript data.
     seekPending = false;  // 新数据到达，解除 seek 等待
     if (!msg.text) return;
     let idx = subs.findIndex(s => sameSubtitle(s, msg));
@@ -493,6 +697,8 @@
       matched.beg = msg.beg;
       matched.end = msg.end;
       matched.text = msg.text;
+      matched.isFinal = msg.is_final !== false;
+      matched.sentenceId = msg.sentence_id ?? matched.sentenceId;
       if (msg.words) matched.words = msg.words;
       updateHistory(matched.historyItem, msg);
       for (let i = subs.length - 1; i >= 0; i--) {
@@ -507,10 +713,38 @@
     } else {
       // 新句：加入列表与历史
       const historyItem = appendHistory(msg.beg, msg.end, msg.text);
-      subs.push({ beg: msg.beg, end: msg.end, text: msg.text, words: msg.words || null, historyItem });
+      subs.push({ beg: msg.beg, end: msg.end, text: msg.text, words: msg.words || null,
+        isFinal: msg.is_final !== false, sentenceId: msg.sentence_id, historyItem });
       logEvent('sub', `beg=${msg.beg.toFixed(1)} ${msg.text.slice(0, 24)}`);
     }
+    if (msg.is_final !== false) {
+      previewSubs = previewSubs.filter(s => msg.sentence_id != null && s.sentenceId != null
+        ? s.sentenceId !== msg.sentence_id
+        : s.end < msg.beg || (Number.isFinite(msg.end) && s.beg > msg.end));
+    }
     syncSubtitle();
+  }
+
+  function onPreview(msg) {
+    if (!msg.text || !Number.isFinite(msg.beg) || !Number.isFinite(msg.end)) return;
+    previewSubs.push({beg:msg.beg, end:msg.end, text:msg.text,
+      sentenceId:msg.sentence_id});
+    if (previewSubs.length > 200) previewSubs.shift();
+    syncSubtitle();
+  }
+
+  // Decoder PTS and hls.js initPTS refer to the same encoded media clock.
+  // Applying their difference maps ASR sample time onto video.currentTime.
+  function offsetMediaMessage(msg, offset) {
+    if (msg.type === 'subtitle' || msg.type === 'preview') return {...msg,
+      beg: msg.beg + offset,
+      end: Number.isFinite(msg.end) ? msg.end + offset : msg.end,
+      words: msg.words?.map(([beg, end, text]) => [beg + offset,
+        Number.isFinite(end) ? end + offset : end, text])};
+    if (msg.type === 'buffer') return {...msg, play_at: msg.play_at + offset};
+    if (msg.type === 'ready' && Number.isFinite(msg.start_at))
+      return {...msg, start_at: msg.start_at + offset};
+    return msg;
   }
 
   function connect(forceUrl) {
@@ -525,20 +759,38 @@
     // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
     if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); }
     subs = [];
+    previewSubs = [];
     historyItems = [];
     historyEl.innerHTML = '';
     playStarted = false;
     holdingForSync = false;
+    holdingForBuffer = false;
+    playbackLimit = null;
     uiPaused = false;
     seekPending = false;
     currentEl.classList.remove('err');
     currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
     lastBlockEnd = -1;
     const isHls = /\.m3u8/i.test(url);
+    let audioClockPts = null, videoClockPts = null;
+    let timelineMapped = false;
+    let mediaOffset = 0;
+    const queuedMediaMessages = [];
+    function flushMediaClock() {
+      if (audioClockPts == null || videoClockPts == null) return;
+      mediaOffset = audioClockPts - videoClockPts;
+      // MPEG-TS timestamps wrap after 2^33 ticks at 90 kHz.
+      const wrap = 2 ** 33 / 90000;
+      if (mediaOffset < -wrap / 2) mediaOffset += wrap;
+      if (mediaOffset > wrap / 2) mediaOffset -= wrap;
+      timelineMapped = true;
+      logEvent('media_clock', `offset=${mediaOffset.toFixed(3)}s`);
+      for (const msg of queuedMediaMessages.splice(0)) receiveMessage(msg);
+    }
     delayEl.disabled = !isHls;
     delayEl.title = isHls
-      ? 'HLS 直播回放相对 ASR 转写进度的延迟；延迟越长，句子越有时间完整修订'
-      : '字幕延迟仅适用于 HLS 直播流';
+      ? 'HLS 画面和声音相对直播源的整体延迟；延迟期间音频持续送给 ASR'
+      : '音视频整体延迟仅适用于 HLS 直播流';
     const params = new URLSearchParams({
       url, engine: engineEl.value, silence: silenceEl.value,
       delay: isHls ? delayEl.value : '0.1',
@@ -563,13 +815,14 @@
       if (hlsPlayer) hlsPlayer.destroy();
       player.removeAttribute('src');
       player.load();
-      // 慢源适配（2026-08-09 实测）：IPTV 分片常达 5MB+ 且上游带宽 ~1MB/s，
-      // 默认预缓冲 3 片（≈16s）期间分片逐个过期 → 启动极慢或直接卡死。
-      // 只缓冲 1 片尽快开播 + 贴近直播边缘 + 加大重试容错。
+      // Retain downloaded A/V while ASR finalizes; a ten-second forward buffer
+      // and zero back buffer lose media during a long recognition wait.
       hlsPlayer = new Hls({
-        liveSyncDurationCount: 1,
-        maxBufferLength: 10,
-        backBufferLength: 0,
+        liveSyncDurationCount: 3,
+        lowLatencyMode: false,
+        maxLiveSyncPlaybackRate: 1,
+        maxBufferLength: 120,
+        backBufferLength: 120,
         fragLoadingConcurrency: 1,  // 串行拉分片：不与他人（ASR 拉流）抢慢源带宽
         fragLoadingMaxRetry: 6,
         manifestLoadingMaxRetry: 6,
@@ -577,6 +830,11 @@
       });
       hlsPlayer.loadSource(`/video?url=${encodeURIComponent(url)}`);
       hlsPlayer.attachMedia(player);
+      hlsPlayer.on(Hls.Events.INIT_PTS_FOUND, (_evt, data) => {
+        if (data.id !== 'main' || videoClockPts != null) return;
+        videoClockPts = data.initPTS / data.timescale;
+        flushMediaClock();
+      });
       hlsPlayer.on(Hls.Events.ERROR, (_evt, data) => {
         if (!data.fatal) return;
         logEvent('hls_error', `${data.type}/${data.details}`);
@@ -602,14 +860,27 @@
     }
 
     ws.onopen = () => { logEvent('ws_open', ''); setStatus('已连接，引擎加载中…'); };
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
+    function receiveMessage(input) {
+      if (input.type === 'timeline') {
+        audioClockPts = input.audio_pts;
+        flushMediaClock();
+        return;
+      }
+      if (audioClockPts != null && !timelineMapped
+          && ['subtitle', 'preview', 'buffer', 'ready', 'end'].includes(input.type)) {
+        queuedMediaMessages.push(input);
+        return;
+      }
+      const msg = timelineMapped ? offsetMediaMessage(input, mediaOffset) : input;
       if (msg.type === 'subtitle') {
         onSubtitle(msg);
+      } else if (msg.type === 'preview') {
+        onPreview(msg);
+      } else if (msg.type === 'buffer') {
+        playbackLimit = Number.isFinite(msg.play_at) ? msg.play_at : playbackLimit;
+        syncPlaybackToBuffer();
       } else if (msg.type === 'ready') {
-        // 播放就绪：视频从 ASR 覆盖位置前方 delay 秒启动，预留时间让句子补全修订。
-        // HLS 音频从 live_sync_position 起解，视频也 seek 到同一 ASR 时间点，
-        // 避免 HLS.js 从直播边缘起播、PyAV 却从更早分片起解造成字幕落后。
+        // 音视频一起从输入进度前方 delay 秒启动；后续 buffer 消息持续控制播放上限。
         if (isHls && Number.isFinite(msg.start_at)) {
           aligningInitialPlayback = true;
           try { player.currentTime = Math.max(0, msg.start_at); }
@@ -619,7 +890,9 @@
         }
         playStarted = true;
         holdingForSync = false;
-        logEvent('ready', `字幕延迟=${msg.delay}s，开始播放`);
+        if (currentEl.textContent.includes('字幕准备中')) currentEl.textContent = '';
+        setStatus('字幕已就绪，开始播放');
+        logEvent('ready', `音视频延迟=${msg.delay}s，开始播放`);
         player.play().catch(() => {});
         // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 时间轴损坏时，
         // 视频可能长时间 waiting/不前进却无 error 事件（无声卡死）——2s 轮询，
@@ -635,11 +908,18 @@
         setStatus('出错', true);
         playStarted = true;  // 解除播放拦截，允许手动看片（无字幕）
       } else if (msg.type === 'end') {
-        setStatus('音频处理结束');
+        if (!currentEl.classList.contains('err')) setStatus('音频处理结束');
         playStarted = true;  // 同上（静默视频等零字幕场景）
+        // Source/API 已结束，没有更多 ASR 水位可以更新；播放剩余已缓冲的 A/V。
+        playbackLimit = Infinity;
+        if (holdingForBuffer && !uiPaused) {
+          holdingForBuffer = false;
+          player.play().catch(() => {});
+        }
         ws.close();
       }
-    };
+    }
+    ws.onmessage = (e) => receiveMessage(JSON.parse(e.data));
     ws.onerror = () => { logEvent('ws_error', '连接失败'); setStatus('连接失败', true); };
     ws.onclose = () => {
       logEvent('ws_close', '');
@@ -648,8 +928,23 @@
     };
   }
 
-  // 字幕显示节奏：定时快照（250ms，整块替换，不逐字、不逐帧跳动）
-  setInterval(syncSubtitle, 250);
+  function syncPlaybackToBuffer() {
+    if (!playStarted || playbackLimit == null || !/\.m3u8/i.test(urlEl.value.trim())) return;
+    const t = player.currentTime;
+    if (!player.paused && t >= playbackLimit - 0.03) {
+      holdingForBuffer = true;
+      player.pause(); // HLS 音频在同一 video 元素上，一并暂停
+      setStatus('等待下一段字幕确认…');
+      logEvent('buffer_hold', `t=${t.toFixed(2)} limit=${playbackLimit.toFixed(2)}`);
+    } else if (player.paused && holdingForBuffer && playbackLimit - t >= 1.0) {
+      holdingForBuffer = false;
+      player.play().catch(() => {});
+      setStatus('字幕已就绪，继续播放');
+      logEvent('buffer_resume', `t=${t.toFixed(2)} limit=${playbackLimit.toFixed(2)}`);
+    }
+  }
+  // 字幕整句快照 + 连续音视频延迟闸门。
+  setInterval(() => { syncSubtitle(); syncPlaybackToBuffer(); }, 100);
   player.addEventListener('seeked', syncSubtitle);
   // 本地文件容器/编码不受浏览器支持（如 .mkv）时 <video> 静默失败成黑屏
   // ticket-16：完整错误入日志（code/message/src/状态），code>0 即停会话（音频+API 停）
@@ -697,7 +992,7 @@
     logEvent('play', `t=${player.currentTime.toFixed(1)}`);
   });
   player.addEventListener('pause', () => {
-    if (holdingForSync) return;  // 拦截产生的 pause，不冻结后端
+    if (holdingForSync || holdingForBuffer) return;  // 缓冲闸门暂停不冻结 ASR
     uiPaused = true;  // 立即冻结前端显示（丢弃在途 partial）
     audioEl.pause();
     if (ws && ws.readyState === 1) ws.send('pause');

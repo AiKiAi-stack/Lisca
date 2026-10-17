@@ -41,7 +41,10 @@ class _Callback(RecognitionCallback):
             except Exception:  # noqa: BLE001 - SDK callback must not throw
                 message = ""
         if not message:
-            message = str(result)
+            try:
+                message = str(result)
+            except Exception:  # SDK response stringification can itself fail
+                message = "DashScope recognition failed"
         self._errors.put(message or "DashScope ASR returned an unspecified error")
 
     def on_event(self, result: RecognitionResult) -> None:
@@ -66,6 +69,7 @@ class _Callback(RecognitionCallback):
             end_time=(sentence.get("end_time") or 0) / 1000.0,
             is_final=RecognitionResult.is_sentence_end(sentence),
             words=word_list or None,
+            sentence_id=sentence.get("sentence_id"),
         )
         self._subtitle_buffer.append(entry)
 

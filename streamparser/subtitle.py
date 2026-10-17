@@ -10,6 +10,7 @@ class SubtitleEntry:
     end_time: Optional[float]
     is_final: bool
     words: Optional[list] = None  # [(begin_sec, end_sec_or_None, text)] 字级时间戳（aliyun 引擎提供）
+    sentence_id: Optional[int] = None  # 同一句 partial/final 共用的 API 标识
 
     def _format_time(self, seconds: float) -> str:
         hours = int(seconds // 3600)

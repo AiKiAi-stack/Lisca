@@ -2,6 +2,7 @@
 import os
 import sys
 import types
+from collections import deque
 
 import pytest
 
@@ -30,6 +31,9 @@ def _patch_deps(monkeypatch, with_client=True):
             self.started = True
 
         def stop(self):
+            pass
+
+        def raise_if_error(self):
             pass
 
     fake_client_mod.ASRClient = FakeClient
@@ -90,6 +94,29 @@ def test_aliyun_passes_recognition_kwargs(monkeypatch):
     eng = create_engine("aliyun-funasr", max_sentence_silence=800)
     client = FakeClient.instances[-1]
     assert client.kwargs["max_sentence_silence"] == 800
+    assert client.kwargs["multi_threshold_mode_enabled"] is True
     assert client.kwargs["heartbeat"] is True
     assert client.kwargs["language_hints"] == ["zh"]
+    eng.close()
+
+
+def test_aliyun_preserves_missing_sentence_end(monkeypatch):
+    """Unknown ASR end times must not be shortened to a fabricated one-second cue."""
+    from engines import create_engine
+
+    FakeClient = _patch_deps(monkeypatch)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    eng = create_engine("aliyun-funasr")
+    FakeClient.instances[-1].subtitle_buffer = deque()
+    FakeClient.instances[-1].subtitle_buffer.append(types.SimpleNamespace(
+        start_time=20.2, end_time=0.0,
+        text="A long partial sentence while the speaker is still talking.",
+        words=None, is_final=False,
+    ))
+
+    assert eng.poll() == (
+        20.2, None,
+        "A long partial sentence while the speaker is still talking.", None, False,
+            None,
+    )
     eng.close()

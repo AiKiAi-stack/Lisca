@@ -20,7 +20,7 @@ class AliyunFunASREngine(Engine):
                  workspace_id: str = "", region: str = DEFAULT_REGION,
                  api_key: str = "", chunk_size: int = 3200, model_dir: str = "",
                  max_sentence_silence: int = 400, heartbeat: bool = True,
-                 language_hints=("zh",)):
+                 language_hints=("zh",), multi_threshold_mode_enabled: bool = True):
         # model_dir 仅为兼容通用 CLI 传参（本地引擎使用），API 引擎忽略
         del model_dir
         self._api_key = api_key or os.environ.get("DASHSCOPE_API_KEY", "")
@@ -45,11 +45,12 @@ class AliyunFunASREngine(Engine):
             api_key=self._api_key, workspace_id=workspace_id,
             region=region, model=model,
         )
-        # 断句灵敏度（VAD 静音阈值 ms，官方 [200,6000]）+ 心跳防长静音断连
-        # + 固定中文语种（fun-asr-realtime 仅支持 1 个语种值）
+        # 断句灵敏度（VAD 静音阈值 ms）+ 多阈值模式防止连续讲话切成超长段
+        # + 心跳防长静音断连 + 固定中文语种（fun-asr-realtime 仅支持 1 个语种值）
         recognition_kwargs = {}
         if max_sentence_silence:
             recognition_kwargs["max_sentence_silence"] = max_sentence_silence
+        recognition_kwargs["multi_threshold_mode_enabled"] = bool(multi_threshold_mode_enabled)
         if heartbeat:
             recognition_kwargs["heartbeat"] = True
         if language_hints:
@@ -65,9 +66,10 @@ class AliyunFunASREngine(Engine):
             entry = self.client.subtitle_buffer.popleft()
             if entry.text:
                 beg = entry.start_time
-                end = entry.end_time if (entry.end_time and entry.end_time > beg) else beg + 1.0
-                return (beg, end, entry.text, entry.words)
-        return (None, None, "", None)
+                end = entry.end_time if (entry.end_time and entry.end_time > beg) else None
+                return (beg, end, entry.text, entry.words, entry.is_final,
+                        getattr(entry, "sentence_id", None))
+        return (None, None, "", None, False)
 
     def transcribe_chunk(self, audio) -> Subtitle:
         import numpy as np

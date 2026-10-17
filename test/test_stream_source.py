@@ -1,30 +1,29 @@
-from io import BytesIO
+from fractions import Fraction
 from unittest.mock import MagicMock
+
+import numpy as np
 
 from tools.stream_source import StreamSource
 
 
-def test_live_hls_starts_at_the_live_edge_with_matching_timeline(monkeypatch):
-    """ASR audio and the HLS player must start on the same live segment."""
-    manifest = (
-        "#EXTM3U\n"
-        "#EXT-X-TARGETDURATION:10\n"
-        "#EXT-X-MEDIA-SEQUENCE:42\n"
-        "#EXTINF:10,\nseg42.ts\n"
-        "#EXTINF:10,\nseg43.ts\n"
-        "#EXTINF:10,\nseg44.ts\n"
-    ).encode()
-    response = BytesIO(manifest)
-    response.__enter__ = lambda: response
-    response.__exit__ = lambda *_args: None
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
+def test_hls_clock_uses_decoded_pts_not_sliding_playlist_duration(monkeypatch):
     container = MagicMock()
     container.streams.audio = [object()]
+    container.decode.return_value = [object()]
     av_open = MagicMock(return_value=container)
     monkeypatch.setattr("tools.stream_source.av.open", av_open)
+    resampled = MagicMock()
+    resampled.pts = 19752000
+    resampled.time_base = Fraction(1, 16000)
+    resampled.to_ndarray.return_value = np.zeros((1, 1600), dtype=np.int16)
+    resampler = MagicMock()
+    resampler.resample.return_value = [resampled]
+    monkeypatch.setattr("tools.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
 
     source = StreamSource("https://asr.test/live/index.m3u8")
 
-    assert source.timeline_offset_sec == 20
+    assert len(list(source.iter_chunks())) == 1
+    assert source.first_pts_sec == 1234.5
+    assert source.timeline_offset_sec == 0
     options = av_open.call_args.kwargs["options"]
-    assert options["live_start_index"] == "-1"
+    assert options["live_start_index"] == "-3"

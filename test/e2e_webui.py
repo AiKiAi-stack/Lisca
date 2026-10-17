@@ -1,6 +1,6 @@
 """E2E 验收：真实 UX 断言（R5 重写）
 
-前置：webUI 运行在 127.0.0.1:8000（含阿里云引擎，key 来自 ~/Projects/.env）
+前置：webUI 运行在 127.0.0.1:8002（含阿里云引擎，key 来自 ~/Projects/.env）
 运行：.venv/bin/python test/e2e_webui.py
 退出码：0=全绿；1=至少一条红（红基准）
 
@@ -19,7 +19,7 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-BASE = "http://127.0.0.1:8000"
+BASE = "http://127.0.0.1:8002"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VID_A = os.path.join(ROOT, "uploads", "demo.mp4")
 VID_B = os.path.join(ROOT, "uploads", "0_20260709_223807.mp4")

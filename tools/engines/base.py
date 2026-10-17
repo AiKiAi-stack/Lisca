@@ -4,10 +4,15 @@
 本地（FasterWhisperEngine）与 API（AliyunFunASREngine，ticket-05）可无缝切换。
 """
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
-Subtitle = Tuple[Optional[float], Optional[float], str, Optional[list]]
-# (beg_sec, end_sec, text, words?)；words = [(begin_sec, end_sec_or_None, text)]
+Subtitle = Union[
+    Tuple[Optional[float], Optional[float], str, Optional[list]],
+    Tuple[Optional[float], Optional[float], str, Optional[list], bool],
+    Tuple[Optional[float], Optional[float], str, Optional[list], bool, Optional[int]],
+]
+# (beg_sec, end_sec, text, words?, is_final?, sentence_id?)；旧式四元组引擎默认视为 final。
+# words = [(begin_sec, end_sec_or_None, text)]
 # 字级时间戳，仅 API 引擎（aliyun fun-asr-realtime）提供，本地引擎为 None
 
 
