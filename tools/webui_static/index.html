@@ -565,7 +565,14 @@
         onSubtitle(msg);
       } else if (msg.type === 'ready') {
         // 播放就绪（ticket-15）：后端已处理满一个窗口的音频，字幕第一块将完整——
-        // 此时才开播（+1.5s 让转写先跟上），不再由首条字幕触发
+        // 此时才开播（+1.5s 让转写先跟上），不再由首条字幕触发。
+        // HLS 音频从 live_sync_position 起解，视频也 seek 到同一 ASR 时间点，
+        // 避免 HLS.js 从直播边缘起播、PyAV 却从更早分片起解造成字幕落后。
+        if (hlsPlayer && Number.isFinite(msg.start_at)) {
+          try { player.currentTime = Math.max(0, msg.start_at); }
+          catch (e) { logEvent('sync_seek_error', String(e)); }
+          logEvent('sync_start', `t=${Number(msg.start_at).toFixed(1)}s`);
+        }
         playStarted = true;
         holdingForSync = false;
         logEvent('ready', `win=${msg.win}s，开始播放`);

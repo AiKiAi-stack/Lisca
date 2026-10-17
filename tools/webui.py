@@ -364,6 +364,7 @@ async def ws_endpoint(ws: WebSocket):
         import time
 
         coverage = 0.0  # 转写覆盖度：已转写到的音频位置（秒）
+        timeline_offset = 0.0
 
         def emit(o) -> None:
             """推送当前句 partial（整句累计文本 + 可选字级 words，前端字级快照显示）"""
@@ -376,8 +377,17 @@ async def ws_endpoint(ws: WebSocket):
                         coverage = cov
                 elif end and end > coverage:
                     coverage = end
-                put({"type": "subtitle", "beg": beg, "end": end, "text": text,
-                     "words": words})
+                shifted_words = None
+                if words:
+                    shifted_words = [
+                        (word_beg + timeline_offset,
+                         word_end + timeline_offset if word_end is not None else None,
+                         word_text)
+                        for word_beg, word_end, word_text in words
+                    ]
+                put({"type": "subtitle", "beg": beg + timeline_offset,
+                     "end": end + timeline_offset if end is not None else None,
+                     "text": text, "words": shifted_words})
 
         # 服务端日志（ticket-14）：连接即推环形缓冲快照，之后实时推送
         for line in list(_SERVER_LOGS)[-200:]:
@@ -407,6 +417,7 @@ async def ws_endpoint(ws: WebSocket):
             put({"type": "status", "message": f"引擎就绪，开始拉流: {real_url[:60]}"})
             logger.info("引擎就绪 %s，拉流 %s", engine_name, real_url[:80])
             src = StreamSource(real_url, http_headers=http_headers)
+            timeline_offset = getattr(src, "timeline_offset_sec", 0.0)
             chunk_sec = 0.1  # 拉流分块（秒）：帧粒度基准（0.1s = 3 帧 @30fps）
             try:
                 # 播放就绪信号（直播延时技术，ticket-15 v4）：转写覆盖满第一个窗口
@@ -439,7 +450,13 @@ async def ws_endpoint(ws: WebSocket):
                     if not batch_mode and not ready_sent:
                         fed_sec += chunk_sec
                         if coverage >= win_sec + 1.0 or fed_sec >= win_sec + 4.0:
-                            put({"type": "ready", "win": win_sec})
+                            # The browser waits 1.5s after ready before playback.
+                            # Start up to (window - 1.5s) earlier so the ASR lead
+                            # fills the whole first fixed subtitle window.
+                            start_at = (timeline_offset + max(coverage, fed_sec)
+                                        - max(0.0, win_sec - 1.5))
+                            put({"type": "ready", "win": win_sec,
+                                 "start_at": start_at})
                             ready_sent = True
                     if o[0] is not None:
                         emit(o)

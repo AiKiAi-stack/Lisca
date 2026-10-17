@@ -9,6 +9,9 @@
     for chunk_bytes in src.iter_chunks(chunk_sec=0.1):
         audio_f32 = s16_to_f32(chunk_bytes)   # np.float32, 值域 [-1, 1]
 """
+import urllib.request
+from urllib.parse import urljoin, urlparse
+
 import av
 import numpy as np
 
@@ -17,6 +20,42 @@ SAMPLING_RATE = 16000
 # 平台 CDN 防盗链：裸 Lavf UA 会被部分节点 403，统一带浏览器 UA
 DEFAULT_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+
+
+def _hls_live_offset(url: str, headers: dict) -> float | None:
+    """Return the start time of HLS's last live segment, or None for VOD/unknown."""
+    for _ in range(3):
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=8) as response:
+            playlist = response.read().decode("utf-8", "replace")
+        if "#EXT-X-ENDLIST" in playlist:
+            return None
+
+        lines = [line.strip() for line in playlist.splitlines() if line.strip()]
+        if any(line.startswith("#EXT-X-STREAM-INF:") for line in lines):
+            for index, line in enumerate(lines):
+                if line.startswith("#EXT-X-STREAM-INF:"):
+                    variant = next((x for x in lines[index + 1:] if not x.startswith("#")), None)
+                    if variant:
+                        url = urljoin(url, variant)
+                        break
+            else:
+                return None
+            continue
+
+        durations = []
+        for line in lines:
+            if line.startswith("#EXTINF:"):
+                try:
+                    durations.append(float(line.split(":", 1)[1].split(",", 1)[0]))
+                except ValueError:
+                    return None
+        if len(durations) < 2:
+            return None
+        # live_start_index=-1 selects the final segment, matching hls.js's
+        # liveSyncPosition (one target duration behind the live edge).
+        return sum(durations[:-1])
+    return None
 
 
 def s16_to_f32(raw: bytes) -> np.ndarray:
@@ -31,12 +70,21 @@ class StreamSource:
     def __init__(self, url_or_path: str, chunk_sec: float = 0.1,
                  http_headers: dict = None):
         self.url_or_path = url_or_path
+        self.timeline_offset_sec = 0.0
         options = {}
         if url_or_path.startswith(("http://", "https://")):
             hdrs = {"User-Agent": DEFAULT_UA}
             hdrs.update(http_headers or {})
             # libavformat http 协议要求 headers 以 CRLF 结尾
             options["headers"] = "".join(f"{k}: {v}\r\n" for k, v in hdrs.items())
+            if urlparse(url_or_path).path.lower().endswith(".m3u8"):
+                try:
+                    live_offset = _hls_live_offset(url_or_path, hdrs)
+                except Exception:  # noqa: BLE001 - keep existing AVIO fallback on inaccessible manifests
+                    live_offset = None
+                if live_offset is not None:
+                    options["live_start_index"] = "-1"
+                    self.timeline_offset_sec = live_offset
         self.container = av.open(url_or_path, options=options)
         if not self.container.streams.audio:
             self.container.close()
