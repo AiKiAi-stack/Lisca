@@ -23,6 +23,17 @@ PLACEHOLDER_MARKS = ("输入地址", "点击下方播放", "准备中", "⚠")
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov", ".webm", ".avi", ".wav", ".mp3", ".m4a", ".flac")
 
 
+def has_audio(path):
+    """忽略无音轨视频，避免把素材缺音频误报为 ASR 链路故障。"""
+    import av
+
+    try:
+        with av.open(path) as media:
+            return bool(media.streams.audio)
+    except Exception:  # noqa: BLE001 - 损坏/不支持的媒体不作为复现输入
+        return False
+
+
 def wait_port(port, timeout=20):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -78,9 +89,9 @@ def main():
             os.path.join(upload_dir, name) for name in os.listdir(upload_dir)
             if name.lower().endswith(VIDEO_EXTENSIONS)
         )[:2] if os.path.isdir(upload_dir) else []
-    videos = [path for path in videos if os.path.isfile(path)]
+    videos = [path for path in videos if os.path.isfile(path) and has_audio(path)]
     if not videos:
-        print("[ERR] 找不到媒体文件。请用 --video <本地文件> 指定，或放入 uploads/。")
+        print("[ERR] 找不到可解码且含音轨的媒体。请用 --video <本地文件> 指定，或放入 uploads/。")
         return 2
     scenarios = [("direct", videos[0]), ("upload", videos[1] if len(videos) > 1 else videos[0])]
     server = subprocess.Popen(
