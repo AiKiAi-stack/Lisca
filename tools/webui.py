@@ -771,15 +771,33 @@ async def share_ws_endpoint(ws: WebSocket, token: str):
         await ws.close(code=4403, reason="观众凭证无效")
         return
     queue, snapshot = joined
+
+    async def wait_for_disconnect():
+        while True:
+            message = await ws.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+
+    disconnect_task = asyncio.create_task(wait_for_disconnect())
+    event_task = asyncio.create_task(queue.get())
     try:
         for event in snapshot:
+            if disconnect_task.done():
+                break
             await ws.send_json(event)
         while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=15)
-            except asyncio.TimeoutError:
+            done, _pending = await asyncio.wait(
+                (disconnect_task, event_task), timeout=15,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if disconnect_task in done:
+                disconnect_task.result()
+                break
+            if event_task not in done:
                 await ws.send_json({"type": "heartbeat"})
                 continue
+            event = event_task.result()
+            event_task = asyncio.create_task(queue.get())
             # Status and logs can contain source URLs; guests only need playback data.
             if event.get("type") in ("subtitle", "preview", "timeline", "ready",
                                       "buffer", "error", "end"):
@@ -792,6 +810,10 @@ async def share_ws_endpoint(ws: WebSocket, token: str):
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
+        for task in (disconnect_task, event_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(disconnect_task, event_task, return_exceptions=True)
         share.unsubscribe(viewer_id)
 
 
