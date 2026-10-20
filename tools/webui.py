@@ -36,7 +36,7 @@ import uvicorn  # noqa: E402
 
 from engines import create_engine  # noqa: E402
 from caption_preview import StableCaptionPreview  # noqa: E402
-from input_resolver import classify  # noqa: E402
+from input_resolver import classify, resolve_stream_url  # noqa: E402
 from platform_resolver import resolve_platform_url  # noqa: E402
 from stream_source import DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
 from live_share import LiveShare, MAX_VIEWERS  # noqa: E402
