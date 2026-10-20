@@ -3,6 +3,8 @@
 import os
 import sys
 import threading
+import time
+from contextlib import ExitStack
 from urllib.parse import urlencode
 
 from fastapi.testclient import TestClient
@@ -11,6 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import webui  # noqa: E402
+import live_share  # noqa: E402
 
 
 SOURCE_URL = "http://stream.test/live.m3u8"
@@ -103,8 +106,13 @@ def test_lan_viewer_receives_captions_from_the_host_asr_session(monkeypatch):
         release_source.set()
 
 
-def test_share_stops_accepting_viewers_after_three_live_connections(monkeypatch):
+def test_departed_viewer_releases_capacity_without_interrupting_others(monkeypatch):
+    async def fake_proxy(*_args, **_kwargs):
+        from fastapi import Response
+        return Response("media")
+
     monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
+    monkeypatch.setattr(webui, "_proxy_stream", fake_proxy)
     with TestClient(webui.app) as host, TestClient(
         webui.app, client=("192.168.1.20", 50000)
     ) as viewer:
@@ -112,24 +120,62 @@ def test_share_stops_accepting_viewers_after_three_live_connections(monkeypatch)
         admissions = [viewer.post(f"/share/{share['token']}/join") for _ in range(3)]
         assert all(response.status_code == 200 for response in admissions)
         viewer_ids = [response.json()["viewer_id"] for response in admissions]
-        assert viewer.post(f"/share/{share['token']}/join").status_code == 429
-        with viewer.websocket_connect(
-            f"/share/{share['token']}/ws?viewer_id={viewer_ids[0]}"
-        ) as first:
+        full = viewer.post(f"/share/{share['token']}/join")
+        assert full.status_code == 429
+        assert "最多允许 3 台" in full.json()["detail"]
+
+        with ExitStack() as sockets:
+            first, second, third = [
+                sockets.enter_context(viewer.websocket_connect(
+                    f"/share/{share['token']}/ws?viewer_id={viewer_id}"
+                ))
+                for viewer_id in viewer_ids
+            ]
+            assert first and second and third
+
+            first.close()
+            departed_at = time.monotonic()
+            deadline = departed_at + 0.9
+            replacement = None
+            while time.monotonic() < deadline:
+                response = viewer.post(f"/share/{share['token']}/join")
+                if response.status_code == 200:
+                    replacement = response
+                    break
+                assert response.status_code == 429, response.text
+                time.sleep(0.025)
+
+            assert replacement is not None, "departed viewer slot was not released within one second"
+            assert time.monotonic() - departed_at < 1
+            assert viewer.get(admissions[0].json()["video"]).status_code == 404
+
+            for media_path in (
+                admissions[1].json()["video"],
+                admissions[2].json()["video"],
+                replacement.json()["video"],
+            ):
+                assert viewer.get(media_path).status_code == 200
+
+            second.close()
+            third.close()
+            released_at = time.monotonic()
+            deadline = released_at + 0.9
+            released_slots = []
+            while len(released_slots) < 2 and time.monotonic() < deadline:
+                response = viewer.post(f"/share/{share['token']}/join")
+                if response.status_code == 200:
+                    released_slots.append(response)
+                else:
+                    assert response.status_code == 429, response.text
+                    time.sleep(0.025)
+            assert len(released_slots) == 2, "closed viewer slots were not released within one second"
+            assert viewer.post(f"/share/{share['token']}/join").status_code == 429
+
             with viewer.websocket_connect(
-                f"/share/{share['token']}/ws?viewer_id={viewer_ids[1]}"
-            ) as second:
-                with viewer.websocket_connect(
-                    f"/share/{share['token']}/ws?viewer_id={viewer_ids[2]}"
-                ) as third:
-                    assert first and second and third
-        replacement = viewer.post(f"/share/{share['token']}/join")
-        assert replacement.status_code == 200
-        with viewer.websocket_connect(
-            f"/share/{share['token']}/ws?viewer_id={replacement.json()['viewer_id']}"
-        ) as replacement_socket:
-            assert host.post(f"/share/stop/{share['token']}").status_code == 200
-            assert replacement_socket.receive_json()["type"] == "end"
+                f"/share/{share['token']}/ws?viewer_id={replacement.json()['viewer_id']}"
+            ) as replacement_socket:
+                assert host.post(f"/share/stop/{share['token']}").status_code == 200
+                assert replacement_socket.receive_json()["type"] == "end"
 
 
 def test_fourth_viewer_is_rejected_before_receiving_media_access(monkeypatch):
@@ -181,6 +227,22 @@ def test_viewer_media_url_cannot_be_reused_from_another_lan_device(monkeypatch):
         assert host.post(f"/share/stop/{share['token']}").status_code == 200
 
 
+def test_expired_viewer_reservation_cannot_fetch_media(monkeypatch):
+    monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
+    monkeypatch.setattr(live_share, "VIEWER_RESERVATION_SECONDS", 0.01)
+    with TestClient(webui.app) as host, TestClient(
+        webui.app, client=("192.168.1.20", 50000)
+    ) as viewer:
+        share = _start_share(host)
+        joined = viewer.post(f"/share/{share['token']}/join")
+        assert joined.status_code == 200
+
+        time.sleep(0.03)
+
+        assert viewer.get(joined.json()["video"]).status_code == 404
+        assert host.post(f"/share/stop/{share['token']}").status_code == 200
+
+
 def test_viewer_routes_are_lan_only_and_admin_routes_are_local_only(monkeypatch):
     monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
     with TestClient(webui.app) as host:
@@ -210,14 +272,19 @@ def test_stopped_share_link_expires_and_next_session_gets_a_new_link(monkeypatch
 
 
 def test_natural_stream_end_invalidates_the_viewer_link(monkeypatch):
-    class EmptyStreamSource:
+    source_started = threading.Event()
+    release_source = threading.Event()
+
+    class ControlledStreamSource:
         timeline_offset_sec = 0.0
 
         def __init__(self, *_args, **_kwargs):
             pass
 
         def iter_chunks(self):
-            return iter(())
+            source_started.set()
+            yield b"\x00" * 3200
+            release_source.wait(timeout=2)
 
         def close(self):
             pass
@@ -235,23 +302,40 @@ def test_natural_stream_end_invalidates_the_viewer_link(monkeypatch):
             return (None, None, "", None)
 
     monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
-    monkeypatch.setattr(webui, "StreamSource", EmptyStreamSource)
+    monkeypatch.setattr(webui, "StreamSource", ControlledStreamSource)
     monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: EmptyEngine())
 
-    with TestClient(webui.app) as host:
-        share = _start_share(host)
-        with host.websocket_connect(
-            "/ws?" + urlencode({
-                "url": SOURCE_URL,
-                "engine": "demo",
-                "share": share["token"],
-            })
-        ) as host_socket:
-            host_events = []
-            while not any(event.get("type") == "end" for event in host_events):
-                host_events.append(host_socket.receive_json())
+    try:
+        with TestClient(webui.app) as host, TestClient(
+            webui.app, client=("192.168.1.20", 50000)
+        ) as viewer:
+            share = _start_share(host)
+            with host.websocket_connect(
+                "/ws?" + urlencode({
+                    "url": SOURCE_URL,
+                    "engine": "demo",
+                    "share": share["token"],
+                })
+            ) as host_socket:
+                assert source_started.wait(timeout=1)
+                joined = viewer.post(f"/share/{share['token']}/join")
+                assert joined.status_code == 200
+                with viewer.websocket_connect(
+                    f"/share/{share['token']}/ws?viewer_id={joined.json()['viewer_id']}"
+                ) as viewer_socket:
+                    release_source.set()
+                    viewer_events = []
+                    while not any(event.get("type") == "end" for event in viewer_events):
+                        viewer_events.append(viewer_socket.receive_json())
+                assert any(event.get("type") == "end" for event in viewer_events)
 
-        assert host.get(f"/share/{share['token']}").status_code == 404
+                host_events = []
+                while not any(event.get("type") == "end" for event in host_events):
+                    host_events.append(host_socket.receive_json())
+
+            assert host.get(f"/share/{share['token']}").status_code == 404
+    finally:
+        release_source.set()
 
 
 def test_share_proxy_rejects_media_not_registered_to_the_session(monkeypatch):

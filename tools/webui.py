@@ -37,6 +37,7 @@ import uvicorn  # noqa: E402
 from engines import create_engine  # noqa: E402
 from caption_preview import StableCaptionPreview  # noqa: E402
 from input_resolver import classify, resolve_stream_url  # noqa: E402
+from platform_resolver import resolve_platform_url  # noqa: E402
 from stream_source import DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
 from live_share import LiveShare, MAX_VIEWERS  # noqa: E402
 
@@ -198,7 +199,9 @@ async def share_media(token: str, viewer_id: str, media_id: str, request: Reques
         raise HTTPException(status_code=404, detail="直播已结束")
     if classify(url)[0] == "page":
         try:
-            url = _resolve_audio_url(url) if role == "audio" else _resolve_video_url(url)
+            url = await (
+                _resolve_audio_url(url) if role == "audio" else _resolve_video_url(url)
+            )
         except Exception as exc:  # noqa: BLE001 - page resolver errors are user-visible
             raise HTTPException(status_code=502, detail=f"直播源解析失败: {str(exc)[:180]}") from exc
     if os.path.isfile(url):
@@ -216,41 +219,12 @@ class _ServerLogHandler(logging.Handler):
         for sink in list(_LOG_SINKS):
             sink({"type": "log", "line": line})
 
-# yt-dlp 解析缓存（5 分钟）：播放器会发多个 range 请求，避免每次重复解析
-_CACHE: dict = {"ts": 0.0, "url": "", "video": "", "audio": ""}
+async def _resolve_video_url(user_input: str) -> str:
+    return await resolve_platform_url(user_input, "bv*")
 
 
-def _resolve_stream_url(user_input: str, fmt: str, key: str) -> str:
-    """解析流 URL（视频 bv* / 音频 ba），带 5 分钟缓存"""
-    import subprocess
-    import time
-
-    now = time.time()
-    if _CACHE["url"] == user_input and now - _CACHE["ts"] < 300:
-        if _CACHE.get(key):
-            return _CACHE[key]
-    # URL 变更时清空旧解析结果，防止切换链接后残留上一视频的 video/audio URL
-    if _CACHE["url"] != user_input:
-        _CACHE.update(video="", audio="")
-    for attempt in range(2):
-        proc = subprocess.run(
-            ["yt-dlp", "-g", "--no-warnings", "-f", fmt, user_input],
-            capture_output=True, text=True, timeout=120,
-        )
-        lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
-        if proc.returncode == 0 and lines:
-            _CACHE.update(ts=now, url=user_input)
-            _CACHE[key] = lines[0]
-            return lines[0]
-    raise ValueError(f"流解析失败({fmt}): {proc.stderr.strip()[:200]}")
-
-
-def _resolve_video_url(user_input: str) -> str:
-    return _resolve_stream_url(user_input, "bv*", "video")
-
-
-def _resolve_audio_url(user_input: str) -> str:
-    return _resolve_stream_url(user_input, "ba", "audio")
+async def _resolve_audio_url(user_input: str) -> str:
+    return await resolve_platform_url(user_input, "ba")
 
 
 def _proxy_media_url(target: str, share: LiveShare | None = None,
@@ -386,7 +360,7 @@ async def video_proxy(url: str, request: Request):
         return FileResponse(url)
     kind, _ = classify(url)
     if kind == "page":
-        url = _resolve_video_url(url)
+        url = await _resolve_video_url(url)
     return await _proxy_stream(request, url)
 
 
@@ -397,7 +371,7 @@ async def audio_proxy(url: str, request: Request):
         return FileResponse(url)
     kind, _ = classify(url)
     if kind == "page":
-        url = _resolve_audio_url(url)
+        url = await _resolve_audio_url(url)
     return await _proxy_stream(request, url)
 
 
@@ -771,15 +745,33 @@ async def share_ws_endpoint(ws: WebSocket, token: str):
         await ws.close(code=4403, reason="观众凭证无效")
         return
     queue, snapshot = joined
+
+    async def wait_for_disconnect():
+        while True:
+            message = await ws.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+
+    disconnect_task = asyncio.create_task(wait_for_disconnect())
+    event_task = asyncio.create_task(queue.get())
     try:
         for event in snapshot:
+            if disconnect_task.done():
+                break
             await ws.send_json(event)
         while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=15)
-            except asyncio.TimeoutError:
+            done, _pending = await asyncio.wait(
+                (disconnect_task, event_task), timeout=15,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if disconnect_task in done:
+                disconnect_task.result()
+                break
+            if event_task not in done:
                 await ws.send_json({"type": "heartbeat"})
                 continue
+            event = event_task.result()
+            event_task = asyncio.create_task(queue.get())
             # Status and logs can contain source URLs; guests only need playback data.
             if event.get("type") in ("subtitle", "preview", "timeline", "ready",
                                       "buffer", "error", "end"):
@@ -792,6 +784,10 @@ async def share_ws_endpoint(ws: WebSocket, token: str):
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
+        for task in (disconnect_task, event_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(disconnect_task, event_task, return_exceptions=True)
         share.unsubscribe(viewer_id)
 
 
