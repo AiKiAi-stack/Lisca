@@ -13,6 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import webui  # noqa: E402
+import live_share  # noqa: E402
 
 
 SOURCE_URL = "http://stream.test/live.m3u8"
@@ -146,6 +147,7 @@ def test_departed_viewer_releases_capacity_without_interrupting_others(monkeypat
 
             assert replacement is not None, "departed viewer slot was not released within one second"
             assert time.monotonic() - departed_at < 1
+            assert viewer.get(admissions[0].json()["video"]).status_code == 404
 
             for media_path in (
                 admissions[1].json()["video"],
@@ -222,6 +224,22 @@ def test_viewer_media_url_cannot_be_reused_from_another_lan_device(monkeypatch):
             rejection = other_socket.receive_json()
             assert rejection["type"] == "error"
             assert "绑定到其他设备" in rejection["message"]
+        assert host.post(f"/share/stop/{share['token']}").status_code == 200
+
+
+def test_expired_viewer_reservation_cannot_fetch_media(monkeypatch):
+    monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
+    monkeypatch.setattr(live_share, "VIEWER_RESERVATION_SECONDS", 0.01)
+    with TestClient(webui.app) as host, TestClient(
+        webui.app, client=("192.168.1.20", 50000)
+    ) as viewer:
+        share = _start_share(host)
+        joined = viewer.post(f"/share/{share['token']}/join")
+        assert joined.status_code == 200
+
+        time.sleep(0.03)
+
+        assert viewer.get(joined.json()["video"]).status_code == 404
         assert host.post(f"/share/stop/{share['token']}").status_code == 200
 
 
