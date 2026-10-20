@@ -210,6 +210,79 @@ def test_concurrent_platform_results_keep_source_and_format_cache_keys(monkeypat
         assert response.text == _resolved_url(source, media_format)
 
 
+def test_platform_resolution_caps_processes_and_coalesces_duplicate_requests(
+    monkeypatch,
+):
+    sources = [_page_url(f"bounded-{index}") for index in range(5)]
+    calls = Counter()
+    calls_lock = threading.Lock()
+    active_resolvers = 0
+    max_active_resolvers = 0
+    release_resolvers = threading.Event()
+
+    def controlled_run(args, **_kwargs):
+        nonlocal active_resolvers, max_active_resolvers
+        media_format, source = args[-2:]
+        key = (source, media_format)
+        with calls_lock:
+            calls[key] += 1
+            active_resolvers += 1
+            max_active_resolvers = max(max_active_resolvers, active_resolvers)
+        try:
+            assert release_resolvers.wait(timeout=2)
+            return _completed_process(args, media_format, source)
+        finally:
+            with calls_lock:
+                active_resolvers -= 1
+
+    async def proxy(request, url, **_kwargs):
+        del request
+        return Response(url, media_type="text/plain")
+
+    monkeypatch.setattr(webui, "_proxy_stream", proxy)
+    monkeypatch.setattr(subprocess, "run", controlled_run)
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=webui.app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            requests = [
+                (route, source)
+                for source in sources
+                for route in ("video", "audio")
+            ]
+            requests.extend([("video", sources[0])] * 2)
+
+            async def fetch(route, source):
+                response = await client.get(f"/{route}", params={"url": source})
+                return response, route, source
+
+            release_timer = threading.Timer(0.4, release_resolvers.set)
+            release_timer.start()
+            try:
+                return await asyncio.gather(
+                    *(fetch(route, source) for route, source in requests)
+                )
+            finally:
+                release_resolvers.set()
+                release_timer.cancel()
+
+    responses = asyncio.run(exercise())
+
+    expected_keys = {
+        (source, "bv*" if route == "video" else "ba")
+        for source in sources
+        for route in ("video", "audio")
+    }
+    assert calls == Counter({key: 1 for key in expected_keys})
+    assert max_active_resolvers == 4
+    for response, route, source in responses:
+        media_format = "bv*" if route == "video" else "ba"
+        assert response.status_code == 200, response.text
+        assert response.text == _resolved_url(source, media_format)
+
+
 @pytest.mark.parametrize("route", ["video", "audio", "shared-media"])
 def test_media_routes_preserve_platform_resolution_failures(monkeypatch, route):
     source = _page_url(f"failure-{route}")
