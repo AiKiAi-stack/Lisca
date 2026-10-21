@@ -56,3 +56,63 @@ class StableCaptionPreview:
             self.emitted_chars = boundary
             self.emitted_end = phrase_end
         return results
+
+
+class TranslationClauses:
+    """Commit repeated short source phrases once; never translate token revisions."""
+
+    def __init__(self, begin):
+        self.begin = begin
+        self.previous = ""
+        self.committed = 0
+        self.sequence = 0
+        self.last_end = begin
+
+    def observe(self, text, words=None, is_final=False, end=None):
+        common = 0
+        for left, right in zip(self.previous, text):
+            if left != right:
+                break
+            common += 1
+        self.previous = text
+        limit = len(text) if is_final else common
+        results = []
+        while self.committed < limit:
+            rest = text[self.committed:limit]
+            # Prefer a complete clause. Bound unpunctuated fast speech as well.
+            punctuation = _CLAUSE_END.search(rest)
+            boundary = punctuation.end() if punctuation else 0
+            cjk = bool(re.search(r"[\u3400-\u9fff]", rest))
+            maximum = 28 if cjk else 100
+            if not boundary or boundary > maximum:
+                if len(rest) >= maximum:
+                    boundary = maximum if cjk else rest.rfind(" ", 0, maximum + 1)
+                    if boundary <= 0:
+                        boundary = maximum
+                elif is_final:
+                    boundary = len(rest)
+                else:
+                    break
+            phrase = rest[:boundary].strip()
+            absolute = self.committed + boundary
+            # Avoid tiny fragments such as a decimal point on their own.
+            if not is_final and len(_SPOKEN.sub("", phrase)) < 3:
+                break
+            phrase_end = None
+            spoken = len(_SPOKEN.sub("", text[:absolute]))
+            seen = 0
+            for word_beg, word_end, token in words or []:
+                del word_beg
+                seen += len(_SPOKEN.sub("", str(token)))
+                if seen >= spoken and isinstance(word_end, (int, float)):
+                    phrase_end = word_end
+                    break
+            if phrase_end is None and is_final and absolute == len(text):
+                phrase_end = end
+            if phrase:
+                results.append((self.last_end, phrase_end, phrase, self.sequence))
+                self.sequence += 1
+            self.committed = absolute
+            if phrase_end is not None:
+                self.last_end = phrase_end
+        return results

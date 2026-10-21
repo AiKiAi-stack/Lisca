@@ -4,66 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>实时字幕</title>
-<style>
-  :root { --bg: #111418; --panel: #1c2128; --fg: #e6edf3; --accent: #4c8bf5; --err: #f85149; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--fg); font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; height: 100vh; display: flex; flex-direction: column; }
-  header { padding: 14px 24px; background: var(--panel); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid #2d333b; }
-  header h1 { font-size: 17px; margin-right: 6px; }
-  #url { flex: 1; min-width: 260px; padding: 9px 12px; font-size: 14px; background: #0d1117; color: var(--fg); border: 1px solid #30363d; border-radius: 6px; }
-  #url::placeholder { color: #6e7681; }
-  select, button { padding: 9px 14px; font-size: 14px; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: var(--fg); cursor: pointer; }
-  button#start { background: var(--accent); border-color: var(--accent); font-weight: 600; }
-  button#stop { background: var(--panel); display: none; }
-  button#shareCopy { background: #238636; border-color: #238636; display: none; }
-  #status { width: 100%; color: #8b949e; font-size: 13px; }
-  main { flex: 1; display: flex; flex-direction: column; padding: 16px 24px; gap: 12px; min-height: 0; }
-  #playerWrap { position: relative; flex: 1; min-height: 0; background: #000; border-radius: 12px; overflow: hidden; }
-  video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
-  #current { position: absolute; left: 0; right: 0; bottom: 12%; padding: 10px 32px; text-align: center;
-    font-size: clamp(26px, 3.4vw, 38px); line-height: 1.4; font-weight: 600; letter-spacing: 1px;
-    color: #fff; text-shadow: 2px 2px 4px #000, 0 0 12px #000; pointer-events: none;
-    display: block; white-space: normal; overflow: visible; }
-  #history { height: 18%; background: var(--panel); border-radius: 10px; padding: 10px 14px; overflow-y: auto; font-size: 14px; color: #9da7b3; }
-  #history div { padding: 2px 0; }
-  #history div span { color: #6e7681; margin-right: 8px; font-size: 12px; }
-  #logPanel { display: flex; flex-direction: column; gap: 8px; }
-  /* hidden 属性必须生效：作者 CSS 的 display:flex 会覆盖 UA 的 [hidden]{display:none}，
-     需显式声明，否则面板常驻显示、日志按钮失去作用 */
-  #logPanel[hidden] { display: none; }
-  /* 字幕样式面板（ticket-18）：header 内整行；hidden 同日志面板需显式 display:none */
-  #stylePanel { width: 100%; display: flex; gap: 20px; align-items: center; flex-wrap: wrap; padding: 4px 0 2px; }
-  #stylePanel[hidden] { display: none; }
-  #stylePanel label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #9da7b3; }
-  #stylePanel input[type="range"] { width: 150px; accent-color: var(--accent); }
-  #stylePanel .val { min-width: 46px; color: var(--fg); font-variant-numeric: tabular-nums; }
-  #styleReset { padding: 5px 12px; font-size: 13px; }
-  /* 直播频道面板（ticket-19）：m3u 频道列表 + 连通性检测标注 */
-  #chPanel { width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 4px 0 2px; }
-  #chPanel[hidden] { display: none; }
-  .ch-head { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #9da7b3; }
-  #chProbeBtn { padding: 5px 12px; font-size: 13px; }
-  #chList { max-height: 300px; overflow-y: auto; border: 1px solid #30363d; border-radius: 8px; background: #0d1117; }
-  .ch-group { padding: 6px 10px 2px; font-size: 12px; color: #6e7681; font-weight: 600; }
-  .ch-row { display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer; font-size: 13px; }
-  .ch-row:hover { background: #21262d; }
-  .ch-row .ch-status { min-width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
-  .ch-row.ok .ch-status { color: #3fb950; }
-  .ch-row.fail .ch-status { color: var(--err); }
-  .ch-row .ch-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ch-row button { padding: 2px 8px; font-size: 12px; }
-  .ch-row.active { background: #1f3d5f; }
-  #logText { width: 100%; height: 140px; background: #0d1117; color: #9da7b3; border: 1px solid #30363d;
-    border-radius: 8px; padding: 10px 12px; font-family: monospace; font-size: 12px; resize: vertical; }
-  .err { color: var(--err) !important; }
-  video::-webkit-media-controls { opacity: 0.6; }
-</style>
+<link rel="stylesheet" href="/player.css">
 </head>
 <body>
 <header>
-  <h1>🎙 直播与视频翻译字幕</h1>
-  <details id="cloudPanel" open style="flex-basis:100%;padding:12px;border:1px solid #30363d;border-radius:8px">
-    <summary>① 配置云端服务 · 阿里云百炼（中国内地）</summary>
+ <div class="brand-row"><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>直播翻译</h1><small>让语言跟上你的观看</small></div></div><button id="settingsBtn" class="quiet"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 3-1 3-3 1-3 3 2 2-1 4 3 3 3-1 2 3 4-1 1-3 3-1 1-4-3-2 1-3-3-3-3 1z"/></svg>设置</button></div>
+ <div class="source-row"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或打开本地视频" autocomplete="off"><button id="uploadBtn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM3 7V4h6l3 3"/></svg>打开文件</button><label class="sr-only" for="languagePair">翻译方向</label><select id="languagePair"><option value="zh-en">中文 → English</option><option value="en-zh">English → 中文</option></select><button id="start" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>开始翻译</button><button id="stop">停止翻译</button></div>
+ <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
+</header>
+<main>
+ <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开内容，开始看懂</h2><p>直播链接与本地视频，都在这里配上翻译字幕</p></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
+ <div class="player-footer"><div id="status" role="status">选择翻译方向，然后打开内容</div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关翻译字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与翻译字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
+ <div id="lateCaption" hidden></div>
+</main>
+<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle"><div class="dialog-head"><h2 id="settingsDialogTitle">设置</h2><button class="quiet" data-close="settingsDialog" aria-label="关闭设置">关闭</button></div><div class="dialog-body"><div class="tabs" role="tablist" aria-label="设置分类"><button role="tab" aria-selected="true" aria-controls="cloudSettings" data-pane="cloudSettings">云端服务</button><button role="tab" aria-selected="false" aria-controls="captionSettings" data-pane="captionSettings">字幕</button><button role="tab" aria-selected="false" aria-controls="moreSettings" data-pane="moreSettings">更多</button></div><section id="cloudSettings" class="setting-section">  <section id="cloudPanel">
+    <h3>阿里云百炼（中国内地）</h3>
     <p>语音识别使用 FunASR，翻译使用 Qwen-MT。音频和识别文本将发送给百炼，费用由你的 API 账户承担。</p>
     <label>API Key <input id="apiKey" type="password" autocomplete="off" placeholder="填写百炼 API Key，不会放入链接或日志"></label>
     <label>翻译 Key（可选）<input id="translationKey" type="password" autocomplete="off" placeholder="留空使用同一 Key"></label>
@@ -73,39 +28,8 @@
     <button id="clearCloud">删除配置</button>
     <span id="cloudState" role="status">尚未配置</span>
     <p style="font-size:12px">请先在百炼开通 fun-asr-realtime 与 qwen-mt-flash。检查连接不代表实际语音效果；费用以服务商账单为准。</p>
-  </details>
-  <input id="url" placeholder="输入流地址 / 视频链接 / 本地文件路径，如 B站链接 或 /path/to/video.mp4">
-  <select id="engine">
-    <option value="aliyun-funasr" selected>云端翻译字幕</option>
-    <option value="demo">演示字幕（无识别，仅验证链路）</option>
-  </select>
-  <select id="languagePair" aria-label="翻译方向">
-    <option value="zh-en">中文 → English</option>
-    <option value="en-zh">English → 中文</option>
-  </select>
-  <label><input id="bilingual" type="checkbox"> 双语字幕</label>
-  <select id="silence" title="断句灵敏度：语音后静音多久判定一句结束（越小切句越频繁，仅 API 引擎生效）">
-    <option value="200">断句：极灵敏 200ms</option>
-    <option value="400" selected>断句：灵敏 400ms</option>
-    <option value="800">断句：标准 800ms</option>
-    <option value="1300">断句：宽松 1300ms（服务端默认）</option>
-  </select>
-  <select id="delay" hidden title="旧演示模式的同步缓冲设置">
-    <option value="0.1">音视频延迟 100ms</option>
-    <option value="1">音视频延迟 1s</option>
-    <option value="5">音视频延迟 5s</option>
-  </select>
-  <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
-  <button id="uploadBtn" title="上传本地音频/视频文件">📁 上传文件</button>
-  <button id="start">开始</button>
-  <button id="stop">停止</button>
-  <button id="shareCopy" title="复制只读局域网观众链接">🔗复制观众链接</button>
-  <select id="shareAddress" title="选择观众设备所在局域网对应的主机地址" hidden></select>
-  <button id="subToggle" title="开关中间字幕显示">🎬 字幕：开</button>
-  <button id="logBtn" title="查看/复制会话日志，便于反馈问题">📋 日志</button>
-  <button id="styleBtn" title="实时调整叠加字幕的字体、大小、位置（自动记住）">🎨 字幕样式</button>
-  <button id="chBtn" title="加载 .m3u/.m3u8 频道列表并选台播放（先在输入框粘贴频道列表地址）">📺 频道</button>
-  <div id="stylePanel" hidden>
+  </section>
+</section><section id="captionSettings" class="setting-section" hidden><label><input id="bilingual" type="checkbox">同时显示原文（首行）</label>  <div id="stylePanel">
     <label>字号 <input type="range" id="sizeRange" min="16" max="64" step="1" value="30"><span class="val" id="sizeVal">30px</span></label>
     <label>位置 <input type="range" id="posRange" min="0" max="30" step="1" value="12"><span class="val" id="posVal">12%</span></label>
     <label>字体
@@ -119,30 +43,35 @@
     </label>
     <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 字体系统默认">重置默认</button>
   </div>
-  <div id="chPanel" hidden>
+<p>正式字幕以完整短句出现。长句会分页，完整原文与译文可在字幕记录查看。</p></section><section id="moreSettings" class="setting-section" hidden><label for="engine">字幕服务</label>  <select id="engine">
+    <option value="aliyun-funasr" selected>云端翻译字幕</option>
+    <option value="demo">演示字幕（无识别，仅验证链路）</option>
+  </select>
+<label for="silence">语音断句</label>  <select id="silence" title="断句灵敏度：语音后静音多久判定一句结束（越小切句越频繁，仅 API 引擎生效）">
+    <option value="200">断句：极灵敏 200ms</option>
+    <option value="400" selected>断句：灵敏 400ms</option>
+    <option value="800">断句：标准 800ms</option>
+    <option value="1300">断句：宽松 1300ms（服务端默认）</option>
+  </select>
+  <select id="delay" hidden title="旧演示模式的同步缓冲设置">
+    <option value="0.1">音视频延迟 100ms</option>
+    <option value="1">音视频延迟 1s</option>
+    <option value="5">音视频延迟 5s</option>
+  </select>
+<div><button id="chBtn">频道列表</button><button id="logBtn">诊断日志</button></div><div><button id="shareCopy">复制观众链接</button><select id="shareAddress" aria-label="观众设备所在局域网" hidden></select><p class="help">开始播放后，可将只读链接分享给同一局域网内的设备。</p></div></section></div></dialog>
+<dialog id="historyDialog" aria-labelledby="historyDialogTitle"><div class="dialog-head"><h2 id="historyDialogTitle">字幕记录</h2><button class="quiet" data-close="historyDialog" aria-label="关闭字幕记录">关闭</button></div><div class="dialog-body"><div id="history"></div></div></dialog>
+<dialog id="channelsDialog" aria-labelledby="channelsDialogTitle"><div class="dialog-head"><h2 id="channelsDialogTitle">频道列表</h2><button class="quiet" data-close="channelsDialog" aria-label="关闭频道列表">关闭</button></div><div class="dialog-body"><p class="help">在顶部输入 M3U 频道列表地址，再加载频道。</p><button id="loadChannelsBtn">加载输入的频道列表</button>  <div id="chPanel">
     <div class="ch-head">
       <span id="chInfo">未加载频道列表</span>
       <button id="chProbeBtn" title="批量检测所有频道的连通性与延迟（手动触发，并发 20，逐条显示）">🔍 批量检测</button>
     </div>
     <div id="chList"></div>
   </div>
-  <div id="status">就绪</div>
-</header>
-<main>
-  <div id="playerWrap">
-    <video id="player" controls muted></video>
-    <audio id="audioEl" preload="auto"></audio>
-    <div id="current">配置 Key，选择翻译方向，再打开直播或本地视频</div>
-  </div>
-  <div id="lateCaption" hidden role="status" style="padding:8px;color:#e3b341;white-space:pre-line"></div>
-  <div id="history"></div>
-  <div id="logPanel" hidden>
-    <textarea id="logText" readonly spellcheck="false"
-      placeholder="会话日志：connect/play/pause/seek/字幕/状态/错误…"></textarea>
-    <button id="copyLogBtn" style="align-self: flex-end;">📋 复制日志</button>
-  </div>
-</main>
-<script src="hls.min.js"></script>
+</div></dialog>
+<dialog id="logsDialog" aria-labelledby="logsDialogTitle"><div class="dialog-head"><h2 id="logsDialogTitle">诊断日志</h2><button class="quiet" data-close="logsDialog" aria-label="关闭诊断日志">关闭</button></div><div class="dialog-body"><div id="logPanel" hidden><textarea id="logText" aria-label="会话日志" readonly spellcheck="false"></textarea><button id="copyLogBtn">复制日志</button></div></div></dialog>
+<button id="styleBtn" hidden>字幕样式</button>
+<script src="/hls.min.js"></script>
+<script src="/caption_presenter.js"></script>
 <script>
   const urlEl = document.getElementById('url');
   const engineEl = document.getElementById('engine');
@@ -214,6 +143,8 @@
   const audioEl = document.getElementById('audioEl');
   let ws = null;
   let hlsPlayer = null;  // hls.js 实例（HLS 直播，ticket-19）
+  const captionPresenter = new CaptionPresenter();
+  let translatedSession = false;
   let subs = [];        // [{beg, end, text, words}] 句子列表（partial 累计，同句原地更新）
   let previewSubs = []; // 连续两个 partial 均未改动的完整短句，等待整句 final 时也能播放
   let historyItems = []; // 与 subs 对应的 history DOM 元素
@@ -258,8 +189,10 @@
   // 字幕开关（ticket-13）：同日志按钮，可关可开，默认开
   subToggleBtn.onclick = () => {
     subEnabled = !subEnabled;
-    subToggleBtn.textContent = subEnabled ? '🎬 字幕：开' : '🎬 字幕：关';
+    subToggleBtn.textContent = subEnabled ? '字幕 开' : '字幕 关';
+    subToggleBtn.setAttribute('aria-pressed', String(subEnabled));
     if (!subEnabled) currentEl.textContent = '';
+    else syncSubtitle();
     logEvent('sub_toggle', subEnabled ? '开' : '关');
   };
 
@@ -308,6 +241,7 @@
     posRange.value = s.pos;
     posVal.textContent = `${s.pos}%`;
     fontSel.value = s.font;
+    fitCaptionWidth();
   }
   styleBtn.onclick = () => {
     stylePanel.hidden = !stylePanel.hidden;
@@ -323,6 +257,12 @@
     saveStyle();
     logEvent('style_reset', '字号30px 位置12% 字体系统默认');
   };
+  function fitCaptionWidth() {
+    const fontSize = parseFloat(getComputedStyle(currentEl).fontSize) || styleState.size;
+    captionPresenter.setColumns(Math.floor(document.getElementById('playerWrap').clientWidth * .86 / (fontSize * .6)));
+  }
+  window.addEventListener('resize', fitCaptionWidth);
+  document.addEventListener('fullscreenchange', fitCaptionWidth);
   applyStyle();  // 页面加载即固定应用（覆盖 clamp 响应式），含 localStorage 恢复
 
   // 直播频道（ticket-19）：m3u 列表解析 + 连通性检测 + 选台播放
@@ -358,6 +298,7 @@
     loadedChannelListUrl = m3uUrl;
     renderChannels();
     chPanel.hidden = false;
+    openDialog('channelsDialog');
     setStatus(`频道列表 ${channels.length} 个，点击频道开始观看`);
   }
 
@@ -490,13 +431,14 @@
     logEvent(isErr ? 'error' : 'status', msg);
   }
 
-  function appendHistory(beg, end, text) {
+  function appendHistory(beg, end, text, sourceText = '') {
     const div = document.createElement('div');
     const time = document.createElement('span');
     const endLabel = Number.isFinite(end) && end > beg ? `${end.toFixed(1)}s` : '…';
     time.textContent = `${beg.toFixed(1)}s-${endLabel}`;
     div.appendChild(time);
     div.appendChild(document.createTextNode(text));
+    if (sourceText) { const source = document.createElement('small'); source.textContent = sourceText; div.appendChild(source); }
     historyEl.appendChild(div);
     historyItems.push(div);
     while (historyItems.length > 200) historyEl.removeChild(historyItems.shift());
@@ -509,6 +451,11 @@
     const endLabel = Number.isFinite(msg.end) && msg.end > msg.beg ? `${msg.end.toFixed(1)}s` : '…';
     div.childNodes[0].textContent = `${msg.beg.toFixed(1)}s-${endLabel}`;
     div.childNodes[1].textContent = msg.text;
+    if (msg.source_text) {
+      let source = div.querySelector('small');
+      if (!source) { source = document.createElement('small'); div.appendChild(source); }
+      source.textContent = msg.source_text;
+    }
   }
 
   // A finalized ASR event may contain several sentences (or a long monologue).
@@ -671,9 +618,25 @@
       currentEl.textContent = '';
       return;
     }
+    if (translatedSession) {
+      const cue = captionPresenter.tick(t, performance.now(), player.paused && !player.ended);
+      currentEl.textContent = cue ? cue.text : '';
+      currentEl.dataset.caption = cue ? 'final' : 'empty';
+      if (cue && bilingualEl.checked && cue.source_text) {
+        const source = lines(cue.source_text, 42)[0];
+        currentEl.textContent = source + (source.length < cue.source_text.length ? '…' : '') + '\n' + cue.text;
+      }
+      const lag = document.getElementById('captionLag');
+      if (lag) {
+        const seconds = cue && Number.isFinite(cue.end) ? Math.max(0,t-cue.end) : 0;
+        lag.textContent = captionPresenter.skipped ? '部分字幕积压，完整内容见记录' : seconds > 2 ? '译文滞后 ' + seconds.toFixed(1) + 's' : '';
+        lag.hidden = !lag.textContent;
+      }
+      return;
+    }
     // 视频未开始播放时不显示字幕（避免"字幕提前"的错觉）
     if (!playStarted && player.paused && t < 0.5) {
-      currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
+      currentEl.textContent = '正在准备字幕…';
       return;
     }
     // 按识别句真实时间范围显示整句：句子开始时出现，结束时自然消失。
@@ -772,23 +735,10 @@
     seekPending = false;  // 新数据到达，解除 seek 等待
     if (!msg.text) return;
     if (msg.translated) {
-      // Do not move an old cue onto unrelated current speech. Late translations
-      // stay in history and a separately labelled reading area below the video.
-      if (!Number.isFinite(msg.end)) {
-        const draft = document.getElementById('lateCaption');
-        draft.hidden = false;
-        draft.textContent = '翻译草稿（语句时间尚未确认，可修订）\n'
-          + (bilingualEl.checked && msg.source_text ? msg.source_text + '\n' : '') + msg.text;
-      } else if (player.currentTime > msg.end) {
-        logEvent('translation_late', `${(player.currentTime - msg.end).toFixed(2)}s`);
-        const late = document.getElementById('lateCaption');
-        late.hidden = false;
-        late.textContent = `迟到译文（${msg.beg.toFixed(1)}–${msg.end.toFixed(1)}s，与当前画面可能不同步）\n${msg.text}`;
-      } else {
-        const draft = document.getElementById('lateCaption');
-        draft.hidden = true;
-        draft.textContent = '';
-      }
+      translatedSession = true;
+      if (msg.is_final === false) return;
+      fitCaptionWidth();
+      captionPresenter.enqueue(msg);
     }
     let idx = subs.findIndex(s => sameSubtitle(s, msg));
     if (idx >= 0) {
@@ -818,7 +768,7 @@
       }
     } else {
       // 新句：加入列表与历史
-      const historyItem = appendHistory(msg.beg, msg.end, msg.text);
+      const historyItem = appendHistory(msg.beg, msg.end, msg.text, msg.source_text);
       subs.push({ beg: msg.beg, end: msg.end, text: msg.text, words: msg.words || null,
         sourceText:msg.source_text, translated:msg.translated, revision:msg.revision,
         isFinal: msg.is_final !== false, sentenceId: msg.sentence_id, historyItem });
@@ -908,6 +858,8 @@
     // 旧会话清理：不关旧 WS 则旧 worker 继续推流串字幕；
     // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
     if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); }
+    captionPresenter.reset();
+    translatedSession = false;
     subs = [];
     previewSubs = [];
     historyItems = [];
@@ -920,7 +872,7 @@
     uiPaused = false;
     seekPending = false;
     currentEl.classList.remove('err');
-    currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
+    currentEl.textContent = '正在准备字幕…';
     lastBlockEnd = -1;
     const isHls = /\.m3u8/i.test(url);
     let audioClockPts = null, videoClockPts = null;
@@ -958,6 +910,7 @@
           currentEl.textContent = error.message;
           currentEl.classList.add('err');
           document.getElementById('cloudPanel').open = true;
+          openDialog('settingsDialog');
           return;
         }
       }
@@ -1229,6 +1182,7 @@
     logEvent('pause', `t=${player.currentTime.toFixed(1)}`);
   });
   player.addEventListener('seeked', () => {
+    captionPresenter.reset();
     document.getElementById('lateCaption').hidden = true;
     audioEl.currentTime = player.currentTime;
     if (aligningInitialPlayback) {
@@ -1270,9 +1224,13 @@
     player.pause();
     audioEl.pause();
     activeInput = '';
+    currentEl.dataset.caption = 'empty';
+    captionPresenter.reset();
+    translatedSession = false;
     playStarted = false;
     document.getElementById('lateCaption').hidden = true;
-    currentEl.textContent = '已停止';
+    currentEl.textContent = '';
+    document.getElementById('emptyState').hidden = true;
     currentEl.classList.remove('err');
     startBtn.style.display = 'inline-block';
     stopBtn.style.display = 'none';
@@ -1293,7 +1251,7 @@
   if (sharedPath) {
     sharedViewerActive = true;
     document.title = '直播字幕';
-    document.querySelector('header h1').textContent = '📺 直播字幕（观众）';
+    document.querySelector('header h1').textContent = '直播字幕（观众）';
     ['url', 'engine', 'silence', 'delay', 'uploadBtn', 'start', 'stop', 'shareCopy', 'shareAddress',
       'logBtn', 'chBtn', 'cloudPanel', 'languagePair', 'bilingual'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
     document.getElementById('status').textContent = '正在加入直播…';
@@ -1323,6 +1281,36 @@
     fileEl.value = '';
   });
   urlEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+
+  function openDialog(id) {
+    document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    document.getElementById(id).showModal();
+  }
+  document.getElementById('settingsBtn').onclick = () => openDialog('settingsDialog');
+  document.getElementById('historyBtn').onclick = () => openDialog('historyDialog');
+  document.querySelectorAll('[data-close]').forEach(button => { button.onclick = () => document.getElementById(button.dataset.close).close(); });
+  document.querySelectorAll('[data-pane]').forEach(button => { button.onkeydown = event => {
+    if (!['ArrowLeft','ArrowRight'].includes(event.key)) return;
+    const tabs = [...document.querySelectorAll('[data-pane]')];
+    const next = tabs[(tabs.indexOf(button) + (event.key === 'ArrowRight' ? 1 : 2)) % tabs.length];
+    next.click(); next.focus(); event.preventDefault();
+  }; button.onclick = () => {
+    document.querySelectorAll('[data-pane]').forEach(tab => tab.setAttribute('aria-selected', String(tab === button)));
+    ['cloudSettings','captionSettings','moreSettings'].forEach(id => { document.getElementById(id).hidden = id !== button.dataset.pane; });
+  }; });
+  logBtn.onclick = () => { logPanel.hidden = false; logText.value = logBuffer.join('\n'); openDialog('logsDialog'); };
+  chBtn.onclick = () => openDialog('channelsDialog');
+  document.getElementById('loadChannelsBtn').onclick = () => loadChannels(urlEl.value.trim());
+  document.getElementById('fullscreenBtn').onclick = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.getElementById('playerWrap').requestFullscreen();
+    } catch (_) { setStatus('浏览器未允许全屏，请使用浏览器全屏菜单', true); }
+  };
+  document.getElementById('exitFullscreenBtn').onclick = () => document.exitFullscreen().catch(() => {});
+  player.addEventListener('loadeddata', () => { document.getElementById('emptyState').hidden = true; });
+  document.getElementById('logsDialog').addEventListener('close', () => { logPanel.hidden = true; });
+
   if (!sharedPath) refreshCloud();
 </script>
 </body>

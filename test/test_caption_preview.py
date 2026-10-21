@@ -21,3 +21,31 @@ def test_changed_partial_does_not_release_uncertain_words():
     words = [(i * 0.1, (i + 1) * 0.1, char) for i, char in enumerate("今天下雨了")]
     preview.observe("今天下雨了，", words)
     assert preview.observe("今天下雪了，", words) == []
+
+
+from caption_preview import TranslationClauses  # noqa: E402
+
+
+def test_translation_releases_stable_clause_without_word_times_and_final_only_tail():
+    collector = TranslationClauses(0)
+    assert collector.observe("Hello world. Next") == []
+    assert collector.observe("Hello world. Next sentence") == [(0, None, "Hello world.", 0)]
+    assert collector.observe("Hello world. Next sentence.", is_final=True, end=5) == [
+        (0, 5, "Next sentence.", 1)]
+
+
+def test_fast_speech_without_punctuation_releases_bounded_repeated_phrases():
+    collector = TranslationClauses(0)
+    text = "这是一段没有标点但是说得很快的持续讲话内容" * 8
+    assert collector.observe(text) == []
+    clauses = collector.observe(text + "结束")
+    assert clauses and all(3 <= len(item[2]) <= 28 for item in clauses)
+    tail = collector.observe(text + "结束", is_final=True, end=20)
+    assert "".join(item[2] for item in clauses + tail) == text + "结束"
+
+
+def test_uncertain_source_revisions_do_not_emit_token_captions():
+    collector = TranslationClauses(0)
+    assert collector.observe("It is raining.") == []
+    assert collector.observe("It is snowing.") == []
+    assert collector.observe("It is snowing. Today") == [(0, None, "It is snowing.", 0)]

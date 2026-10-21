@@ -46,7 +46,7 @@ def test_cloud_session_validates_pair_before_any_media_or_api_request():
         assert valid.json()["session"]
 
 
-def test_cloud_ws_emits_revisable_translation_without_waiting_for_sentence_final(monkeypatch):
+def test_cloud_ws_emits_complete_stable_clause_before_sentence_final(monkeypatch):
     translated = threading.Event()
     parameters = []
 
@@ -56,7 +56,8 @@ def test_cloud_ws_emits_revisable_translation_without_waiting_for_sentence_final
 
         def iter_chunks(self):
             yield b"\x00" * 3200
-            assert translated.wait(3), "partial translation must arrive before audio ends"
+            yield b"\x00" * 3200
+            assert translated.wait(3), "stable clause translation must arrive before audio ends"
             yield b"\x00" * 3200
 
         def close(self):
@@ -67,8 +68,10 @@ def test_cloud_ws_emits_revisable_translation_without_waiting_for_sentence_final
 
         def transcribe_chunk(self, _audio):
             self.calls += 1
-            return (0.0, 0.2 if self.calls > 1 else None,
-                    "Hello world" if self.calls > 1 else "Hello", None, self.calls > 1, 7)
+            return (0.0, 0.3 if self.calls > 2 else None,
+                    "Hello world. Next." if self.calls > 2 else "Hello world.",
+                    [(0.0, 0.1, "Hello"), (0.1, 0.2, "world"), (0.2, 0.3, "Next")],
+                    self.calls > 2, 7)
 
         def poll(self):
             return (None, None, "", None)
@@ -84,7 +87,8 @@ def test_cloud_ws_emits_revisable_translation_without_waiting_for_sentence_final
             assert (source, target) == ("en", "zh")
 
         def translate(self, text, cancel):
-            yield "你好世界" if text == "Hello world" else "你好"
+            yield "你"
+            yield "你好世界" if text == "Hello world." else "下一句"
             translated.set()
 
         def close(self):
@@ -109,9 +113,10 @@ def test_cloud_ws_emits_revisable_translation_without_waiting_for_sentence_final
                 if event["type"] == "end":
                     break
     cues = [event for event in events if event["type"] == "subtitle"]
-    assert any(event["text"] == "你好" and event["is_final"] is False for event in cues)
-    assert cues[-1]["text"] == "你好世界" and cues[-1]["is_final"] is True
-    assert cues[-1]["source_text"] == "Hello world"
+    assert [event["text"] for event in cues] == ["你好世界", "下一句"]
+    assert all(event["is_final"] is True for event in cues)
+    assert cues[0]["source_text"] == "Hello world."
+    assert cues[-1]["source_text"] == "Next."
     assert parameters[0]["language_hints"] == ["en"]
     assert parameters[0]["api_key"] == "sk-private-test"
     assert all("sk-private-test" not in str(event) for event in events)

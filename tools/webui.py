@@ -38,7 +38,7 @@ from starlette.background import BackgroundTask  # noqa: E402
 import uvicorn  # noqa: E402
 
 from engines import create_engine  # noqa: E402
-from caption_preview import StableCaptionPreview  # noqa: E402
+from caption_preview import StableCaptionPreview, TranslationClauses  # noqa: E402
 from input_resolver import classify, resolve_stream_url  # noqa: E402
 from platform_resolver import resolve_platform_url  # noqa: E402
 from stream_source import DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
@@ -192,7 +192,7 @@ def _is_lan_host(host: str | None) -> bool:
 async def keep_admin_routes_local(request: Request, call_next):
     """Expose only capability-based viewer routes to other LAN devices."""
     path = request.url.path
-    viewer_route = path == "/hls.min.js" or path.startswith("/share/")
+    viewer_route = path in {"/hls.min.js", "/caption_presenter.js", "/player.css"} or path.startswith("/share/")
     client_host = request.client.host if request.client else None
     origin = request.headers.get("origin")
     if request.method not in ("GET", "HEAD", "OPTIONS") and origin \
@@ -571,6 +571,18 @@ def index():
         return HTMLResponse(f.read(), headers={"Cache-Control": "no-store"})
 
 
+@app.get("/caption_presenter.js")
+def caption_presenter_js():
+    return FileResponse(os.path.join(STATIC_DIR, "caption_presenter.js"),
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/player.css")
+def player_css():
+    return FileResponse(os.path.join(STATIC_DIR, "player.css"),
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.get("/hls.min.js")
 def hls_js():
     """hls.js（vendored 本地文件，ticket-19：Chrome 原生 HLS 不支持 TS 分片直播源）"""
@@ -685,6 +697,7 @@ async def ws_endpoint(ws: WebSocket):
         playback_ceiling = None
         pending_sentences = []
         translation = None
+        translation_clauses = {}
 
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
@@ -693,9 +706,16 @@ async def ws_endpoint(ws: WebSocket):
             sentence_id = o[5] if len(o) > 5 else None
             if text:
                 if translation:
-                    translation.submit({"type": "subtitle", "beg": beg + timeline_offset,
-                        "end": end + timeline_offset if end is not None else None,
-                        "text": text, "is_final": is_final, "sentence_id": sentence_id})
+                    key = sentence_id if sentence_id is not None else round(beg, 1)
+                    collector = translation_clauses.setdefault(key, TranslationClauses(beg))
+                    for clause_beg, clause_end, clause_text, sequence in collector.observe(
+                            text, words, is_final, end):
+                        translation.submit({"type": "subtitle", "beg": clause_beg + timeline_offset,
+                            "end": clause_end + timeline_offset if clause_end is not None else None,
+                            "text": clause_text, "is_final": True,
+                            "sentence_id": f"{key}:{sequence}"})
+                    if is_final:
+                        translation_clauses.pop(key, None)
                     return
                 # Use the API sentence id when available. Nearby sentence starts
                 # can be less than a second apart and must not share one hold.
@@ -900,6 +920,11 @@ async def ws_endpoint(ws: WebSocket):
     try:
         while True:
             item = await queue.get()
+            if item["type"] == "end" and share:
+                # Invalidate media access before acknowledging the end to the host.
+                share.active = False
+                with _SHARE_LOCK:
+                    _SHARES.pop(share.token, None)
             await ws.send_json(item)
             if item["type"] == "end":
                 break

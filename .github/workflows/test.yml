@@ -18,5 +18,10 @@ jobs:
           pip install --upgrade pip
           pip install -e .
           pip install pytest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Caption display regressions
+        run: node --test test/caption_browser.test.cjs
       - name: Run tests
         run: pytest test/ -v

@@ -243,19 +243,20 @@ class QwenTranslator:
 
 
 class TranslationSession:
-    """Coalesce partials per sentence; bound backlog and stop before more billing."""
+    """Translate committed clauses; publish complete captions, never token drafts."""
     def __init__(self, translator, emit, stop):
         self.translator, self.emit, self.stop = translator, emit, stop
         self._condition = threading.Condition()
         self._pending = OrderedDict()
         self._finalized = set()
         self._revision = 0
-        self._last_partial = 0.0
         self._finishing = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def submit(self, cue):
+        if not cue.get("is_final"):
+            return
         key = cue.get("sentence_id")
         if key is None:
             key = round(cue["beg"], 2)
@@ -283,12 +284,7 @@ class TranslationSession:
                         break
                     key = next(iter(self._pending))
                     cue = self._pending[key]
-                    wait = 0.6 - (time.monotonic() - self._last_partial)
-                    if not cue["is_final"] and wait > 0 and not self._finishing:
-                        self._condition.wait(min(wait, 0.2))
-                        continue
                     self._pending.pop(key)
-                self._last_partial = time.monotonic()
                 if self.stop.is_set():
                     break
                 translated = ""
@@ -296,12 +292,10 @@ class TranslationSession:
                 for translated in self.translator.translate(cue["text"], self.stop):
                     if self.stop.is_set():
                         break
-                    self.emit({**cue, "text": translated, "source_text": cue["text"],
-                               "is_final": False, "words": None, "translated": True,
-                               "translation_ms": round((time.monotonic() - started) * 1000)})
                 if not self.stop.is_set() and translated and cue["is_final"]:
                     self.emit({**cue, "text": translated, "source_text": cue["text"],
-                               "words": None, "translated": True})
+                               "words": None, "translated": True,
+                               "translation_ms": round((time.monotonic() - started) * 1000)})
         except Exception as exc:  # service boundary: do not leak response bodies or keys
             message = str(exc) if isinstance(exc, CloudError) else "翻译服务异常，请重试"
             if not self.stop.is_set():
