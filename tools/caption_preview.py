@@ -5,6 +5,7 @@ final event would freeze the video even after several complete clauses have
 already appeared in successive partial results.
 """
 
+from difflib import SequenceMatcher
 import re
 
 
@@ -67,8 +68,33 @@ class TranslationClauses:
         self.committed = 0
         self.sequence = 0
         self.last_end = begin
+        self.released = []
+        self.pending_corrections = set()
 
     def observe(self, text, words=None, is_final=False, end=None):
+        results = []
+        if self.committed and self.previous[:self.committed] != text[:self.committed]:
+            changes = SequenceMatcher(None, self.previous, text, autojunk=False).get_opcodes()
+
+            def mapped(position):
+                for tag, old_start, old_end, new_start, new_end in changes:
+                    if old_start <= position <= old_end:
+                        if tag == "equal":
+                            return new_start + position - old_start
+                        return new_start if position == old_start else new_end
+                return len(text)
+
+            # ASR may correct an already-stable prefix. Map released boundaries
+            # so an insertion/deletion cannot silently eat the uncommitted tail.
+            for clause in self.released:
+                start = 0 if clause["start"] == 0 else mapped(clause["start"])
+                finish = mapped(clause["finish"])
+                corrected = text[start:finish].strip()
+                if corrected != clause["text"]:
+                    self.pending_corrections.add(clause["sequence"])
+                    clause["text"] = corrected
+                clause["start"], clause["finish"] = start, finish
+            self.committed = mapped(self.committed)
         common = 0
         for left, right in zip(self.previous, text):
             if left != right:
@@ -76,7 +102,10 @@ class TranslationClauses:
             common += 1
         self.previous = text
         limit = len(text) if is_final else common
-        results = []
+        for clause in self.released:
+            if clause["sequence"] in self.pending_corrections and (is_final or (common > 0 and clause["finish"] <= limit)):
+                results.append((clause["beg"], clause["end"], clause["text"], clause["sequence"]))
+                self.pending_corrections.remove(clause["sequence"])
         while self.committed < limit:
             rest = text[self.committed:limit]
             # Prefer a complete clause. Bound unpunctuated fast speech as well.
@@ -111,6 +140,9 @@ class TranslationClauses:
                 phrase_end = end
             if phrase:
                 results.append((self.last_end, phrase_end, phrase, self.sequence))
+                self.released.append({"start": self.committed, "finish": absolute,
+                    "text": phrase, "beg": self.last_end, "end": phrase_end,
+                    "sequence": self.sequence})
                 self.sequence += 1
             self.committed = absolute
             if phrase_end is not None:

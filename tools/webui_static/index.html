@@ -82,6 +82,8 @@
   const cloudStateEl = document.getElementById('cloudState');
   let activeCloudSession = null;
   let cloudPlayback = false;
+  let cloudResumeRequired = false;
+  let pauseStartedAt = null;
   let connectionGeneration = 0;
   let pendingStartAt = null;
   let activeInput = '';
@@ -623,7 +625,7 @@
       currentEl.textContent = cue ? cue.text : '';
       currentEl.dataset.caption = cue ? 'final' : 'empty';
       if (cue && bilingualEl.checked && cue.source_text) {
-        const source = lines(cue.source_text, 42)[0];
+        const source = lines(cue.source_text, captionPresenter.columns - 2)[0];
         currentEl.textContent = source + (source.length < cue.source_text.length ? '…' : '') + '\n' + cue.text;
       }
       const lag = document.getElementById('captionLag');
@@ -704,6 +706,28 @@
 
   // 历史原地修订 partial；视频叠层只显示 API 已确认的完整句子。
   let uiPaused = false;  // 前端暂停标志：暂停期间忽略新数据（后端同时停止解析）
+
+  function holdCaptionForCloudReconnect() {
+    if (!uiPaused || !cloudPlayback || sharedViewerActive || !activeInput || /^https?:/i.test(activeInput)) return false;
+    cloudResumeRequired = true;
+    setStatus('识别连接已关闭；继续播放时将从暂停位置重新连接');
+    return true;
+  }
+  function resumeClosedCloudAfterPause() {
+    const localCloud = cloudPlayback && !sharedViewerActive && activeInput && !/^https?:/i.test(activeInput);
+    const longPause = pauseStartedAt != null && performance.now() - pauseStartedAt >= 15000;
+    const disconnected = !ws || ws.readyState > 1;
+    if (!cloudResumeRequired && !(localCloud && pauseStartedAt != null && (longPause || disconnected))) return false;
+    cloudResumeRequired = false;
+    pauseStartedAt = null;
+    const position = player.currentTime;
+    playStarted = false;
+    holdingForSync = true;
+    player.pause();
+    connect(activeInput, null, position);
+    return true;
+  }
+
   function sharedWordRatio(a, b) {
     if (!a || !a.length || !b || !b.length) return 0;
     let shared = 0;
@@ -732,11 +756,14 @@
   function onSubtitle(msg) {
     // In-flight final revisions remain valid while the user has paused.
     // Preserve them for playback instead of dropping transcript data.
-    seekPending = false;  // 新数据到达，解除 seek 等待
+    if (msg.translated && seekPending && (msg.end ?? msg.beg) < player.currentTime - .25) return;
+    seekPending = false;  // 仅目的地相关的新数据解除 seek 等待
     if (!msg.text) return;
     if (msg.translated) {
       translatedSession = true;
       if (msg.is_final === false) return;
+      const knownRevision = captionPresenter.seen.get(String(msg.sentence_id));
+      if (knownRevision != null && (msg.revision || 0) <= knownRevision) return;
       fitCaptionWidth();
       captionPresenter.enqueue(msg);
     }
@@ -745,7 +772,7 @@
       // Partial may move its begin timestamp slightly; matching shared word times
       // keeps that revision in one history row and prevents duplicate overlay text.
       const matched = subs[idx];
-      if (matched.isFinal && matched.translated) return;
+      if (matched.isFinal && matched.translated && (msg.revision || 0) <= (matched.revision || 0)) return;
       if ((msg.revision || 0) < (matched.revision || 0)) return;
       matched.beg = msg.beg;
       matched.end = msg.end;
@@ -806,6 +833,8 @@
 
   async function connect(forceUrl, shareToken = null, startAt = 0) {
     const generation = ++connectionGeneration;
+    cloudResumeRequired = false;
+    pauseStartedAt = null;
     const previousCloud = activeCloudSession;
     const previousShare = activeShareToken;
     activeCloudSession = null;
@@ -860,6 +889,7 @@
     if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); }
     captionPresenter.reset();
     translatedSession = false;
+    currentEl.dataset.caption = 'empty';
     subs = [];
     previewSubs = [];
     historyItems = [];
@@ -875,6 +905,7 @@
     currentEl.textContent = '正在准备字幕…';
     lastBlockEnd = -1;
     const isHls = /\.m3u8/i.test(url);
+    captionPresenter.live = isHls && (sharedViewerActive || /^https?:/i.test(url));
     let audioClockPts = null, videoClockPts = null;
     let timelineMapped = false;
     let mediaOffset = 0;
@@ -1028,7 +1059,15 @@
         return;
       }
       const msg = timelineMapped ? offsetMediaMessage(input, mediaOffset) : input;
-      if (msg.type === 'subtitle') {
+      if (msg.type === 'caption_remove') {
+        if ((captionPresenter.seen.get(String(msg.sentence_id)) ?? -1) > msg.revision) return;
+        captionPresenter.remove(msg.sentence_id, msg.revision);
+        const removed = new Set(subs.filter(s => s.sentenceId === msg.sentence_id).map(s => s.historyItem));
+        removed.forEach(item => item?.remove());
+        historyItems = historyItems.filter(item => !removed.has(item));
+        subs = subs.filter(s => s.sentenceId !== msg.sentence_id);
+        syncSubtitle();
+      } else if (msg.type === 'subtitle') {
         onSubtitle(msg);
       } else if (msg.type === 'preview') {
         onPreview(msg);
@@ -1066,12 +1105,14 @@
       } else if (msg.type === 'log') {
         logEvent('server', msg.line);  // 服务端后台日志（ticket-14）
       } else if (msg.type === 'error') {
+        if (holdCaptionForCloudReconnect()) return;
         currentEl.textContent = '⚠ ' + msg.message;
         currentEl.classList.add('err');
         setStatus('出错', true);
         playStarted = true;  // 解除播放拦截，允许手动看片（无字幕）
       } else if (msg.type === 'end') {
-        if (!currentEl.classList.contains('err')) setStatus('音频处理结束');
+        if (cloudResumeRequired) setStatus('识别连接已关闭；继续播放时将从暂停位置重新连接');
+        else if (!currentEl.classList.contains('err')) setStatus('音频处理结束');
         playStarted = true;  // 同上（静默视频等零字幕场景）
         // Source/API 已结束，没有更多 ASR 水位可以更新；播放剩余已缓冲的 A/V。
         playbackLimit = Infinity;
@@ -1154,6 +1195,7 @@
   });
   // 播放联动：video 控制画面与进度，audio 跟随出声；暂停时前后端都冻结（真正停止解析）
   player.addEventListener('play', () => {
+    if (resumeClosedCloudAfterPause()) return;
     if (!playStarted) {
       // 字幕未就绪时手动播放会让视频领先 ASR 一段固定偏移，时间窗永远不匹配
       // → 叠加字幕全程空白（用户 bug）。拦截：暂停，等首条字幕后统一自动播放。
@@ -1176,6 +1218,7 @@
       return;
     }
     if (holdingForSync || holdingForBuffer) return;  // 缓冲闸门暂停不冻结 ASR
+    pauseStartedAt = performance.now();
     uiPaused = true;  // 立即冻结前端显示（丢弃在途 partial）
     audioEl.pause();
     if (ws && ws.readyState === 1) ws.send('pause');
@@ -1216,6 +1259,8 @@
   shareAddressEl.onchange = () => { shareCopyBtn.dataset.url = shareAddressEl.value; };
   stopBtn.onclick = async () => {
     const generation = ++connectionGeneration;
+    cloudResumeRequired = false;
+    pauseStartedAt = null;
     const stoppedCloud = activeCloudSession;
     const stoppedShare = activeShareToken;
     activeCloudSession = null;

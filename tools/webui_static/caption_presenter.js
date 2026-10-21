@@ -21,7 +21,7 @@
     return Math.max(2400, Math.min(8000, (cjk / 6 + words / 3) * 1000 + 650));
   }
   class CaptionPresenter {
-    constructor() { this.columns=42; this.reset(); }
+    constructor() { this.columns=42; this.live=true; this.reset(); }
     setColumns(columns) {
       columns=Math.max(12,Math.floor(columns));
       if (columns === this.columns) return;
@@ -33,17 +33,37 @@
         this.current=first; this.elapsed=0;
         this.queue.unshift(...rest);
       }
+      this.trimBacklog();
     }
-    reset() { this.queue=[]; this.current=null; this.seen=new Set(); this.elapsed=0; this.lastWall=null; this.skipped=0; }
+    trimBacklog() {
+      if (!this.live) return;
+      while (this.queue.length > 1 && this.queue.reduce((n,c)=>n+c.hold,0) > 14000) { this.queue.shift(); this.skipped++; }
+    }
+    reset() { this.queue=[]; this.current=null; this.seen=new Map(); this.elapsed=0; this.lastWall=null; this.skipped=0; }
     enqueue(cue) {
       if (cue.is_final === false || !cue.text?.trim()) return;
       const key = String(cue.sentence_id ?? cue.beg + ':' + cue.text);
-      if (this.seen.has(key)) return;
-      this.seen.add(key);
-      if (this.seen.size > 1000) this.seen.delete(this.seen.values().next().value);
-      for (const text of pages(cue.text,this.columns)) this.queue.push({...cue,text,hold:readingMs(text)});
+      const revision=cue.revision ?? 0;
+      if (this.seen.has(key) && this.seen.get(key) >= revision) return;
+      const previousIndex=this.queue.findIndex(page=>String(page.sentence_id ?? page.beg + ':' + page.text) === key);
+      const active=String(this.current?.sentence_id) === key;
+      const revised=this.seen.has(key);
+      this.seen.set(key,revision);
+      this.queue=this.queue.filter(page=>String(page.sentence_id ?? page.beg + ':' + page.text) !== key);
+      if (this.seen.size > 1000) this.seen.delete(this.seen.keys().next().value);
+      // Finished old clauses are corrected in history, not replayed after newer speech.
+      if (revised && previousIndex < 0 && !active) return;
+      const position=active ? 0 : previousIndex < 0 ? this.queue.length : previousIndex;
+      this.queue.splice(position,0,...pages(cue.text,this.columns).map(text=>({...cue,text,hold:readingMs(text)})));
       // Keep live captions near the speaker. Skipped pages remain in the transcript.
-      while (this.queue.length > 1 && this.queue.reduce((n,c)=>n+c.hold,0) > 14000) { this.queue.shift(); this.skipped++; }
+      this.trimBacklog();
+    }
+    remove(key, revision=0) {
+      key=String(key);
+      if ((this.seen.get(key) ?? -1) > revision) return;
+      this.seen.set(key,revision);
+      this.queue=this.queue.filter(page=>String(page.sentence_id) !== key);
+      if (String(this.current?.sentence_id) === key) { this.current=null; this.elapsed=0; }
     }
     tick(mediaTime, wallTime, paused=false) {
       const delta = this.lastWall == null ? 0 : Math.max(0, wallTime - this.lastWall);

@@ -64,7 +64,7 @@ class AliyunFunASREngine(Engine):
         self.client.raise_if_error()
         while self.client.subtitle_buffer:
             entry = self.client.subtitle_buffer.popleft()
-            if entry.text:
+            if entry.text or (entry.is_final and getattr(entry, "sentence_id", None) is not None):
                 beg = entry.start_time
                 end = entry.end_time if (entry.end_time and entry.end_time > beg) else None
                 return (beg, end, entry.text, entry.words, entry.is_final,

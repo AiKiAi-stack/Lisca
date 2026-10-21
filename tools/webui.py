@@ -704,12 +704,15 @@ async def ws_endpoint(ws: WebSocket):
             beg, end, text, words = o[:4]
             is_final = bool(o[4]) if len(o) > 4 else True
             sentence_id = o[5] if len(o) > 5 else None
-            if text:
+            if text or (translation and is_final and sentence_id is not None):
                 if translation:
                     key = sentence_id if sentence_id is not None else round(beg, 1)
                     collector = translation_clauses.setdefault(key, TranslationClauses(beg))
                     for clause_beg, clause_end, clause_text, sequence in collector.observe(
                             text, words, is_final, end):
+                        if not clause_text:
+                            translation.withdraw(f"{key}:{sequence}")
+                            continue
                         translation.submit({"type": "subtitle", "beg": clause_beg + timeline_offset,
                             "end": clause_end + timeline_offset if clause_end is not None else None,
                             "text": clause_text, "is_final": True,
@@ -990,7 +993,7 @@ async def share_ws_endpoint(ws: WebSocket, token: str):
             event = event_task.result()
             event_task = asyncio.create_task(queue.get())
             # Status and logs can contain source URLs; guests only need playback data.
-            if event.get("type") in ("subtitle", "preview", "timeline", "ready",
+            if event.get("type") in ("subtitle", "caption_remove", "preview", "timeline", "ready",
                                       "buffer", "error", "end"):
                 if event.get("type") == "error":
                     await ws.send_json({"type": "error", "message": "主播端直播处理发生错误"})

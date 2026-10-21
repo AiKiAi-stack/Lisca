@@ -227,3 +227,107 @@ def test_stop_during_request_start_prevents_later_requests():
     assert list(translator.translate("Another sentence", scope)) == []
     assert not results and len(requests) == 1
     translator.close()
+
+
+def test_complete_source_correction_can_replace_an_already_translated_clause():
+    from cloud_translation import TranslationSession
+    first = threading.Event()
+    cues = []
+
+    class Translator:
+        def translate(self, text, _stop):
+            yield "draft"
+            yield "译文:" + text
+
+        def close(self):
+            pass
+
+    def emit(cue):
+        cues.append(cue)
+        first.set()
+
+    session = TranslationSession(Translator(), emit, threading.Event())
+    original = {"type": "subtitle", "sentence_id": "1:0", "beg": 0, "end": 2,
+                "is_final": True, "text": "I love cats."}
+    session.submit(original)
+    assert first.wait(2)
+    session.submit({**original, "text": "I really love cats."})
+    session.finish()
+    assert [cue["text"] for cue in cues] == ["译文:I love cats.", "译文:I really love cats."]
+    assert cues[1]["revision"] > cues[0]["revision"]
+    assert all(cue["is_final"] for cue in cues)
+
+
+def test_withdrawal_prevents_an_inflight_translation_from_returning_after_removal():
+    from cloud_translation import TranslationSession
+    started, release = threading.Event(), threading.Event()
+    cues = []
+
+    class Translator:
+        def translate(self, _text, _stop):
+            started.set()
+            assert release.wait(2)
+            yield "已被删除的旧译文"
+
+        def close(self):
+            pass
+
+    session = TranslationSession(Translator(), cues.append, threading.Event())
+    session.submit({"type": "subtitle", "sentence_id": "1:0", "beg": 0, "end": 2,
+                    "is_final": True, "text": "Deleted hypothesis."})
+    assert started.wait(2)
+    session.withdraw("1:0")
+    release.set()
+    session.finish()
+    assert len(cues) == 1 and cues[0]["type"] == "caption_remove"
+
+
+def test_empty_final_asr_revision_withdraws_a_previously_released_translation(monkeypatch):
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+        def iter_chunks(self):
+            for _ in range(3):
+                yield b"\x00" * 3200
+        def close(self):
+            pass
+
+    class Engine:
+        calls = 0
+        def transcribe_chunk(self, _audio):
+            self.calls += 1
+            return (0.0, 0.3 if self.calls == 3 else None,
+                    "" if self.calls == 3 else "I love cats.", None, self.calls == 3, 7)
+        def poll(self):
+            return (None, None, "", None)
+        def finish(self):
+            return self.poll()
+        def close(self):
+            pass
+
+    class Translator:
+        def __init__(self, *_args):
+            pass
+        def translate(self, _text, _stop):
+            yield "我喜欢猫。"
+        def close(self):
+            pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kw: Engine())
+    monkeypatch.setattr(webui, "QwenTranslator", Translator)
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "sk-private-test"})
+        ticket = client.post("/api/cloud/sessions", json={"url": "https://media.test/video.mp4",
+            "source": "en", "target": "zh"}).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+    removed = [i for i, event in enumerate(events) if event["type"] == "caption_remove"]
+    assert len(removed) == 1
+    assert events[removed[0]]["sentence_id"] == "7:0"
+    assert not any(event["type"] == "subtitle" for event in events[removed[0] + 1:])

@@ -49,3 +49,38 @@ def test_uncertain_source_revisions_do_not_emit_token_captions():
     assert collector.observe("It is raining.") == []
     assert collector.observe("It is snowing.") == []
     assert collector.observe("It is snowing. Today") == [(0, None, "It is snowing.", 0)]
+
+
+def test_correction_after_release_updates_whole_clause_and_preserves_remaining_tail():
+    collector = TranslationClauses(0)
+    collector.observe("I love cats. Tomorrow")
+    first = collector.observe("I love cats. Tomorrow we travel")
+    assert first == [(0, None, "I love cats.", 0)]
+    revised = collector.observe("I really love cats. Tomorrow we travel.", is_final=True, end=6)
+    assert [item[2] for item in revised] == ["I really love cats.", "Tomorrow we travel."]
+    assert [item[3] for item in revised] == [0, 1]
+
+
+def test_a_correction_must_repeat_or_be_final_before_retranslation():
+    collector = TranslationClauses(0)
+    collector.observe("I love cats. Tomorrow")
+    collector.observe("I love cats. Tomorrow we travel")
+    assert collector.observe("I really love cats. Tomorrow we travel") == []
+    assert collector.observe("I really love cats. Tomorrow we travel soon") == [
+        (0, None, "I really love cats.", 0)]
+
+
+def test_deletion_of_released_clause_retracts_its_translation_and_preserves_tail():
+    collector = TranslationClauses(0)
+    collector.observe("I love cats. Tomorrow")
+    collector.observe("I love cats. Tomorrow we travel")
+    result = collector.observe("Tomorrow we travel.", is_final=True, end=6)
+    assert [item[2] for item in result] == ["", "Tomorrow we travel."]
+    assert [item[3] for item in result] == [0, 1]
+
+
+def test_empty_final_hypothesis_retracts_every_released_clause():
+    collector = TranslationClauses(0)
+    collector.observe("I love cats.")
+    collector.observe("I love cats.")
+    assert collector.observe("", is_final=True, end=2) == [(0, None, "", 0)]

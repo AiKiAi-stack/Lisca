@@ -248,7 +248,7 @@ class TranslationSession:
         self.translator, self.emit, self.stop = translator, emit, stop
         self._condition = threading.Condition()
         self._pending = OrderedDict()
-        self._finalized = set()
+        self._finalized = OrderedDict()
         self._revision = 0
         self._finishing = False
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -261,18 +261,29 @@ class TranslationSession:
         if key is None:
             key = round(cue["beg"], 2)
         with self._condition:
-            if self.stop.is_set() or key in self._finalized:
+            if self.stop.is_set() or self._finalized.get(key) == cue["text"]:
                 return
             if cue["is_final"]:
-                self._finalized.add(key)
+                self._finalized[key] = cue["text"]
                 if len(self._finalized) > 1000:
-                    self._finalized.pop()
+                    self._finalized.popitem(last=False)
             if len(self._pending) >= 32 and key not in self._pending:
                 self.stop.set()
                 raise CloudError("翻译处理持续落后，已停止云端请求；请检查网络或稍后重试")
             self._revision += 1
             self._pending[key] = {**cue, "revision": self._revision}
             self._condition.notify_all()
+
+    def withdraw(self, key):
+        """Retract a clause deleted by ASR, including queued/in-flight work."""
+        with self._condition:
+            if self.stop.is_set():
+                return
+            self._finalized[key] = ""
+            self._pending.pop(key, None)
+            self._revision += 1
+            self.emit({"type": "caption_remove", "sentence_id": key,
+                       "revision": self._revision})
 
     def _run(self):
         try:
@@ -292,7 +303,8 @@ class TranslationSession:
                 for translated in self.translator.translate(cue["text"], self.stop):
                     if self.stop.is_set():
                         break
-                if not self.stop.is_set() and translated and cue["is_final"]:
+                if (not self.stop.is_set() and translated and cue["is_final"]
+                        and self._finalized.get(key) == cue["text"]):
                     self.emit({**cue, "text": translated, "source_text": cue["text"],
                                "words": None, "translated": True,
                                "translation_ms": round((time.monotonic() - started) * 1000)})

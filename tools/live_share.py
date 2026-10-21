@@ -88,7 +88,7 @@ class LiveShare:
                 self._ready = event
             elif kind == "buffer":
                 self._buffer = event
-            elif kind in ("subtitle", "preview"):
+            elif kind in ("subtitle", "caption_remove", "preview"):
                 self._events.append(event)
             elif kind in ("error", "end"):
                 self._events.append(event)

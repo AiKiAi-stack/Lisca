@@ -120,3 +120,15 @@ def test_aliyun_preserves_missing_sentence_end(monkeypatch):
             None,
     )
     eng.close()
+
+
+def test_aliyun_preserves_empty_final_revision_for_caption_withdrawal(monkeypatch):
+    from engines import create_engine
+
+    fake_client = _patch_deps(monkeypatch)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    engine = create_engine("aliyun-funasr")
+    fake_client.instances[-1].subtitle_buffer = deque([types.SimpleNamespace(
+        start_time=1.0, end_time=2.0, text="", words=None, is_final=True, sentence_id=7)])
+    assert engine.poll() == (1.0, 2.0, "", None, True, 7)
+    engine.close()
