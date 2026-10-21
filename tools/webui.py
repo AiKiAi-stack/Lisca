@@ -14,11 +14,14 @@ import asyncio
 import ipaddress
 import json
 import logging
+import math
 import os
+import secrets
 import socket
 import shutil
 import sys
 import threading
+import time
 import warnings
 from collections import deque
 from urllib.parse import urljoin, urlparse
@@ -40,6 +43,8 @@ from input_resolver import classify, resolve_stream_url  # noqa: E402
 from platform_resolver import resolve_platform_url  # noqa: E402
 from stream_source import DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
 from live_share import LiveShare, MAX_VIEWERS  # noqa: E402
+from cloud_translation import (CloudConfigStore, CloudError, QwenTranslator, RequestStop,
+                               TranslationSession, validate_pair)  # noqa: E402
 
 app = FastAPI(title="实时字幕")
 
@@ -55,6 +60,108 @@ _LOG_SINKS: list = []  # 每连接的 put() 回调，实时推送新日志行
 logger = logging.getLogger("webui")  # 会话生命周期 INFO 日志（用户可见）
 _SHARES: dict[str, LiveShare] = {}
 _SHARE_LOCK = threading.RLock()
+_CLOUD = CloudConfigStore(os.path.join(os.path.dirname(UPLOAD_DIR), ".data", "cloud.bin"))
+_CLOUD_JOBS: dict = {}
+_CLOUD_LOCK = threading.RLock()
+
+
+@app.get("/api/cloud")
+def cloud_config():
+    try:
+        return _CLOUD.get().public(_CLOUD.path.exists())
+    except CloudError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.put("/api/cloud")
+async def update_cloud_config(request: Request):
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise CloudError("配置格式无效")
+        return _CLOUD.update(data)
+    except (ValueError, OSError) as exc:
+        message = str(exc) if isinstance(exc, CloudError) else "无法保存云端配置"
+        raise HTTPException(400, message) from None
+
+
+@app.delete("/api/cloud")
+def delete_cloud_config():
+    with _CLOUD_LOCK:
+        jobs = list(_CLOUD_JOBS.values())
+        _CLOUD_JOBS.clear()
+    for job in jobs:
+        job["stop"].set()
+    return _CLOUD.clear()
+
+
+@app.post("/api/cloud/sessions")
+async def create_cloud_session(request: Request):
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise CloudError("会话格式无效")
+        source, target = data.get("source"), data.get("target")
+        validate_pair(source, target)
+        url = data.get("url", "")
+        if not isinstance(url, str) or not url.strip() or len(url) > 8192:
+            raise CloudError("请输入直播地址或选择本地视频")
+        config = _CLOUD.get()
+        if not config.configured:
+            raise CloudError("请先配置云端 API Key")
+        position = float(data.get("start_at", 0))
+        if not math.isfinite(position) or position < 0:
+            raise CloudError("播放位置无效")
+        if position and not os.path.isfile(url):
+            raise CloudError("首版仅支持本地视频跳转")
+        with _CLOUD_LOCK:
+            now = time.monotonic()
+            for token, job in list(_CLOUD_JOBS.items()):
+                if job["expires"] < now or job["stop"].is_set():
+                    job["stop"].set()
+                    _CLOUD_JOBS.pop(token, None)
+            if len(_CLOUD_JOBS) >= 8:
+                raise CloudError("待处理会话过多，请先停止当前会话")
+            token = secrets.token_urlsafe(32)
+            _CLOUD_JOBS[token] = {"url": url.strip(), "config": config,
+                "source": source, "target": target, "start_at": position,
+                "stop": RequestStop(), "expires": now + 60, "active": False}
+        return {"session": token}
+    except (ValueError, TypeError) as exc:
+        message = str(exc) if isinstance(exc, CloudError) else "会话参数无效"
+        raise HTTPException(400, message) from None
+
+
+@app.delete("/api/cloud/sessions/{token}")
+def stop_cloud_session(token: str):
+    with _CLOUD_LOCK:
+        job = _CLOUD_JOBS.pop(token, None)
+    if job:
+        job["stop"].set()
+    return {"ok": True}
+
+
+@app.post("/api/cloud/check")
+def check_cloud_connection():
+    config = _CLOUD.get()
+    if not config.configured:
+        raise HTTPException(400, "请先填写 Key")
+    engine = None
+    translator = None
+    try:
+        engine = create_engine("aliyun-funasr", api_key=config.api_key)
+        translator = QwenTranslator(config, "en", "zh")
+        list(translator.translate("Hello", threading.Event()))
+        engine.poll()
+        return {"ok": True, "message": "翻译请求成功；识别服务已发起连接，但认证和语音识别需实际播放验证"}
+    except Exception as exc:
+        message = str(exc) if isinstance(exc, CloudError) else "识别服务连接失败，请检查 Key、权限和网络"
+        raise HTTPException(400, message) from None
+    finally:
+        if translator:
+            translator.close()
+        if engine:
+            engine.close()
 
 
 def _is_local_host(host: str | None) -> bool:
@@ -87,6 +194,10 @@ async def keep_admin_routes_local(request: Request, call_next):
     path = request.url.path
     viewer_route = path == "/hls.min.js" or path.startswith("/share/")
     client_host = request.client.host if request.client else None
+    origin = request.headers.get("origin")
+    if request.method not in ("GET", "HEAD", "OPTIONS") and origin \
+            and urlparse(origin).netloc != request.url.netloc:
+        return Response("请求来源不匹配", status_code=403)
     if viewer_route and path.startswith("/share/") and not _is_lan_host(client_host):
         return Response("分享链接仅允许局域网设备访问", status_code=403)
     if not viewer_route and not _is_local_host(client_host):
@@ -146,8 +257,8 @@ async def stop_share(token: str, request: Request):
         share = _SHARES.get(token)
         if not share:
             return {"ok": True}
-        share.stop()
         _SHARES.pop(token, None)
+    await asyncio.to_thread(share.stop)
     return {"ok": True}
 
 
@@ -482,8 +593,28 @@ async def ws_endpoint(ws: WebSocket):
     if not _is_local_host(ws.client.host if ws.client else None):
         await ws.close(code=4403, reason="管理连接仅允许主机本机访问")
         return
+    origin = ws.headers.get("origin")
+    if origin and urlparse(origin).netloc != ws.url.netloc:
+        await ws.close(code=4403, reason="请求来源不匹配")
+        return
     await ws.accept()
+    cloud_token = ws.query_params.get("session", "")
+    cloud = None
+    if cloud_token:
+        with _CLOUD_LOCK:
+            cloud = _CLOUD_JOBS.get(cloud_token)
+            if cloud and not cloud["active"] and cloud["expires"] >= time.monotonic():
+                cloud["active"] = True
+                cloud["expires"] = float("inf")
+            else:
+                cloud = None
+        if cloud is None:
+            await ws.send_json({"type": "error", "message": "会话已过期或已使用，请重新开始"})
+            await ws.close()
+            return
     url = ws.query_params.get("url", "").strip()
+    if cloud:
+        url = cloud["url"]
     share_token = ws.query_params.get("share", "").strip()
     with _SHARE_LOCK:
         share = _SHARES.get(share_token) if share_token else None
@@ -492,6 +623,8 @@ async def ws_endpoint(ws: WebSocket):
         await ws.close()
         return
     engine_name = ws.query_params.get("engine", "faster-whisper").strip()
+    if cloud:
+        engine_name = "aliyun-funasr"
     silence = ws.query_params.get("silence", "400").strip()
     delay = ws.query_params.get("delay", "1").strip()
     try:
@@ -506,6 +639,10 @@ async def ws_endpoint(ws: WebSocket):
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     stop = share.stop_event if share else threading.Event()
+    if cloud:
+        if share:
+            share.stop_event = cloud["stop"]
+        stop = cloud["stop"]
     paused = threading.Event()  # 客户端暂停 → 后端停止推流解析，字幕冻结
 
     def put(item: dict) -> None:
@@ -513,7 +650,16 @@ async def ws_endpoint(ws: WebSocket):
             queue.put_nowait(item)
             if share:
                 share.publish(item)
-        loop.call_soon_threadsafe(dispatch)
+        if cloud:
+            for name in ("message", "line"):
+                if name in item:
+                    for secret in (cloud["config"].api_key, cloud["config"].translation_key):
+                        if secret:
+                            item[name] = item[name].replace(secret, "[已隐藏]")
+        try:
+            loop.call_soon_threadsafe(dispatch)
+        except RuntimeError:
+            stop.set()
 
     async def receive_loop() -> None:
         """接收客户端控制消息（pause/resume）"""
@@ -526,8 +672,10 @@ async def ws_endpoint(ws: WebSocket):
                     paused.clear()
         except Exception:  # noqa: BLE001 - 连接关闭即结束
             pass
+        finally:
+            await asyncio.to_thread(stop.set)
 
-    asyncio.create_task(receive_loop())
+    receiver = asyncio.create_task(receive_loop())
 
     def worker() -> None:
         import time
@@ -536,6 +684,7 @@ async def ws_endpoint(ws: WebSocket):
         fed_sec = 0.0
         playback_ceiling = None
         pending_sentences = []
+        translation = None
 
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
@@ -543,6 +692,11 @@ async def ws_endpoint(ws: WebSocket):
             is_final = bool(o[4]) if len(o) > 4 else True
             sentence_id = o[5] if len(o) > 5 else None
             if text:
+                if translation:
+                    translation.submit({"type": "subtitle", "beg": beg + timeline_offset,
+                        "end": end + timeline_offset if end is not None else None,
+                        "text": text, "is_final": is_final, "sentence_id": sentence_id})
+                    return
                 # Use the API sentence id when available. Nearby sentence starts
                 # can be less than a second apart and must not share one hold.
                 match = next((i for i, item in enumerate(pending_sentences)
@@ -588,8 +742,11 @@ async def ws_endpoint(ws: WebSocket):
                     url[:80], engine_name, silence)
 
         engine = None
+        phase = "media"
         try:
             real_url = resolve_stream_url(url)
+            if stop.is_set():
+                return
             kind, target = classify(url)
             http_headers = None
             if kind == "page":
@@ -602,9 +759,15 @@ async def ws_endpoint(ws: WebSocket):
                     engine_kwargs["max_sentence_silence"] = int(silence)
                 except ValueError:
                     engine_kwargs["max_sentence_silence"] = 400
+                if cloud:
+                    engine_kwargs.update(api_key=cloud["config"].api_key,
+                                         language_hints=[cloud["source"]])
             if urlparse(real_url).path.lower().endswith(".m3u8"):
                 put({"type": "status", "message": f"正在检查直播源: {real_url[:60]}"})
-            src = StreamSource(real_url, http_headers=http_headers)
+            source_kwargs = {"http_headers": http_headers}
+            if cloud and cloud["start_at"]:
+                source_kwargs["start_sec"] = cloud["start_at"]
+            src = StreamSource(real_url, **source_kwargs)
             timeline_offset = getattr(src, "timeline_offset_sec", 0.0)
             try:
                 if urlparse(real_url).path.lower().endswith(".m3u8") and hasattr(src, "container"):
@@ -614,7 +777,13 @@ async def ws_endpoint(ws: WebSocket):
                     codec = video_streams[0].codec_context.name
                     if codec == "mpeg2video":
                         raise ValueError("直播源使用 MPEG-2 视频编码，浏览器无法播放；已停止识别。请换 H.264 频道")
+                if stop.is_set():
+                    return
+                phase = "recognition"
                 engine = create_engine(engine_name, **engine_kwargs)
+                if cloud:
+                    translation = TranslationSession(QwenTranslator(cloud["config"],
+                        cloud["source"], cloud["target"]), put, stop)
                 batch_mode = getattr(engine, "batch_mode", False)
                 if batch_mode and not os.path.isfile(real_url):
                     raise ValueError("FunASR Vulkan（文件模式）只支持本地媒体文件；直播流请使用实时引擎")
@@ -623,6 +792,10 @@ async def ws_endpoint(ws: WebSocket):
                 # 音频持续送入 ASR；视频元素同时承载 HLS 音轨，并保持在已送入音频的
                 # delay 秒之后播放。这样延迟覆盖整个画面和声音，而非只延迟字幕。
                 ready_sent = False
+                if cloud:
+                    put({"type": "ready", "delay": 0, "start_at": timeline_offset,
+                         "progressive": True})
+                    ready_sent = True
                 clock_sent = False
                 last = time.monotonic()
                 playback_ceiling = timeline_offset
@@ -648,7 +821,10 @@ async def ws_endpoint(ws: WebSocket):
                     if not batch_mode:
                         wait = chunk_sec - (time.monotonic() - last)
                         if wait > 0:
-                            time.sleep(wait)
+                            if cloud and stop.wait(wait):
+                                break
+                            if not cloud:
+                                time.sleep(wait)
                         last = time.monotonic()
                     o = engine.transcribe_chunk(s16_to_f32(chunk))
                     if not batch_mode:
@@ -661,7 +837,7 @@ async def ws_endpoint(ws: WebSocket):
                         if o2[0] is None:
                             break
                         emit(o2)
-                    if not batch_mode:
+                    if not batch_mode and not cloud:
                         # Keep the configured live delay as a floor. If ASR has an
                         # unfinished sentence, hold before it; when final arrives,
                         # resume at real time without jumping over buffered A/V.
@@ -678,6 +854,8 @@ async def ws_endpoint(ws: WebSocket):
                             put({"type": "ready", "delay": delay_sec,
                                  "start_at": timeline_offset})
                             ready_sent = True
+                if stop.is_set():
+                    return
                 o = engine.finish()
                 if o[0] is not None:
                     emit(o)
@@ -687,6 +865,8 @@ async def ws_endpoint(ws: WebSocket):
                     if o2[0] is None:
                         break
                     emit(o2)
+                if translation:
+                    translation.finish()
                 # Batch engines finish the whole file before the player starts.
                 # Send ready only after subtitles have reached the browser.
                 if not ready_sent:
@@ -695,9 +875,16 @@ async def ws_endpoint(ws: WebSocket):
             finally:
                 src.close()
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
-            logger.warning("worker 异常: %s", exc)
-            put({"type": "error", "message": str(exc)[:300]})
+            message = str(exc)[:300]
+            if cloud and not isinstance(exc, (CloudError, ValueError)):
+                message = ("无法读取媒体：请检查来源、网络和编码；尚未开始云端识别"
+                           if phase == "media" else
+                           "语音识别服务异常：请检查 Key、模型权限和网络后重试")
+            logger.warning("worker 异常: %s", message)
+            put({"type": "error", "message": message})
         finally:
+            if translation:
+                translation.close()
             if engine is not None and callable(getattr(engine, "close", None)):
                 try:
                     engine.close()
@@ -719,9 +906,14 @@ async def ws_endpoint(ws: WebSocket):
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        stop.set()
+        await asyncio.to_thread(stop.set)
+        receiver.cancel()
+        await asyncio.gather(receiver, return_exceptions=True)
+        if cloud_token:
+            with _CLOUD_LOCK:
+                _CLOUD_JOBS.pop(cloud_token, None)
         if share:
-            share.stop()
+            await asyncio.to_thread(share.stop)
             with _SHARE_LOCK:
                 _SHARES.pop(share.token, None)
 
@@ -792,6 +984,8 @@ async def share_ws_endpoint(ws: WebSocket, token: str):
 
 
 def main():
+    # Directly launching the venv Python does not activate Scripts on Windows.
+    os.environ["PATH"] = os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")
     # 服务端日志捕获（ticket-14）：webui INFO + 库 WARNING 写入环形缓冲
     handler = _ServerLogHandler()
     handler.setFormatter(

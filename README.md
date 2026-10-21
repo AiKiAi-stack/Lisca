@@ -1,3 +1,13 @@
+# Live and video translation captions
+
+Run on your Windows PC and watch in a browser, with Chinese-to-English or English-to-Chinese captions. The cloud UI uses your own mainland-China DashScope API key for FunASR recognition and Qwen-MT Flash translation.
+
+Install 64-bit Python 3.10–3.12 (3.12 recommended, including the Python Launcher), place the checkout on a drive with free space, and run `start-windows.cmd`. It creates a project-local environment, installs `requirements-webui.txt`, and opens <http://127.0.0.1:8002/>. No local models are downloaded. Configure your key in the page, select a language direction, then open a live URL or local video.
+
+Audio and recognized text are sent to DashScope and billed to your API account. Keys are in memory by default; optional persistence uses Windows user-bound DPAPI encryption. The connection check calls cloud APIs. Supported languages are explicitly limited to Chinese/English for this first version. Current-sentence captions can revise; the cloud mode does not freeze playback waiting for final sentences. Short local videos have passed real-API checks in both directions; live-source coverage, quality thresholds, clean Windows installation and long-running playback still require acceptance testing. See the [implementation and acceptance record](docs/plans/2026-10-21-translation-implementation.md).
+
+See the [Chinese getting-started guide](README_zh.md), [PRD](docs/plans/2026-10-21-live-translation-prd.md) and [cloud API research](docs/research/2026-10-21-cloud-translation-api.md). The original toolkit documentation follows.
+
 [English](./README.md) | [中文](./README_zh.md)
 
 <p align="center">

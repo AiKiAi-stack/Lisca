@@ -225,3 +225,5 @@ results/
 uploads/
 .scratch/
 .qwen/
+.data/
+.cache/

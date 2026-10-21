@@ -92,5 +92,9 @@ class AliyunFunASREngine(Engine):
 
     def close(self) -> None:
         if not getattr(self, "_stopped", False):
-            self.client.stop()
+            cancel = getattr(self.client, "cancel", None)
+            if callable(cancel):
+                cancel()
+            else:
+                self.client.stop()
             self._stopped = True

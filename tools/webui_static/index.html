@@ -61,24 +61,39 @@
 </head>
 <body>
 <header>
-  <h1>🎙 实时字幕</h1>
+  <h1>🎙 直播与视频翻译字幕</h1>
+  <details id="cloudPanel" open style="flex-basis:100%;padding:12px;border:1px solid #30363d;border-radius:8px">
+    <summary>① 配置云端服务 · 阿里云百炼（中国内地）</summary>
+    <p>语音识别使用 FunASR，翻译使用 Qwen-MT。音频和识别文本将发送给百炼，费用由你的 API 账户承担。</p>
+    <label>API Key <input id="apiKey" type="password" autocomplete="off" placeholder="填写百炼 API Key，不会放入链接或日志"></label>
+    <label>翻译 Key（可选）<input id="translationKey" type="password" autocomplete="off" placeholder="留空使用同一 Key"></label>
+    <label><input id="saveKey" type="checkbox"> 通过 Windows 加密保存到本机（默认仅本次运行）</label>
+    <button id="saveCloud">应用配置</button>
+    <button id="checkCloud">检查连接（会调用云端 API）</button>
+    <button id="clearCloud">删除配置</button>
+    <span id="cloudState" role="status">尚未配置</span>
+    <p style="font-size:12px">请先在百炼开通 fun-asr-realtime 与 qwen-mt-flash。检查连接不代表实际语音效果；费用以服务商账单为准。</p>
+  </details>
   <input id="url" placeholder="输入流地址 / 视频链接 / 本地文件路径，如 B站链接 或 /path/to/video.mp4">
   <select id="engine">
-    <option value="faster-whisper">本地 faster-whisper</option>
-    <option value="aliyun-funasr">阿里云 FunASR API（推荐）</option>
-    <option value="funasr-gguf">FunASR Vulkan（文件模式）</option>
+    <option value="aliyun-funasr" selected>云端翻译字幕</option>
     <option value="demo">演示字幕（无识别，仅验证链路）</option>
   </select>
+  <select id="languagePair" aria-label="翻译方向">
+    <option value="zh-en">中文 → English</option>
+    <option value="en-zh">English → 中文</option>
+  </select>
+  <label><input id="bilingual" type="checkbox"> 双语字幕</label>
   <select id="silence" title="断句灵敏度：语音后静音多久判定一句结束（越小切句越频繁，仅 API 引擎生效）">
     <option value="200">断句：极灵敏 200ms</option>
     <option value="400" selected>断句：灵敏 400ms</option>
     <option value="800">断句：标准 800ms</option>
     <option value="1300">断句：宽松 1300ms（服务端默认）</option>
   </select>
-  <select id="delay" title="HLS 音视频相对直播源的整体延迟；延迟期间音频持续送给 ASR，5 秒更有利于完整断句">
+  <select id="delay" hidden title="旧演示模式的同步缓冲设置">
     <option value="0.1">音视频延迟 100ms</option>
     <option value="1">音视频延迟 1s</option>
-    <option value="5" selected>音视频延迟 5s</option>
+    <option value="5">音视频延迟 5s</option>
   </select>
   <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
   <button id="uploadBtn" title="上传本地音频/视频文件">📁 上传文件</button>
@@ -117,8 +132,9 @@
   <div id="playerWrap">
     <video id="player" controls muted></video>
     <audio id="audioEl" preload="auto"></audio>
-    <div id="current">输入地址后点「开始」，边看视频边出字幕</div>
+    <div id="current">配置 Key，选择翻译方向，再打开直播或本地视频</div>
   </div>
+  <div id="lateCaption" hidden role="status" style="padding:8px;color:#e3b341;white-space:pre-line"></div>
   <div id="history"></div>
   <div id="logPanel" hidden>
     <textarea id="logText" readonly spellcheck="false"
@@ -132,6 +148,58 @@
   const engineEl = document.getElementById('engine');
   const silenceEl = document.getElementById('silence');
   const delayEl = document.getElementById('delay');
+  const languagePairEl = document.getElementById('languagePair');
+  const bilingualEl = document.getElementById('bilingual');
+  const cloudStateEl = document.getElementById('cloudState');
+  let activeCloudSession = null;
+  let cloudPlayback = false;
+  let connectionGeneration = 0;
+  let pendingStartAt = null;
+  let activeInput = '';
+
+  async function cloudRequest(path, method = 'GET', data) {
+    const response = await fetch(path, {method, headers:{'Content-Type':'application/json'},
+      body:data == null ? undefined : JSON.stringify(data)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : '请求失败');
+    return result;
+  }
+  async function refreshCloud() {
+    try {
+      const data = await cloudRequest('/api/cloud');
+      cloudStateEl.textContent = data.configured ? `已配置 · ${data.saved ? 'Windows 加密保存' : '仅本次运行'}` : '尚未配置';
+      document.getElementById('saveKey').disabled = !data.persistent_storage;
+      document.getElementById('saveKey').checked = data.saved;
+      document.getElementById('cloudPanel').open = !data.configured;
+    } catch (error) { cloudStateEl.textContent = error.message; }
+  }
+  document.getElementById('saveCloud').onclick = async () => {
+    try {
+      await cloudRequest('/api/cloud', 'PUT', {api_key:document.getElementById('apiKey').value,
+        translation_key:document.getElementById('translationKey').value,
+        save:document.getElementById('saveKey').checked});
+      document.getElementById('apiKey').value = '';
+      document.getElementById('translationKey').value = '';
+      await refreshCloud();
+    } catch (error) { cloudStateEl.textContent = error.message; }
+  };
+  document.getElementById('checkCloud').onclick = async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    cloudStateEl.textContent = '检查中…';
+    try { cloudStateEl.textContent = (await cloudRequest('/api/cloud/check', 'POST')).message; }
+    catch (error) { cloudStateEl.textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+  document.getElementById('clearCloud').onclick = async () => {
+    try {
+      await cloudRequest('/api/cloud', 'DELETE');
+      document.getElementById('apiKey').value = '';
+      document.getElementById('translationKey').value = '';
+      await refreshCloud();
+      setStatus('配置已删除，云端会话已停止');
+    } catch (error) { cloudStateEl.textContent = error.message; }
+  };
   const subToggleBtn = document.getElementById('subToggle');
   const startBtn = document.getElementById('start');
   const stopBtn = document.getElementById('stop');
@@ -595,6 +663,7 @@
 
   function syncSubtitle() {
     const t = player.currentTime;
+    if (!activeInput && !sharedViewerActive) return;
     // 出错态：保留错误提示，不被占位符/字幕覆盖
     if (currentEl.classList.contains('err')) return;
     // 字幕开关（ticket-13）：关闭则中间字幕不显示
@@ -616,7 +685,8 @@
       nextBegBySubtitle.set(item, nextBeg);
       if (item.beg < nextBeg) nextBeg = item.beg;
     }
-    let candidates = subs.filter(s => s.isFinal !== false).flatMap(s => captionSegments(s).map((segment, segmentIndex) => {
+    let candidates = subs.filter(s => s.translated ? Number.isFinite(s.end) : s.isFinal !== false).flatMap(s =>
+      (s.translated ? [{beg:s.beg, end:s.end, text:s.text}] : captionSegments(s)).map((segment, segmentIndex) => {
         const sentenceBeg = Number.isFinite(segment.beg) ? segment.beg : s.beg;
         // Some final entries omit a sentence end. Keep that caption visible until
         // the next sentence begins instead of
@@ -662,6 +732,10 @@
         }
       }
     currentEl.textContent = groups.map(g => g.text).join(' ');
+    if (bilingualEl.checked) {
+      const sourceText = [...new Set(candidates.map(c => c.sourceText).filter(Boolean))].join(' ');
+      if (sourceText) currentEl.textContent = sourceText + '\n' + currentEl.textContent;
+    }
     return;
   }
 
@@ -697,14 +771,38 @@
     // Preserve them for playback instead of dropping transcript data.
     seekPending = false;  // 新数据到达，解除 seek 等待
     if (!msg.text) return;
+    if (msg.translated) {
+      // Do not move an old cue onto unrelated current speech. Late translations
+      // stay in history and a separately labelled reading area below the video.
+      if (!Number.isFinite(msg.end)) {
+        const draft = document.getElementById('lateCaption');
+        draft.hidden = false;
+        draft.textContent = '翻译草稿（语句时间尚未确认，可修订）\n'
+          + (bilingualEl.checked && msg.source_text ? msg.source_text + '\n' : '') + msg.text;
+      } else if (player.currentTime > msg.end) {
+        logEvent('translation_late', `${(player.currentTime - msg.end).toFixed(2)}s`);
+        const late = document.getElementById('lateCaption');
+        late.hidden = false;
+        late.textContent = `迟到译文（${msg.beg.toFixed(1)}–${msg.end.toFixed(1)}s，与当前画面可能不同步）\n${msg.text}`;
+      } else {
+        const draft = document.getElementById('lateCaption');
+        draft.hidden = true;
+        draft.textContent = '';
+      }
+    }
     let idx = subs.findIndex(s => sameSubtitle(s, msg));
     if (idx >= 0) {
       // Partial may move its begin timestamp slightly; matching shared word times
       // keeps that revision in one history row and prevents duplicate overlay text.
       const matched = subs[idx];
+      if (matched.isFinal && matched.translated) return;
+      if ((msg.revision || 0) < (matched.revision || 0)) return;
       matched.beg = msg.beg;
       matched.end = msg.end;
       matched.text = msg.text;
+      matched.sourceText = msg.source_text;
+      matched.revision = msg.revision;
+      matched.translated = msg.translated;
       matched.isFinal = msg.is_final !== false;
       matched.sentenceId = msg.sentence_id ?? matched.sentenceId;
       if (msg.words) matched.words = msg.words;
@@ -722,6 +820,7 @@
       // 新句：加入列表与历史
       const historyItem = appendHistory(msg.beg, msg.end, msg.text);
       subs.push({ beg: msg.beg, end: msg.end, text: msg.text, words: msg.words || null,
+        sourceText:msg.source_text, translated:msg.translated, revision:msg.revision,
         isFinal: msg.is_final !== false, sentenceId: msg.sentence_id, historyItem });
       logEvent('sub', `beg=${msg.beg.toFixed(1)} ${msg.text.slice(0, 24)}`);
     }
@@ -755,7 +854,20 @@
     return msg;
   }
 
-  async function connect(forceUrl, shareToken = null) {
+  async function connect(forceUrl, shareToken = null, startAt = 0) {
+    const generation = ++connectionGeneration;
+    const previousCloud = activeCloudSession;
+    const previousShare = activeShareToken;
+    activeCloudSession = null;
+    activeShareToken = null;
+    if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); ws = null; }
+    if (previousCloud) {
+      await cloudRequest('/api/cloud/sessions/' + encodeURIComponent(previousCloud), 'DELETE').catch(() => {});
+    }
+    if (previousShare) {
+      await fetch('/share/stop/' + encodeURIComponent(previousShare), {method:'POST'}).catch(() => {});
+    }
+    if (generation !== connectionGeneration) return;
     sharedViewerActive = !!shareToken;
     viewerInfo = null;
     if (shareToken) {
@@ -774,9 +886,24 @@
     const url = sharedViewerActive ? (viewerInfo.is_hls ? 'shared.m3u8' : 'shared.mp4')
       : ((typeof forceUrl === 'string' && forceUrl) || urlEl.value).trim();
     if (!url) { setStatus('请输入流地址', true); return; }
+    activeInput = url;
+    cloudPlayback = !sharedViewerActive && engineEl.value === 'aliyun-funasr';
+    pendingStartAt = startAt > 0 ? startAt : null;
     if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
     // m3u 频道列表（ticket-19）：识别为列表则加载频道面板，不直接拉流
     if (/\.m3u($|\?)/i.test(url)) { loadChannels(url); return; }
+    if (/^https?:/i.test(url) && /\.m3u8($|\?)/i.test(url)) {
+      try {
+        const response = await fetch('/channels?url=' + encodeURIComponent(url));
+        if (generation !== connectionGeneration) return;
+        if (response.ok) { loadChannels(url); return; }
+        const result = await response.json();
+        if (!String(result.detail).includes('单路 HLS')) {
+          setStatus(result.detail || '无法读取播放列表', true);
+          return;
+        }
+      } catch (error) { setStatus('来源检查失败：' + error.message, true); return; }
+    }
     logEvent('connect', url.slice(0, 120));
     // 旧会话清理：不关旧 WS 则旧 worker 继续推流串字幕；
     // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
@@ -785,6 +912,7 @@
     previewSubs = [];
     historyItems = [];
     historyEl.innerHTML = '';
+    document.getElementById('lateCaption').hidden = true;
     playStarted = false;
     holdingForSync = false;
     holdingForBuffer = false;
@@ -816,6 +944,23 @@
       : '音视频整体延迟仅适用于 HLS 直播流';
     let params;
     if (!sharedViewerActive) {
+      if (cloudPlayback) {
+        try {
+          const [source, target] = languagePairEl.value.split('-');
+          const ticket = await cloudRequest('/api/cloud/sessions', 'POST', {url, source, target, start_at:startAt});
+          if (generation !== connectionGeneration) {
+            await cloudRequest('/api/cloud/sessions/' + ticket.session, 'DELETE');
+            return;
+          }
+          activeCloudSession = ticket.session;
+        } catch (error) {
+          setStatus(error.message, true);
+          currentEl.textContent = error.message;
+          currentEl.classList.add('err');
+          document.getElementById('cloudPanel').open = true;
+          return;
+        }
+      }
       try {
         const response = await fetch('/share/start', {method:'POST',
           headers:{'Content-Type':'application/json'},
@@ -823,6 +968,10 @@
             delay:isHls ? delayEl.value : '0.1'})});
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        if (generation !== connectionGeneration) {
+          await fetch('/share/stop/' + encodeURIComponent(data.token), {method:'POST'}).catch(() => {});
+          return;
+        }
         activeShareToken = data.token;
         shareAddressEl.replaceChildren();
         (data.urls || [data.url]).forEach(url => {
@@ -835,16 +984,18 @@
         shareCopyBtn.dataset.url = data.url;
         shareCopyBtn.style.display = 'inline-block';
       } catch (error) {
-        setStatus('无法创建观众链接：' + error.message, true);
-        return;
+        if (!cloudPlayback) { setStatus('无法创建观众链接：' + error.message, true); return; }
+        shareCopyBtn.style.display = 'none';
       }
-      params = new URLSearchParams({url, engine:engineEl.value,
+      if (generation !== connectionGeneration) return;
+      params = cloudPlayback ? new URLSearchParams({session:activeCloudSession, share:activeShareToken || ''})
+        : new URLSearchParams({url, engine:engineEl.value,
         silence:silenceEl.value, delay:isHls ? delayEl.value : '0.1',
         share:activeShareToken});
     }
     ws = new WebSocket(sharedViewerActive
-      ? `ws://${location.host}/share/${encodeURIComponent(shareToken)}/ws?viewer_id=${encodeURIComponent(viewerInfo.viewer_id)}`
-      : `ws://${location.host}/ws?${params}`);
+      ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/share/${encodeURIComponent(shareToken)}/ws?viewer_id=${encodeURIComponent(viewerInfo.viewer_id)}`
+      : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?${params}`);
     startBtn.style.display = 'none';
     stopBtn.style.display = sharedViewerActive ? 'none' : 'inline-block';
     currentEl.classList.remove('err');
@@ -934,6 +1085,11 @@
           syncPlaybackToBuffer();
         }
       } else if (msg.type === 'ready') {
+        if (msg.progressive) {
+          cloudPlayback = true;
+          playbackLimit = null;
+          setStatus('播放已开始，正在识别并翻译；当前句可能修订');
+        }
         // 音视频一起从输入进度前方 delay 秒启动；后续 buffer 消息持续控制播放上限。
         if (!sharedViewerActive && isHls && Number.isFinite(msg.start_at)) {
           aligningInitialPlayback = true;
@@ -945,8 +1101,8 @@
         playStarted = true;
         holdingForSync = false;
         if (currentEl.textContent.includes('字幕准备中')) currentEl.textContent = '';
-        setStatus('字幕已就绪，开始播放');
-        logEvent('ready', `音视频延迟=${msg.delay}s，开始播放`);
+        setStatus(msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
+        logEvent('ready', `附加播放缓冲=${msg.delay}s，开始播放`);
         player.play().catch(() => {});
         // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 时间轴损坏时，
         // 视频可能长时间 waiting/不前进却无 error 事件（无声卡死）——2s 轮询，
@@ -991,6 +1147,7 @@
   }
 
   function syncPlaybackToBuffer() {
+    if (cloudPlayback) return;
     if (!playStarted || playbackLimit == null || !/\.m3u8/i.test(urlEl.value.trim())) return;
     const t = player.currentTime;
     if (!player.paused && t >= playbackLimit - 0.03) {
@@ -1034,6 +1191,12 @@
     });
   });
   player.addEventListener('loadedmetadata', () => {
+    if (pendingStartAt != null) {
+      aligningInitialPlayback = true;
+      player.currentTime = pendingStartAt;
+      audioEl.currentTime = pendingStartAt;
+      pendingStartAt = null;
+    }
     logEvent('video_ok', `dur=${(player.duration || 0).toFixed(1)}s`);
   });
   // 播放联动：video 控制画面与进度，audio 跟随出声；暂停时前后端都冻结（真正停止解析）
@@ -1054,6 +1217,11 @@
     logEvent('play', `t=${player.currentTime.toFixed(1)}`);
   });
   player.addEventListener('pause', () => {
+    if (player.ended) {
+      audioEl.pause();
+      // EOF is not a user pause: let the decoder/API drain its final result.
+      return;
+    }
     if (holdingForSync || holdingForBuffer) return;  // 缓冲闸门暂停不冻结 ASR
     uiPaused = true;  // 立即冻结前端显示（丢弃在途 partial）
     audioEl.pause();
@@ -1061,12 +1229,18 @@
     logEvent('pause', `t=${player.currentTime.toFixed(1)}`);
   });
   player.addEventListener('seeked', () => {
+    document.getElementById('lateCaption').hidden = true;
     audioEl.currentTime = player.currentTime;
     if (aligningInitialPlayback) {
       aligningInitialPlayback = false;
       seekPending = false;
       logEvent('sync_seeked', `t=${player.currentTime.toFixed(1)}`);
       syncSubtitle();
+      return;
+    }
+    if (cloudPlayback && !sharedViewerActive && activeInput && !/^https?:/i.test(activeInput)) {
+      const destination = player.currentTime;
+      connect(activeInput, null, destination);
       return;
     }
     seekPending = true;  // 跳转后清空当前句显示，等新数据（ADR-0001）
@@ -1087,18 +1261,33 @@
   };
   shareAddressEl.onchange = () => { shareCopyBtn.dataset.url = shareAddressEl.value; };
   stopBtn.onclick = async () => {
-    if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
-    if (activeShareToken) {
-      await fetch(`/share/stop/${encodeURIComponent(activeShareToken)}`, {method:'POST'}).catch(() => {});
-      activeShareToken = null;
-      shareCopyBtn.style.display = 'none';
-      shareAddressEl.hidden = true;
-    }
-    if (ws) ws.close();
-    if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+    const generation = ++connectionGeneration;
+    const stoppedCloud = activeCloudSession;
+    const stoppedShare = activeShareToken;
+    activeCloudSession = null;
+    activeShareToken = null;
+    if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); ws = null; }
     player.pause();
     audioEl.pause();
-    setStatus('已停止');
+    activeInput = '';
+    playStarted = false;
+    document.getElementById('lateCaption').hidden = true;
+    currentEl.textContent = '已停止';
+    currentEl.classList.remove('err');
+    startBtn.style.display = 'inline-block';
+    stopBtn.style.display = 'none';
+    shareCopyBtn.style.display = 'none';
+    shareAddressEl.hidden = true;
+    setStatus('正在停止云端处理…');
+    if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
+    if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+    if (stoppedCloud) {
+      await cloudRequest('/api/cloud/sessions/' + encodeURIComponent(stoppedCloud), 'DELETE').catch(() => {});
+    }
+    if (stoppedShare) {
+      await fetch(`/share/stop/${encodeURIComponent(stoppedShare)}`, {method:'POST'}).catch(() => {});
+    }
+    if (generation === connectionGeneration) setStatus('已停止');
   };
   const sharedPath = location.pathname.match(/^\/share\/([^/]+)$/);
   if (sharedPath) {
@@ -1106,7 +1295,7 @@
     document.title = '直播字幕';
     document.querySelector('header h1').textContent = '📺 直播字幕（观众）';
     ['url', 'engine', 'silence', 'delay', 'uploadBtn', 'start', 'stop', 'shareCopy', 'shareAddress',
-      'logBtn', 'chBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
+      'logBtn', 'chBtn', 'cloudPanel', 'languagePair', 'bilingual'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
     document.getElementById('status').textContent = '正在加入直播…';
     connect(null, decodeURIComponent(sharedPath[1]));
   }
@@ -1134,6 +1323,7 @@
     fileEl.value = '';
   });
   urlEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+  if (!sharedPath) refreshCloud();
 </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 from collections import deque
 from enum import Enum, auto
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 from threading import Event, Thread
 from typing import Optional
 
@@ -90,14 +90,17 @@ class ASRClient:
             format="pcm",
             sample_rate=16000,
             callback=callback,
+            api_key=settings.api_key,
             **recognition_kwargs,
         )
-        self._input_queue: Queue = Queue()
+        self._input_queue: Queue = Queue(maxsize=100)
         self._audio_buffer = bytearray()
         self._running = Event()
+        self._cancelled = Event()
         self._worker: Optional[Thread] = None
 
     def start(self) -> None:
+        self._cancelled.clear()
         self.state = ASRState.RUNNING
         self._running.set()
         self._recognition.start()
@@ -121,11 +124,25 @@ class ASRClient:
             return
         raise RuntimeError(f"DashScope ASR error: {message}")
 
+    def cancel(self) -> None:
+        """Discard unsent audio on user cancellation instead of billing a backlog."""
+        self._cancelled.set()
+        self.stop()
+
     def feed_audio(self, data: bytes) -> None:
-        self._input_queue.put(data)
+        self.raise_if_error()
+        if not self._running.is_set():
+            raise RuntimeError("ASR session is stopped")
+        try:
+            self._input_queue.put(data, timeout=0.5)
+        except Full:
+            raise RuntimeError("ASR audio queue is full; please check the connection") from None
 
     def _worker_loop(self) -> None:
         while True:
+            if self._cancelled.is_set():
+                self._audio_buffer.clear()
+                break
             try:
                 chunk = self._input_queue.get(timeout=0.1)
             except Empty:
@@ -136,7 +153,13 @@ class ASRClient:
             while len(self._audio_buffer) >= self.chunk_size:
                 send_data = bytes(self._audio_buffer[: self.chunk_size])
                 self._audio_buffer = self._audio_buffer[self.chunk_size :]
-                self._recognition.send_audio_frame(send_data)
-        if self._audio_buffer:
+                try:
+                    self._recognition.send_audio_frame(send_data)
+                except Exception:
+                    self._errors.put("ASR audio connection failed")
+                    self._running.clear()
+                    self._cancelled.set()
+                    return
+        if self._audio_buffer and not self._cancelled.is_set():
             self._recognition.send_audio_frame(bytes(self._audio_buffer))
             self._audio_buffer.clear()

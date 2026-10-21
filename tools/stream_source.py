@@ -31,9 +31,10 @@ class StreamSource:
     """从文件或网络流解码音频，逐块产出 16kHz mono s16le PCM。"""
 
     def __init__(self, url_or_path: str, chunk_sec: float = 0.1,
-                 http_headers: dict = None):
+                 http_headers: dict = None, start_sec: float = 0):
         self.url_or_path = url_or_path
-        self.timeline_offset_sec = 0.0
+        self.timeline_offset_sec = start_sec
+        self._start_sec = start_sec
         self.first_pts_sec = None
         options = {}
         if url_or_path.startswith(("http://", "https://")):
@@ -46,11 +47,14 @@ class StreamSource:
                 # Alignment uses the decoded PTS, never the duration of a
                 # separately fetched sliding playlist.
                 options["live_start_index"] = "-3"
-        self.container = av.open(url_or_path, options=options)
+        self.container = av.open(url_or_path, options=options,
+                                 **({"timeout": (5.0, 5.0)} if options else {}))
         if not self.container.streams.audio:
             self.container.close()
             raise ValueError(f"输入中没有音频流: {url_or_path}")
         self.stream = self.container.streams.audio[0]
+        if start_sec:
+            self.container.seek(int(start_sec * av.time_base))
         self.resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLING_RATE)
         self.chunk_samples = int(chunk_sec * SAMPLING_RATE)
         self._buf = b""
@@ -63,9 +67,17 @@ class StreamSource:
         try:
             for frame in self.container.decode(self.stream):
                 for rf in self.resampler.resample(frame):
+                    frame_start = float(rf.pts * rf.time_base) if rf.pts is not None else None
+                    samples = rf.to_ndarray()[0]
+                    if self._start_sec and frame_start is not None:
+                        skip = max(0, int(round((self._start_sec - frame_start) * SAMPLING_RATE)))
+                        if skip >= len(samples):
+                            continue
+                        samples = samples[skip:]
+                        self._start_sec = 0
                     if self.first_pts_sec is None and rf.pts is not None and rf.time_base is not None:
                         self.first_pts_sec = float(rf.pts * rf.time_base)
-                    self._buf += rf.to_ndarray()[0].tobytes()
+                    self._buf += samples.tobytes()
                     while len(self._buf) >= self.chunk_samples * 2:
                         chunk = self._buf[: self.chunk_samples * 2]
                         self._buf = self._buf[self.chunk_samples * 2:]

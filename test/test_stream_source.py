@@ -27,3 +27,17 @@ def test_hls_clock_uses_decoded_pts_not_sliding_playlist_duration(monkeypatch):
     assert source.timeline_offset_sec == 0
     options = av_open.call_args.kwargs["options"]
     assert options["live_start_index"] == "-3"
+def test_seek_starts_decoding_at_requested_local_position(tmp_path):
+    import wave
+    from stream_source import StreamSource
+
+    sample = tmp_path / "two-seconds.wav"
+    with wave.open(str(sample), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16000)
+        output.writeframes(b"\x00\x00" * 32000)
+    source = StreamSource(str(sample), start_sec=0.5)
+    assert source.timeline_offset_sec == 0.5
+    audio = b"".join(source.iter_chunks())
+    assert len(audio) == 48000
