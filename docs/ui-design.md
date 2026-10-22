@@ -1,5 +1,7 @@
 # Playback and caption design
 
+> Current scope: [the original-language caption PRD](plans/2026-10-21-live-translation-prd.md) defines the viewing behavior and acceptance targets. Earlier translation layouts, reading queues and timing budgets below are historical implementation records. Current source-language evidence is in “Direction change, 2026-10-22”; new failure budgets in the PRD remain targets until implemented and verified.
+
 The product is a Windows browser player for people watching foreign-language live streams and local videos. The primary job is reading translated speech while watching.
 
 Palette: canvas #10151c, player #000000, surface #1b2430, text #edf2f7, muted #a5b1c2, action #84b5ff. Typography: Segoe UI Variable / Microsoft YaHei UI for controls, Segoe UI / Microsoft YaHei for readable captions.
