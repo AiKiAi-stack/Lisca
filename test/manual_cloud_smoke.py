@@ -81,7 +81,7 @@ if __name__ == "__main__":
     make_video(video_path)
     webui._CLOUD = CloudConfigStore(logs / "smoke-config.bin")
     webui._CLOUD.update({"api_key": "test-only-no-cloud"})
-    webui.create_engine = lambda _name, **kw: FakeEngine(kw["language_hints"][0])
+    webui.create_engine = lambda _name, **kw: FakeEngine((kw.get("language_hints") or ["zh"])[0])
     webui.QwenTranslator = FakeTranslator
     original_index = webui.index
     # Make the test double conspicuous in screenshots.
@@ -89,8 +89,8 @@ if __name__ == "__main__":
     async def smoke_banner(request, call_next):
         if request.url.path == "/":
             response = original_index()
-            body = response.body.decode().replace("🎙 直播与视频翻译字幕",
-                "测试替身 · 中英翻译流程（未调用真实 API）")
+            body = response.body.decode().replace("<h1>原文字幕</h1>",
+                "<h1>测试替身 · 原文字幕（未调用真实 API）</h1>")
             return webui.HTMLResponse(body, headers={"Cache-Control": "no-store"})
         return await call_next(request)
 

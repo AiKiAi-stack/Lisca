@@ -3,11 +3,11 @@ function browser(){
  const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
  const element=()=>({textContent:'',hidden:true,dataset:{},classList:{contains:()=>false},style:{},remove(){}});
  const current=element(), late=element();
- const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,cloudResumeRequired:false,pauseStartedAt:null,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:null},fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
+ const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:null},fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
  const moduleFile=path.join(__dirname,'../tools/webui_static/caption_presenter.js');
  if(fs.existsSync(moduleFile)){context.CaptionPresenter=require(moduleFile).CaptionPresenter;context.lines=()=>[];context.captionPresenter=new context.CaptionPresenter();}
  vm.createContext(context);
- vm.runInContext(html.slice(html.indexOf('function syncSubtitle()'),html.indexOf('function onPreview(')),context);
+ vm.runInContext(html.slice(html.indexOf('function captionSegments('),html.indexOf('function onPreview(')),context);
  return {context,current,late,push:cue=>context.onSubtitle({type:'subtitle',translated:true,sentence_id:1,beg:0,end:2,is_final:true,text:'这句译文必须出现在视频内。',...cue}),tick(ms){context.now=ms;context.syncSubtitle();}};
 }
 test('late complete translations appear on the video rather than disappearing',()=>{const b=browser();b.push({});b.tick(0);assert.match(b.current.textContent,/这句译文/);assert.equal(b.late.hidden,true);});
@@ -39,3 +39,6 @@ test('cloud failures during normal playback remain visible errors rather than si
 
 test('a long local pause reconnects before reusing a potentially expired ASR socket',()=>{const b=browser();b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),true);assert.deepEqual(Array.from(b.context.reconnected),['test.mp4',null,10]);});
 test('a short local pause continues on the existing open recognition connection',()=>{const b=browser();b.context.pauseStartedAt=0;b.context.now=3000;assert.equal(b.context.resumeClosedCloudAfterPause(),false);assert.equal(b.context.reconnected,undefined);});
+
+test('original captions follow source word times rather than the translated reading queue',()=>{const b=browser();b.context.player.currentTime=.2;b.push({translated:false,beg:0,end:10,text:'别太装。我们还是很期待的。',words:[[0,.2,'别'],[.2,.4,'太'],[.4,.8,'装'],[8,8.2,'我'],[8.2,8.4,'们'],[8.4,8.6,'还'],[8.6,8.8,'是'],[8.8,9,'很'],[9,9.2,'期'],[9.2,9.4,'待'],[9.4,10,'的']]});b.tick(0);assert.equal(b.current.textContent,'别太装。');b.context.player.currentTime=2;b.tick(100);assert.equal(b.current.textContent,'');b.context.player.currentTime=8.5;b.tick(200);assert.equal(b.current.textContent,'我们还是很期待的。');assert.equal(b.context.captionPresenter.queue.length,0);});
+test('completed original captions resume locally without opening another billed session',()=>{const b=browser();b.context.originalCaptionsComplete=true;b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),false);assert.equal(b.context.reconnected,undefined);});

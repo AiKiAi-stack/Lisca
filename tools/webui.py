@@ -101,8 +101,12 @@ async def create_cloud_session(request: Request):
         data = await request.json()
         if not isinstance(data, dict):
             raise CloudError("会话格式无效")
-        source, target = data.get("source"), data.get("target")
-        validate_pair(source, target)
+        mode = data.get("mode", "transcribe")
+        source, target = data.get("source", "auto"), data.get("target")
+        if mode == "translate":
+            validate_pair(source, target)
+        elif mode != "transcribe" or source not in ("auto", "zh", "en"):
+            raise CloudError("请选择自动识别、中文或英文原文字幕")
         url = data.get("url", "")
         if not isinstance(url, str) or not url.strip() or len(url) > 8192:
             raise CloudError("请输入直播地址或选择本地视频")
@@ -124,9 +128,9 @@ async def create_cloud_session(request: Request):
                 raise CloudError("待处理会话过多，请先停止当前会话")
             token = secrets.token_urlsafe(32)
             _CLOUD_JOBS[token] = {"url": url.strip(), "config": config,
-                "source": source, "target": target, "start_at": position,
+                "source": source, "target": target, "mode": mode, "start_at": position,
                 "stop": RequestStop(), "expires": now + 60, "active": False}
-        return {"session": token}
+        return {"session": token, "mode": mode}
     except (ValueError, TypeError) as exc:
         message = str(exc) if isinstance(exc, CloudError) else "会话参数无效"
         raise HTTPException(400, message) from None
@@ -147,19 +151,13 @@ def check_cloud_connection():
     if not config.configured:
         raise HTTPException(400, "请先填写 Key")
     engine = None
-    translator = None
     try:
-        engine = create_engine("aliyun-funasr", api_key=config.api_key)
-        translator = QwenTranslator(config, "en", "zh")
-        list(translator.translate("Hello", threading.Event()))
+        engine = create_engine("aliyun-funasr", api_key=config.api_key, language_hints=[])
         engine.poll()
-        return {"ok": True, "message": "翻译请求成功；识别服务已发起连接，但认证和语音识别需实际播放验证"}
-    except Exception as exc:
-        message = str(exc) if isinstance(exc, CloudError) else "识别服务连接失败，请检查 Key、权限和网络"
-        raise HTTPException(400, message) from None
+        return {"ok": True, "message": "识别服务已发起连接；实际认证和语音识别将在播放时验证"}
+    except Exception:
+        raise HTTPException(400, "识别服务连接失败，请检查 Key、权限和网络") from None
     finally:
-        if translator:
-            translator.close()
         if engine:
             engine.close()
 
@@ -637,12 +635,15 @@ async def ws_endpoint(ws: WebSocket):
     engine_name = ws.query_params.get("engine", "faster-whisper").strip()
     if cloud:
         engine_name = "aliyun-funasr"
+    original_mode = bool(cloud and cloud.get("mode") == "transcribe")
     silence = ws.query_params.get("silence", "400").strip()
     delay = ws.query_params.get("delay", "1").strip()
     try:
         delay_sec = max(0.1, min(float(delay), 30.0))
     except ValueError:
         delay_sec = 1.0
+    if original_mode:
+        delay_sec = 0.1
     if not url:
         await ws.send_json({"type": "error", "message": "缺少 url 参数"})
         await ws.close()
@@ -698,13 +699,15 @@ async def ws_endpoint(ws: WebSocket):
         pending_sentences = []
         translation = None
         translation_clauses = {}
+        caption_seen = False
 
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
+            nonlocal caption_seen
             beg, end, text, words = o[:4]
             is_final = bool(o[4]) if len(o) > 4 else True
             sentence_id = o[5] if len(o) > 5 else None
-            if text or (translation and is_final and sentence_id is not None):
+            if text or ((translation or original_mode) and is_final and sentence_id is not None):
                 if translation:
                     key = sentence_id if sentence_id is not None else round(beg, 1)
                     collector = translation_clauses.setdefault(key, TranslationClauses(beg))
@@ -720,6 +723,10 @@ async def ws_endpoint(ws: WebSocket):
                     if is_final:
                         translation_clauses.pop(key, None)
                     return
+                if original_mode and not text and is_final:
+                    pending_sentences[:] = [item for item in pending_sentences if item["id"] != sentence_id]
+                    put({"type": "caption_remove", "sentence_id": sentence_id, "revision": 0})
+                    return
                 # Use the API sentence id when available. Nearby sentence starts
                 # can be less than a second apart and must not share one hold.
                 match = next((i for i, item in enumerate(pending_sentences)
@@ -730,6 +737,7 @@ async def ws_endpoint(ws: WebSocket):
                                    if item["id"] is None), default=(float("inf"), None))
                     match = nearest[1] if nearest[0] < 0.75 else None
                 if is_final:
+                    caption_seen = True
                     if match is not None:
                         pending_sentences.pop(match)
                 elif match is None:
@@ -741,6 +749,7 @@ async def ws_endpoint(ws: WebSocket):
                     item = pending_sentences[match]
                     item["beg"] = min(item["beg"], beg)
                     for clause_beg, clause_end, clause_text in item["preview"].observe(text, words):
+                        caption_seen = True
                         put({"type": "preview", "beg": clause_beg + timeline_offset,
                              "end": clause_end + timeline_offset, "text": clause_text,
                              "sentence_id": sentence_id})
@@ -784,7 +793,7 @@ async def ws_endpoint(ws: WebSocket):
                     engine_kwargs["max_sentence_silence"] = 400
                 if cloud:
                     engine_kwargs.update(api_key=cloud["config"].api_key,
-                                         language_hints=[cloud["source"]])
+                                         language_hints=[] if cloud["source"] == "auto" else [cloud["source"]])
             if urlparse(real_url).path.lower().endswith(".m3u8"):
                 put({"type": "status", "message": f"正在检查直播源: {real_url[:60]}"})
             source_kwargs = {"http_headers": http_headers}
@@ -804,10 +813,11 @@ async def ws_endpoint(ws: WebSocket):
                     return
                 phase = "recognition"
                 engine = create_engine(engine_name, **engine_kwargs)
-                if cloud:
+                if cloud and not original_mode:
                     translation = TranslationSession(QwenTranslator(cloud["config"],
                         cloud["source"], cloud["target"]), put, stop)
                 batch_mode = getattr(engine, "batch_mode", False)
+                prefetch_local = original_mode and os.path.isfile(real_url)
                 if batch_mode and not os.path.isfile(real_url):
                     raise ValueError("FunASR Vulkan（文件模式）只支持本地媒体文件；直播流请使用实时引擎")
                 put({"type": "status", "message": f"引擎就绪，开始拉流: {real_url[:60]}"})
@@ -815,7 +825,7 @@ async def ws_endpoint(ws: WebSocket):
                 # 音频持续送入 ASR；视频元素同时承载 HLS 音轨，并保持在已送入音频的
                 # delay 秒之后播放。这样延迟覆盖整个画面和声音，而非只延迟字幕。
                 ready_sent = False
-                if cloud:
+                if cloud and not original_mode:
                     put({"type": "ready", "delay": 0, "start_at": timeline_offset,
                          "progressive": True})
                     ready_sent = True
@@ -841,7 +851,7 @@ async def ws_endpoint(ws: WebSocket):
                         break
                     # Pace by the actual PCM duration (including a short tail).
                     chunk_sec = len(chunk) / (16000 * 2)
-                    if not batch_mode:
+                    if not batch_mode and not prefetch_local:
                         wait = chunk_sec - (time.monotonic() - last)
                         if wait > 0:
                             if cloud and stop.wait(wait):
@@ -860,7 +870,7 @@ async def ws_endpoint(ws: WebSocket):
                         if o2[0] is None:
                             break
                         emit(o2)
-                    if not batch_mode and not cloud:
+                    if not batch_mode and (not cloud or original_mode):
                         # Keep the configured live delay as a floor. If ASR has an
                         # unfinished sentence, hold before it; when final arrives,
                         # resume at real time without jumping over buffered A/V.
@@ -872,10 +882,11 @@ async def ws_endpoint(ws: WebSocket):
                         )
                         playback_ceiling = max(playback_ceiling, min(feed_target, pending_target))
                         put({"type": "buffer", "play_at": playback_ceiling})
-                        if not ready_sent and fed_sec >= delay_sec \
+                        if not ready_sent and (not original_mode or caption_seen) and fed_sec >= delay_sec \
                                 and playback_ceiling >= timeline_offset + 0.25:
                             put({"type": "ready", "delay": delay_sec,
-                                 "start_at": timeline_offset})
+                                 "start_at": timeline_offset, "original": original_mode,
+                                 "buffered": True})
                             ready_sent = True
                 if stop.is_set():
                     return
@@ -893,7 +904,9 @@ async def ws_endpoint(ws: WebSocket):
                 # Batch engines finish the whole file before the player starts.
                 # Send ready only after subtitles have reached the browser.
                 if not ready_sent:
-                    put({"type": "ready", "delay": delay_sec, "start_at": timeline_offset})
+                    put({"type": "ready", "delay": delay_sec, "start_at": timeline_offset,
+                         "original": original_mode, "buffered": not bool(translation),
+                         "prepared": prefetch_local})
                     ready_sent = True
             finally:
                 src.close()

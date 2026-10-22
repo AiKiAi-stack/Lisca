@@ -16,7 +16,7 @@ DIRECTORY = Path(__file__).resolve().parents[1] / "logs" / "translation-acceptan
 
 async def run(source, media_url=None, seconds=None, label=None):
     target = "en" if source == "zh" else "zh"
-    payload = {"url": media_url or str(DIRECTORY / f"{source}.mp4"), "source": source, "target": target}
+    payload = {"mode": "translate", "url": media_url or str(DIRECTORY / f"{source}.mp4"), "source": source, "target": target}
     request = Request("http://127.0.0.1:8002/api/cloud/sessions",
         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
     with urlopen(request, timeout=10) as response:

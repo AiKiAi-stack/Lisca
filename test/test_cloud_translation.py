@@ -36,10 +36,10 @@ def test_cloud_configuration_is_redacted_and_language_pairs_are_explicit():
 def test_cloud_session_validates_pair_before_any_media_or_api_request():
     with TestClient(webui.app) as client:
         client.put("/api/cloud", json={"api_key": "sk-private-test"})
-        rejected = client.post("/api/cloud/sessions", json={
+        rejected = client.post("/api/cloud/sessions", json={"mode": "translate",
             "url": "http://media.test/live.m3u8", "source": "fr", "target": "zh"})
         assert rejected.status_code == 400
-        valid = client.post("/api/cloud/sessions", json={
+        valid = client.post("/api/cloud/sessions", json={"mode": "translate",
             "url": "http://media.test/live.m3u8", "source": "en", "target": "zh"})
         assert valid.status_code == 200
         assert "sk-private-test" not in valid.text
@@ -103,7 +103,7 @@ def test_cloud_ws_emits_complete_stable_clause_before_sentence_final(monkeypatch
     monkeypatch.setattr(webui, "QwenTranslator", Translator)
     with TestClient(webui.app) as client:
         client.put("/api/cloud", json={"api_key": "sk-private-test"})
-        ticket = client.post("/api/cloud/sessions", json={
+        ticket = client.post("/api/cloud/sessions", json={"mode": "translate",
             "url": "https://media.test/video.mp4", "source": "en", "target": "zh"}).json()
         with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
             events = []
@@ -194,7 +194,7 @@ def test_saved_key_is_encrypted_and_can_be_deleted(tmp_path):
 def test_stop_invalidates_unstarted_ticket_without_starting_apis():
     with TestClient(webui.app) as client:
         client.put("/api/cloud", json={"api_key": "private"})
-        ticket = client.post("/api/cloud/sessions", json={
+        ticket = client.post("/api/cloud/sessions", json={"mode": "translate",
             "url": "https://media.test/video.mp4", "source": "zh", "target": "en"}).json()
         client.delete("/api/cloud/sessions/" + ticket["session"])
         with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
@@ -318,7 +318,7 @@ def test_empty_final_asr_revision_withdraws_a_previously_released_translation(mo
     monkeypatch.setattr(webui, "QwenTranslator", Translator)
     with TestClient(webui.app) as client:
         client.put("/api/cloud", json={"api_key": "sk-private-test"})
-        ticket = client.post("/api/cloud/sessions", json={"url": "https://media.test/video.mp4",
+        ticket = client.post("/api/cloud/sessions", json={"mode": "translate","url": "https://media.test/video.mp4",
             "source": "en", "target": "zh"}).json()
         with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
             events = []

@@ -1,3 +1,5 @@
+> 历史翻译实现记录：2026-10-22 起主界面和默认会话改为原文字幕，当前行为以 [ADR 0008](../adr/0008-original-language-captions.md) 为准。
+
 # 云端翻译字幕：实现与验收记录
 
 日期：2026-10-21（Asia/Shanghai）。对应 [已批准 PRD](2026-10-21-live-translation-prd.md)。

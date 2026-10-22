@@ -8,28 +8,27 @@
 </head>
 <body>
 <header>
- <div class="brand-row"><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>直播翻译</h1><small>让语言跟上你的观看</small></div></div><button id="settingsBtn" class="quiet"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 3-1 3-3 1-3 3 2 2-1 4 3 3 3-1 2 3 4-1 1-3 3-1 1-4-3-2 1-3-3-3-3 1z"/></svg>设置</button></div>
- <div class="source-row"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或打开本地视频" autocomplete="off"><button id="uploadBtn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM3 7V4h6l3 3"/></svg>打开文件</button><label class="sr-only" for="languagePair">翻译方向</label><select id="languagePair"><option value="zh-en">中文 → English</option><option value="en-zh">English → 中文</option></select><button id="start" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>开始翻译</button><button id="stop">停止翻译</button></div>
+ <div class="brand-row"><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>原文字幕</h1><small>识别声音，保留原话</small></div></div><button id="settingsBtn" class="quiet"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 3-1 3-3 1-3 3 2 2-1 4 3 3 3-1 2 3 4-1 1-3 3-1 1-4-3-2 1-3-3-3-3 1z"/></svg>设置</button></div>
+ <div class="source-row"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或打开本地视频" autocomplete="off"><button id="uploadBtn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM3 7V4h6l3 3"/></svg>打开文件</button><span id="modeBadge" class="mode-badge">原文字幕 · 自动识别</span><button id="start" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>生成字幕</button><button id="stop">停止识别</button></div>
  <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
 </header>
 <main>
- <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开内容，开始看懂</h2><p>直播链接与本地视频，都在这里配上翻译字幕</p></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
- <div class="player-footer"><div id="status" role="status">选择翻译方向，然后打开内容</div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关翻译字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与翻译字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
+ <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开内容，生成原文字幕</h2><p>中文语音出中文字幕，英文语音出英文字幕</p></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
+ <div class="player-footer"><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关原文字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
  <div id="lateCaption" hidden></div>
 </main>
 <dialog id="settingsDialog" aria-labelledby="settingsDialogTitle"><div class="dialog-head"><h2 id="settingsDialogTitle">设置</h2><button class="quiet" data-close="settingsDialog" aria-label="关闭设置">关闭</button></div><div class="dialog-body"><div class="tabs" role="tablist" aria-label="设置分类"><button role="tab" aria-selected="true" aria-controls="cloudSettings" data-pane="cloudSettings">云端服务</button><button role="tab" aria-selected="false" aria-controls="captionSettings" data-pane="captionSettings">字幕</button><button role="tab" aria-selected="false" aria-controls="moreSettings" data-pane="moreSettings">更多</button></div><section id="cloudSettings" class="setting-section">  <section id="cloudPanel">
     <h3>阿里云百炼（中国内地）</h3>
-    <p>语音识别使用 FunASR，翻译使用 Qwen-MT。音频和识别文本将发送给百炼，费用由你的 API 账户承担。</p>
+    <p>使用 FunASR 识别音频，字幕保留语音原文。音频会发送给百炼，费用由你的 API 账户承担；本模式不调用翻译服务。</p>
     <label>API Key <input id="apiKey" type="password" autocomplete="off" placeholder="填写百炼 API Key，不会放入链接或日志"></label>
-    <label>翻译 Key（可选）<input id="translationKey" type="password" autocomplete="off" placeholder="留空使用同一 Key"></label>
     <label><input id="saveKey" type="checkbox"> 通过 Windows 加密保存到本机（默认仅本次运行）</label>
     <button id="saveCloud">应用配置</button>
     <button id="checkCloud">检查连接（会调用云端 API）</button>
     <button id="clearCloud">删除配置</button>
     <span id="cloudState" role="status">尚未配置</span>
-    <p style="font-size:12px">请先在百炼开通 fun-asr-realtime 与 qwen-mt-flash。检查连接不代表实际语音效果；费用以服务商账单为准。</p>
+    <p style="font-size:12px">请先在百炼开通 fun-asr-realtime。检查连接不代表实际语音效果；费用以服务商账单为准。</p>
   </section>
-</section><section id="captionSettings" class="setting-section" hidden><label><input id="bilingual" type="checkbox">同时显示原文（首行）</label>  <div id="stylePanel">
+</section><section id="captionSettings" class="setting-section" hidden><input id="bilingual" type="checkbox" hidden>  <div id="stylePanel">
     <label>字号 <input type="range" id="sizeRange" min="16" max="64" step="1" value="30"><span class="val" id="sizeVal">30px</span></label>
     <label>位置 <input type="range" id="posRange" min="0" max="30" step="1" value="12"><span class="val" id="posVal">12%</span></label>
     <label>字体
@@ -43,11 +42,11 @@
     </label>
     <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 字体系统默认">重置默认</button>
   </div>
-<p>正式字幕以完整短句出现。长句会分页，完整原文与译文可在字幕记录查看。</p></section><section id="moreSettings" class="setting-section" hidden><label for="engine">字幕服务</label>  <select id="engine">
-    <option value="aliyun-funasr" selected>云端翻译字幕</option>
+<p>字幕按语音时间显示完整短句；长句按时间分段，完整识别内容可在字幕记录查看。</p></section><section id="moreSettings" class="setting-section" hidden><label for="engine">字幕服务</label>  <select id="engine">
+    <option value="aliyun-funasr" selected>云端原文字幕</option>
     <option value="demo">演示字幕（无识别，仅验证链路）</option>
   </select>
-<label for="silence">语音断句</label>  <select id="silence" title="断句灵敏度：语音后静音多久判定一句结束（越小切句越频繁，仅 API 引擎生效）">
+<label for="sourceLanguage">语音语言</label><select id="sourceLanguage"><option value="auto" selected>自动识别（原语言输出）</option><option value="zh">中文</option><option value="en">English</option></select><label for="silence">语音断句</label>  <select id="silence" title="断句灵敏度：语音后静音多久判定一句结束（越小切句越频繁，仅 API 引擎生效）">
     <option value="200">断句：极灵敏 200ms</option>
     <option value="400" selected>断句：灵敏 400ms</option>
     <option value="800">断句：标准 800ms</option>
@@ -77,11 +76,15 @@
   const engineEl = document.getElementById('engine');
   const silenceEl = document.getElementById('silence');
   const delayEl = document.getElementById('delay');
-  const languagePairEl = document.getElementById('languagePair');
+  const sourceLanguageEl = document.getElementById('sourceLanguage');
+  sourceLanguageEl.onchange = () => { document.getElementById('modeBadge').textContent = '原文字幕 · ' + ({auto:'自动识别',zh:'中文',en:'English'}[sourceLanguageEl.value]); };
   const bilingualEl = document.getElementById('bilingual');
   const cloudStateEl = document.getElementById('cloudState');
   let activeCloudSession = null;
   let cloudPlayback = false;
+  let originalCaptionMode = false;
+  let originalCaptionsComplete = false;
+  let useCaptionBuffer = false;
   let cloudResumeRequired = false;
   let pauseStartedAt = null;
   let connectionGeneration = 0;
@@ -107,10 +110,8 @@
   document.getElementById('saveCloud').onclick = async () => {
     try {
       await cloudRequest('/api/cloud', 'PUT', {api_key:document.getElementById('apiKey').value,
-        translation_key:document.getElementById('translationKey').value,
         save:document.getElementById('saveKey').checked});
       document.getElementById('apiKey').value = '';
-      document.getElementById('translationKey').value = '';
       await refreshCloud();
     } catch (error) { cloudStateEl.textContent = error.message; }
   };
@@ -126,7 +127,6 @@
     try {
       await cloudRequest('/api/cloud', 'DELETE');
       document.getElementById('apiKey').value = '';
-      document.getElementById('translationKey').value = '';
       await refreshCloud();
       setStatus('配置已删除，云端会话已停止');
     } catch (error) { cloudStateEl.textContent = error.message; }
@@ -714,6 +714,7 @@
     return true;
   }
   function resumeClosedCloudAfterPause() {
+    if (originalCaptionsComplete) { cloudResumeRequired = false; pauseStartedAt = null; return false; }
     const localCloud = cloudPlayback && !sharedViewerActive && activeInput && !/^https?:/i.test(activeInput);
     const longPause = pauseStartedAt != null && performance.now() - pauseStartedAt >= 15000;
     const disconnected = !ws || ws.readyState > 1;
@@ -835,6 +836,9 @@
     const generation = ++connectionGeneration;
     cloudResumeRequired = false;
     pauseStartedAt = null;
+    originalCaptionsComplete = false;
+    originalCaptionMode = false;
+    useCaptionBuffer = false;
     const previousCloud = activeCloudSession;
     const previousShare = activeShareToken;
     activeCloudSession = null;
@@ -895,6 +899,7 @@
     historyItems = [];
     historyEl.innerHTML = '';
     document.getElementById('lateCaption').hidden = true;
+    document.getElementById('captionLag').hidden = true;
     playStarted = false;
     holdingForSync = false;
     holdingForBuffer = false;
@@ -929,8 +934,7 @@
     if (!sharedViewerActive) {
       if (cloudPlayback) {
         try {
-          const [source, target] = languagePairEl.value.split('-');
-          const ticket = await cloudRequest('/api/cloud/sessions', 'POST', {url, source, target, start_at:startAt});
+          const ticket = await cloudRequest('/api/cloud/sessions', 'POST', {url, mode:'transcribe', source:sourceLanguageEl.value, start_at:startAt});
           if (generation !== connectionGeneration) {
             await cloudRequest('/api/cloud/sessions/' + ticket.session, 'DELETE');
             return;
@@ -983,7 +987,7 @@
     startBtn.style.display = 'none';
     stopBtn.style.display = sharedViewerActive ? 'none' : 'inline-block';
     currentEl.classList.remove('err');
-    setStatus('连接中…');
+    setStatus(cloudPlayback ? '正在识别音频，原文字幕就绪后播放…' : '连接中…');
     // 画面走 video，声音按源类型分流（ticket-19）：HLS 音视频混在 TS 流里，
     // 视频元素直接出声；B站 DASH / 本地文件走隐藏 audio（音视频分离）。
     // 不立即播放：等待后端按所选 HLS 延迟对齐好时间轴。
@@ -1066,6 +1070,7 @@
         removed.forEach(item => item?.remove());
         historyItems = historyItems.filter(item => !removed.has(item));
         subs = subs.filter(s => s.sentenceId !== msg.sentence_id);
+        previewSubs = previewSubs.filter(s => s.sentenceId !== msg.sentence_id);
         syncSubtitle();
       } else if (msg.type === 'subtitle') {
         onSubtitle(msg);
@@ -1077,6 +1082,8 @@
           syncPlaybackToBuffer();
         }
       } else if (msg.type === 'ready') {
+        originalCaptionMode = !!msg.original;
+        useCaptionBuffer = !!msg.buffered;
         if (msg.progressive) {
           cloudPlayback = true;
           playbackLimit = null;
@@ -1092,8 +1099,8 @@
         }
         playStarted = true;
         holdingForSync = false;
-        if (currentEl.textContent.includes('字幕准备中')) currentEl.textContent = '';
-        setStatus(msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
+        if (currentEl.textContent.includes('准备字幕')) currentEl.textContent = '';
+        setStatus(msg.original ? '原文字幕已就绪，开始播放' : msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
         logEvent('ready', `附加播放缓冲=${msg.delay}s，开始播放`);
         player.play().catch(() => {});
         // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 时间轴损坏时，
@@ -1111,8 +1118,9 @@
         setStatus('出错', true);
         playStarted = true;  // 解除播放拦截，允许手动看片（无字幕）
       } else if (msg.type === 'end') {
+        originalCaptionsComplete = originalCaptionMode && !isHls && !currentEl.classList.contains('err');
         if (cloudResumeRequired) setStatus('识别连接已关闭；继续播放时将从暂停位置重新连接');
-        else if (!currentEl.classList.contains('err')) setStatus('音频处理结束');
+        else if (!currentEl.classList.contains('err')) setStatus(originalCaptionsComplete ? '原文字幕已生成，可播放或跳转' : '音频处理结束');
         playStarted = true;  // 同上（静默视频等零字幕场景）
         // Source/API 已结束，没有更多 ASR 水位可以更新；播放剩余已缓冲的 A/V。
         playbackLimit = Infinity;
@@ -1141,7 +1149,7 @@
   }
 
   function syncPlaybackToBuffer() {
-    if (cloudPlayback) return;
+    if (cloudPlayback && !useCaptionBuffer) return;
     if (!playStarted || playbackLimit == null || !/\.m3u8/i.test(urlEl.value.trim())) return;
     const t = player.currentTime;
     if (!player.paused && t >= playbackLimit - 0.03) {
@@ -1235,6 +1243,7 @@
       syncSubtitle();
       return;
     }
+    if (originalCaptionsComplete) { seekPending = false; syncSubtitle(); return; }
     if (cloudPlayback && !sharedViewerActive && activeInput && !/^https?:/i.test(activeInput)) {
       const destination = player.currentTime;
       connect(activeInput, null, destination);
@@ -1298,7 +1307,7 @@
     document.title = '直播字幕';
     document.querySelector('header h1').textContent = '直播字幕（观众）';
     ['url', 'engine', 'silence', 'delay', 'uploadBtn', 'start', 'stop', 'shareCopy', 'shareAddress',
-      'logBtn', 'chBtn', 'cloudPanel', 'languagePair', 'bilingual'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
+      'logBtn', 'chBtn', 'cloudPanel', 'sourceLanguage', 'bilingual'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
     document.getElementById('status').textContent = '正在加入直播…';
     connect(null, decodeURIComponent(sharedPath[1]));
   }

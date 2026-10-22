@@ -27,3 +27,11 @@ Local-file playback preserves every pending completed page, including pages read
 - Full mobile-browser rendering, a 30-minute stability run, zero provider latency and public-release readiness are not claimed.
 
 Final checks: 121 Python tests passed; 20 actual-page/presenter Node regressions passed; repository-wide Pylint errors-only passed with the CI path/extension settings. Real local pause lasted 35.288 seconds at media time 4.264288, preserving the complete caption; resume generated new translations at 5.0–8.3 and 8.7–10.8 seconds and ended without error. Evidence is in caption-fix-pause-resume.json.
+
+## Direction change, 2026-10-22
+
+The current UI defaults to original-language transcription, per ADR-0008. Translation direction/keys/bilingual controls are removed from the viewing flow. Original captions use source timestamps instead of the translation reading queue; completed local recognition supports seek/pause without another API session. Real acceptance now uses the user-provided uploads/output.mp4, retaining screenshots at 5.1204 and 23.7948 seconds. Earlier translation validation above is historical, not the current product contract.
+
+Current checks: 127 Python tests and 22 Node regressions passed. The Chinese user file and a separate English audio sample returned source-language text with zero translated caption events. Actual recognition and browser screenshots are retained in logs/original-caption-acceptance; output.original.srt contains the same 16 timestamped display segments for the user video. These checks do not imply error-free recognition or live-stream acceptance.
+
+Static checks: CI-managed Python files passed Pylint errors-only (including both new Python files); inline JavaScript syntax and git diff --check passed. An initial broader lint command also included vendored whisper_streaming, which CI explicitly excludes, and reported existing upstream errors and absent optional local-model packages. No claim is made that vendored files pass that broader command.

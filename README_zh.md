@@ -1,22 +1,22 @@
 [English](./README.md) | [中文](./README_zh.md)
 
-# 直播与视频翻译字幕
+# 直播与视频原文字幕
 
-在自己的 Windows 电脑运行，通过浏览器观看直播或本地视频，并显示中文→英文或英文→中文的翻译字幕。首版云端模式使用阿里云百炼 FunASR 和 Qwen-MT Flash，用户提供自己的中国内地 API Key。
+在自己的 Windows 电脑运行，通过浏览器观看直播或本地视频，识别音频并显示原语言字幕：中文语音显示中文，英文语音显示英文。当前优先做好原文识别与同步，主界面已暂停跨语言翻译。云端模式使用阿里云百炼 FunASR，用户提供自己的中国内地 API Key。
 
 ## Windows 开始使用
 
 1. 安装 64 位 Python 3.10–3.12（推荐 3.12，启用 Python Launcher），将本仓库放到有空间的目录，例如 D 盘。
 2. 双击 `start-windows.cmd`。首次启动会在项目的 `.venv` 安装 WebUI 依赖，不下载本地模型；随后打开 `http://127.0.0.1:8002/`。
-3. 在页面填写并应用百炼 Key，确保已开通 `fun-asr-realtime` 和 `qwen-mt-flash`。识别、翻译可使用同一 Key，也可分别填写。
-4. 选择中文→英文或英文→中文，输入直播链接或选择本地视频，点击「开始」。频道列表请通过「频道」入口选台。
-5. 可开启双语字幕、调整样式，暂停/继续或停止；本地视频跳转会重新建立该位置的识别会话。
+3. 在「设置」填写并应用百炼 Key，确保已开通 `fun-asr-realtime`。当前识别与连接检查均不需要翻译模型。
+4. 输入直播链接或打开本地视频，点击「生成字幕」。默认自动识别语种，也可在设置中指定中文或英文。
+5. 播放器按音频时间显示短句。已完成识别的本地视频可暂停、继续及跳转并复用字幕；识别未完成时跳转可能需要重新建立识别会话。
 
-音频及识别文本会发送给百炼，费用由用户 API 账户承担。“检查连接”也会发起云端请求。Key 默认只在本次运行中使用，可选择通过 Windows DPAPI 加密保存；“删除配置”会删除保存文件并停止云端会话。Key 不存入浏览器 localStorage、URL 或普通日志。
+音频会发送给百炼，费用由用户 API 账户承担。「检查连接」也会连接云端识别服务。Key 默认只在本次运行中使用，可选择通过 Windows DPAPI 加密保存；「删除配置」会删除保存文件并停止云端会话。Key 不存入浏览器 localStorage、URL 或普通日志。
 
-直播和翻译存在处理时间。当前句可以逐步修正；翻译模式不再等待整句终稿才允许播放，较慢的译文会显示迟到记录，不宣称零延迟或已经达到严格同步。本机中英双向短视频已完成真实 API 验证；公共直播可用性、质量指标及 30 分钟稳定性仍需继续验收，详见[本次交付与验收记录](docs/plans/2026-10-21-translation-implementation.md)。
+本地视频会先读取音频以生成字幕，首次播放可能等待识别结果；本机对用户提供的 30.12 秒视频实测约 8.1 秒完成识别，这不是所有文件的固定耗时。正式字幕按语音时间切成短句，不逐词滚动，也不把迟到的长段字幕排队挤到后续画面。识别仍可能有错字或截断；公共直播、其他语种和长时间稳定性仍需分别验证。详见[当前产品决策](docs/adr/0008-original-language-captions.md)与[界面及验收记录](docs/ui-design.md)。
 
-平台页面与公开 IPTV 清单仅是来源候选，不能保证所有地址始终可播；已知网络、账号和地区限制需按来源验证。参见[来源调研](docs/research/2026-10-21-media-source-baseline.md)、[云端接口说明](docs/research/2026-10-21-cloud-translation-api.md)和[产品需求](docs/plans/2026-10-21-live-translation-prd.md)。
+平台页面与公开 IPTV 清单仅是来源候选，不能保证所有地址始终可播；已知网络、账号和地区限制需按来源验证。参见[来源调研](docs/research/2026-10-21-media-source-baseline.md)和[产品需求](docs/plans/2026-10-21-live-translation-prd.md)。
 
 启动诊断：从项目目录运行 `.venv\Scripts\python.exe tools\windows_launcher.py --check`，或直接使用 `.venv\Scripts\python.exe tools\webui.py --port 8002`；依赖清单是 `requirements-webui.txt`。启动日志位于 `logs/webui-windows.log`，配置位于项目的 `.data/`，视频副本位于 `uploads/`。
 

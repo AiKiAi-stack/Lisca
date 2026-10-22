@@ -73,7 +73,8 @@ class CloudConfig:
                 "provider": "阿里云百炼（中国内地）", "asr_model": "fun-asr-realtime",
                 "translation_model": "qwen-mt-flash",
                 "language_pairs": [["zh", "en"], ["en", "zh"]],
-                "persistent_storage": os.name == "nt"}
+                "persistent_storage": os.name == "nt",
+                "default_mode": "transcribe", "recognition_languages": ["auto", "zh", "en"]}
 
 
 def validate_pair(source, target):
