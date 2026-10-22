@@ -190,7 +190,7 @@ def _is_lan_host(host: str | None) -> bool:
 async def keep_admin_routes_local(request: Request, call_next):
     """Expose only capability-based viewer routes to other LAN devices."""
     path = request.url.path
-    viewer_route = path in {"/hls.min.js", "/caption_presenter.js", "/player.css"} or path.startswith("/share/")
+    viewer_route = path in {"/hls.min.js", "/caption_presenter.js", "/playback_guard.js", "/player.css"} or path.startswith("/share/")
     client_host = request.client.host if request.client else None
     origin = request.headers.get("origin")
     if request.method not in ("GET", "HEAD", "OPTIONS") and origin \
@@ -581,6 +581,12 @@ def player_css():
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/playback_guard.js")
+def playback_guard_js():
+    return FileResponse(os.path.join(STATIC_DIR, "playback_guard.js"),
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.get("/hls.min.js")
 def hls_js():
     """hls.js（vendored 本地文件，ticket-19：Chrome 原生 HLS 不支持 TS 分片直播源）"""
@@ -830,6 +836,7 @@ async def ws_endpoint(ws: WebSocket):
                          "progressive": True})
                     ready_sent = True
                 clock_sent = False
+                silence_run = 0.0
                 last = time.monotonic()
                 playback_ceiling = timeline_offset
                 for chunk in src.iter_chunks():
@@ -859,7 +866,9 @@ async def ws_endpoint(ws: WebSocket):
                             if not cloud:
                                 time.sleep(wait)
                         last = time.monotonic()
-                    o = engine.transcribe_chunk(s16_to_f32(chunk))
+                    audio = s16_to_f32(chunk)
+                    silence_run = silence_run + chunk_sec if len(audio) and max(abs(audio)) < 0.005 else 0.0
+                    o = engine.transcribe_chunk(audio)
                     if not batch_mode:
                         fed_sec += chunk_sec
                     if o[0] is not None:
@@ -882,11 +891,11 @@ async def ws_endpoint(ws: WebSocket):
                         )
                         playback_ceiling = max(playback_ceiling, min(feed_target, pending_target))
                         put({"type": "buffer", "play_at": playback_ceiling})
-                        if not ready_sent and (not original_mode or caption_seen) and fed_sec >= delay_sec \
+                        if not ready_sent and (not original_mode or caption_seen or silence_run >= 1.5) and fed_sec >= delay_sec \
                                 and playback_ceiling >= timeline_offset + 0.25:
                             put({"type": "ready", "delay": delay_sec,
                                  "start_at": timeline_offset, "original": original_mode,
-                                 "buffered": True})
+                                 "buffered": True, "silent": not caption_seen})
                             ready_sent = True
                 if stop.is_set():
                     return

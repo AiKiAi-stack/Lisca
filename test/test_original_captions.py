@@ -99,3 +99,31 @@ def test_original_language_selection_is_validated_before_any_cloud_request(tmp_p
             "mode": "transcribe", "source": "unsupported"})
         assert response.status_code == 400
         assert client.get("/api/cloud").json()["default_mode"] == "transcribe"
+
+
+def test_silent_source_releases_playback_without_inventing_a_caption(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            for _ in range(20): yield b'\x00' * 3200
+        def close(self): pass
+    class Engine:
+        def transcribe_chunk(self, _audio): return self.poll()
+        def poll(self): return (None, None, '', None)
+        def finish(self): return self.poll()
+        def close(self): pass
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kw: Engine())
+    monkeypatch.setattr(webui.os.path, 'isfile', lambda _path: True)
+    with TestClient(webui.app) as client:
+        client.put('/api/cloud', json={'api_key': 'test-private-key'})
+        ticket = client.post('/api/cloud/sessions', json={'url':'https://media.test/silent.mp4'}).json()
+        with client.websocket_connect('/ws?session=' + ticket['session']) as socket:
+            events=[]
+            while True:
+                event=socket.receive_json(); events.append(event)
+                if event['type']=='end': break
+    assert any(e['type']=='ready' and e.get('silent') for e in events)
+    assert not any(e['type'] in ('subtitle','preview') for e in events)

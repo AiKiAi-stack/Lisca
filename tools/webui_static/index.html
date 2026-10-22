@@ -15,6 +15,7 @@
 <main>
  <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开内容，生成原文字幕</h2><p>中文语音出中文字幕，英文语音出英文字幕</p></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
  <div class="player-footer"><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关原文字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
+ <div id="captionActions" hidden><button id="retryCaptions">重试字幕</button><button id="playOnly">仅播放（停止识别）</button></div>
  <div id="lateCaption" hidden></div>
 </main>
 <dialog id="settingsDialog" aria-labelledby="settingsDialogTitle"><div class="dialog-head"><h2 id="settingsDialogTitle">设置</h2><button class="quiet" data-close="settingsDialog" aria-label="关闭设置">关闭</button></div><div class="dialog-body"><div class="tabs" role="tablist" aria-label="设置分类"><button role="tab" aria-selected="true" aria-controls="cloudSettings" data-pane="cloudSettings">云端服务</button><button role="tab" aria-selected="false" aria-controls="captionSettings" data-pane="captionSettings">字幕</button><button role="tab" aria-selected="false" aria-controls="moreSettings" data-pane="moreSettings">更多</button></div><section id="cloudSettings" class="setting-section">  <section id="cloudPanel">
@@ -71,6 +72,7 @@
 <button id="styleBtn" hidden>字幕样式</button>
 <script src="/hls.min.js"></script>
 <script src="/caption_presenter.js"></script>
+<script src="/playback_guard.js"></script>
 <script>
   const urlEl = document.getElementById('url');
   const engineEl = document.getElementById('engine');
@@ -85,6 +87,8 @@
   let originalCaptionMode = false;
   let originalCaptionsComplete = false;
   let useCaptionBuffer = false;
+  const playbackGuard = new CaptionPlaybackGuard();
+  let recognitionOnlyStopped = false;
   let cloudResumeRequired = false;
   let pauseStartedAt = null;
   let connectionGeneration = 0;
@@ -839,6 +843,9 @@
     originalCaptionsComplete = false;
     originalCaptionMode = false;
     useCaptionBuffer = false;
+    recognitionOnlyStopped = false;
+    document.getElementById('captionActions').hidden = true;
+    document.getElementById('playOnly').hidden = false;
     const previousCloud = activeCloudSession;
     const previousShare = activeShareToken;
     activeCloudSession = null;
@@ -871,6 +878,8 @@
     if (!url) { setStatus('请输入流地址', true); return; }
     activeInput = url;
     cloudPlayback = !sharedViewerActive && engineEl.value === 'aliyun-funasr';
+    originalCaptionMode = cloudPlayback;
+    playbackGuard.reset({now:performance.now(),live:/\.m3u8/i.test(url) && /^https?:/i.test(url)});
     pendingStartAt = startAt > 0 ? startAt : null;
     if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
     // m3u 频道列表（ticket-19）：识别为列表则加载频道面板，不直接拉流
@@ -988,6 +997,8 @@
     stopBtn.style.display = sharedViewerActive ? 'none' : 'inline-block';
     currentEl.classList.remove('err');
     setStatus(cloudPlayback ? '正在识别音频，原文字幕就绪后播放…' : '连接中…');
+    document.getElementById('captionActions').hidden = !cloudPlayback;
+    document.getElementById('retryCaptions').hidden = true;
     // 画面走 video，声音按源类型分流（ticket-19）：HLS 音视频混在 TS 流里，
     // 视频元素直接出声；B站 DASH / 本地文件走隐藏 audio（音视频分离）。
     // 不立即播放：等待后端按所选 HLS 延迟对齐好时间轴。
@@ -1019,6 +1030,7 @@
       hlsPlayer.loadSource(sharedViewerActive ? viewerInfo.video
         : `/video?url=${encodeURIComponent(url)}`);
       hlsPlayer.attachMedia(player);
+      let mediaRecoveryAttempts = 0;
       hlsPlayer.on(Hls.Events.INIT_PTS_FOUND, (_evt, data) => {
         if (data.id !== 'main' || videoClockPts != null) return;
         videoClockPts = data.initPTS / data.timescale;
@@ -1027,6 +1039,14 @@
       hlsPlayer.on(Hls.Events.ERROR, (_evt, data) => {
         if (!data.fatal) return;
         logEvent('hls_error', `${data.type}/${data.details}`);
+        if (mediaRecoveryAttempts >= 2) {
+          if (!sharedViewerActive) showCaptionRecovery('直播源恢复失败（已重试 2 次），识别已停止；请换源或重试');
+          else setStatus('直播源恢复失败，请重新加入或联系主机', true);
+          if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+          document.getElementById('playOnly').hidden = true;
+          return;
+        }
+        mediaRecoveryAttempts++;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR && hlsPlayer) {
           hlsPlayer.startLoad();  // 网络抖动自动重连
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hlsPlayer) {
@@ -1052,6 +1072,7 @@
 
     ws.onopen = () => { logEvent('ws_open', ''); setStatus('已连接，引擎加载中…'); };
     function receiveMessage(input) {
+      if (generation !== connectionGeneration || recognitionOnlyStopped) return;
       if (input.type === 'timeline') {
         audioClockPts = input.audio_pts;
         flushMediaClock();
@@ -1073,6 +1094,7 @@
         previewSubs = previewSubs.filter(s => s.sentenceId !== msg.sentence_id);
         syncSubtitle();
       } else if (msg.type === 'subtitle') {
+        playbackGuard.progress(msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg, performance.now());
         onSubtitle(msg);
       } else if (msg.type === 'preview') {
         onPreview(msg);
@@ -1082,6 +1104,7 @@
           syncPlaybackToBuffer();
         }
       } else if (msg.type === 'ready') {
+        if (msg.silent) setStatus('暂未识别到语音，继续播放');
         originalCaptionMode = !!msg.original;
         useCaptionBuffer = !!msg.buffered;
         if (msg.progressive) {
@@ -1100,7 +1123,7 @@
         playStarted = true;
         holdingForSync = false;
         if (currentEl.textContent.includes('准备字幕')) currentEl.textContent = '';
-        setStatus(msg.original ? '原文字幕已就绪，开始播放' : msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
+        setStatus(msg.silent ? '暂未识别到语音，继续播放' : msg.original ? '原文字幕已就绪，开始播放' : msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
         logEvent('ready', `附加播放缓冲=${msg.delay}s，开始播放`);
         player.play().catch(() => {});
         // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 时间轴损坏时，
@@ -1113,11 +1136,14 @@
         logEvent('server', msg.line);  // 服务端后台日志（ticket-14）
       } else if (msg.type === 'error') {
         if (holdCaptionForCloudReconnect()) return;
+        if (originalCaptionMode && !sharedViewerActive) { showCaptionRecovery('语音识别失败：' + msg.message); return; }
         currentEl.textContent = '⚠ ' + msg.message;
         currentEl.classList.add('err');
         setStatus('出错', true);
         playStarted = true;  // 解除播放拦截，允许手动看片（无字幕）
       } else if (msg.type === 'end') {
+        playbackGuard.done = true;
+        document.getElementById('captionActions').hidden = true;
         originalCaptionsComplete = originalCaptionMode && !isHls && !currentEl.classList.contains('err');
         if (cloudResumeRequired) setStatus('识别连接已关闭；继续播放时将从暂停位置重新连接');
         else if (!currentEl.classList.contains('err')) setStatus(originalCaptionsComplete ? '原文字幕已生成，可播放或跳转' : '音频处理结束');
@@ -1149,19 +1175,32 @@
   }
 
   function syncPlaybackToBuffer() {
-    if (cloudPlayback && !useCaptionBuffer) return;
-    if (!playStarted || playbackLimit == null || !/\.m3u8/i.test(urlEl.value.trim())) return;
+    if (cloudPlayback && originalCaptionMode) {
+      const action = playbackGuard.tick({now:performance.now(), time:player.currentTime,
+        limit:useCaptionBuffer ? playbackLimit : null, ready:playStarted, userPaused:uiPaused});
+      if (action === 'timeout') { showCaptionRecovery('识别 15 秒没有进展，已停止新音频处理。可重试或仅播放。'); return; }
+      if (action === 'hold') {
+        holdingForBuffer = true;
+        audioEl.pause();
+        player.pause();
+        setStatus('等待当前片段的原文字幕…');
+      } else if (action === 'resume' || action === 'degrade') {
+        holdingForBuffer = false;
+        if (!uiPaused) player.play().catch(() => {});
+        setStatus(action === 'degrade' ? '字幕暂不可用，部分缺失；媒体继续播放，完整结果见记录' : '字幕已就绪，继续播放');
+      } else if (action === 'recovered') setStatus('原文字幕已追上当前播放位置');
+      return;
+    }
+    if (cloudPlayback || !playStarted || playbackLimit == null || !/\.m3u8/i.test(urlEl.value.trim())) return;
     const t = player.currentTime;
     if (!player.paused && t >= playbackLimit - 0.03) {
       holdingForBuffer = true;
-      player.pause(); // HLS 音频在同一 video 元素上，一并暂停
+      player.pause();
       setStatus('等待下一段字幕确认…');
-      logEvent('buffer_hold', `t=${t.toFixed(2)} limit=${playbackLimit.toFixed(2)}`);
     } else if (player.paused && holdingForBuffer && playbackLimit - t >= 1.0) {
       holdingForBuffer = false;
       player.play().catch(() => {});
       setStatus('字幕已就绪，继续播放');
-      logEvent('buffer_resume', `t=${t.toFixed(2)} limit=${playbackLimit.toFixed(2)}`);
     }
   }
   // 字幕整句快照 + 连续音视频延迟闸门。
@@ -1203,6 +1242,7 @@
   });
   // 播放联动：video 控制画面与进度，audio 跟随出声；暂停时前后端都冻结（真正停止解析）
   player.addEventListener('play', () => {
+    if (recognitionOnlyStopped && playStarted) { uiPaused = false; pauseStartedAt = null; audioEl.play().catch(() => {}); return; }
     if (resumeClosedCloudAfterPause()) return;
     if (!playStarted) {
       // 字幕未就绪时手动播放会让视频领先 ASR 一段固定偏移，时间窗永远不匹配
@@ -1243,7 +1283,7 @@
       syncSubtitle();
       return;
     }
-    if (originalCaptionsComplete) { seekPending = false; syncSubtitle(); return; }
+    if (recognitionOnlyStopped || originalCaptionsComplete) { seekPending = false; syncSubtitle(); return; }
     if (cloudPlayback && !sharedViewerActive && activeInput && !/^https?:/i.test(activeInput)) {
       const destination = player.currentTime;
       connect(activeInput, null, destination);
@@ -1254,6 +1294,40 @@
     logEvent('seek', `t=${player.currentTime.toFixed(1)}`);
   });
 
+  async function cancelCaptionProcessing(message, onlyPlay = false) {
+    const generation = ++connectionGeneration;
+    recognitionOnlyStopped = true;
+    playbackGuard.done = true;
+    cloudResumeRequired = false;
+    pauseStartedAt = null;
+    cloudPlayback = false;
+    originalCaptionsComplete = false;
+    holdingForSync = false;
+    holdingForBuffer = false;
+    playStarted = onlyPlay;
+    playbackLimit = null;
+    const token = activeCloudSession, share = activeShareToken;
+    activeCloudSession = null;
+    activeShareToken = null;
+    if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); ws = null; }
+    player.pause(); audioEl.pause();
+    subs = []; previewSubs = []; captionPresenter.reset();
+    currentEl.textContent = ''; currentEl.classList.remove('err');
+    if (token) await cloudRequest('/api/cloud/sessions/' + encodeURIComponent(token), 'DELETE').catch(() => {});
+    if (share) await fetch('/share/stop/' + encodeURIComponent(share), {method:'POST'}).catch(() => {});
+    if (generation !== connectionGeneration) return;
+    startBtn.style.display = 'inline-block'; stopBtn.style.display = 'none';
+    shareCopyBtn.style.display = 'none'; shareAddressEl.hidden = true;
+    setStatus(message);
+    if (onlyPlay) { document.getElementById('captionActions').hidden = true; player.play().catch(() => {}); }
+  }
+  function showCaptionRecovery(message) {
+    document.getElementById('captionActions').hidden = false;
+    document.getElementById('retryCaptions').hidden = false;
+    void cancelCaptionProcessing(message);
+  }
+  document.getElementById('retryCaptions').onclick = () => connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime);
+  document.getElementById('playOnly').onclick = () => cancelCaptionProcessing('仅播放；字幕暂不可用，识别已停止', true);
   startBtn.onclick = connect;
   shareCopyBtn.onclick = async () => {
     const url = shareCopyBtn.dataset.url;
@@ -1268,6 +1342,11 @@
   shareAddressEl.onchange = () => { shareCopyBtn.dataset.url = shareAddressEl.value; };
   stopBtn.onclick = async () => {
     const generation = ++connectionGeneration;
+    playbackGuard.done = true;
+    cloudPlayback = false;
+    originalCaptionMode = false;
+    recognitionOnlyStopped = true;
+    document.getElementById('captionActions').hidden = true;
     cloudResumeRequired = false;
     pauseStartedAt = null;
     const stoppedCloud = activeCloudSession;
