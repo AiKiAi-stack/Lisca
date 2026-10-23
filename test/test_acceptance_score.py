@@ -107,7 +107,7 @@ def test_recording_and_scoring_clis_bind_a_local_input_to_the_report(tmp_path):
     events = [
         {"type": "subtitle", "sentence_id": 1, "beg": 0,
          "is_final": True, "text": "Keep these words"},
-        {"type": "end"},
+        {"type": "end", "reason": "completed"},
     ]
     recording_path = tmp_path / "recording.json"
     with FakeRecognitionService(events) as service:
@@ -138,7 +138,7 @@ def test_scoring_cli_reports_input_and_reference_hashes_separately(tmp_path):
                  "input_sha256_after": input_hash, "input_unchanged": True,
                  "recording_status": "completed", "completion_signal": "end",
                  "events": [{"type": "subtitle", "sentence_id": 1, "beg": 0,
-                             "is_final": True, "text": "Keep these words"}, {"type": "end"}],
+                             "is_final": True, "text": "Keep these words"}, {"type": "end", "reason": "completed"}],
                  "errors": []}
 
     report = run_score_cli(tmp_path, manifest, recording)
@@ -158,7 +158,7 @@ def test_scoring_cli_names_a_reference_hash_mismatch_without_erasing_accuracy(tm
                  "input_sha256_after": input_hash, "input_unchanged": True,
                  "recording_status": "completed", "completion_signal": "end",
                  "events": [{"type": "subtitle", "sentence_id": 1, "beg": 0,
-                             "is_final": True, "text": "Keep these words"}, {"type": "end"}],
+                             "is_final": True, "text": "Keep these words"}, {"type": "end", "reason": "completed"}],
                  "errors": []}
     manifest = {"dataset": "fixed", "config": "en", "sha256": "a" * 64, "seconds": 1,
                 "items": [{"reference": "Keep these words"}]}
@@ -187,7 +187,9 @@ def test_scoring_cli_keeps_legacy_recordings_unverified(tmp_path):
     assert report["input_matches_reference"] is None
     assert report["source_status"] == "legacy_missing_identity"
     assert report["source_verified"] is False
-    assert report["transcription_accuracy_passed"] is True
+    assert report["completion_status"] == "completion_unverified"
+    assert report["completion_reason"] == "completion_unverified"
+    assert report["transcription_accuracy_passed"] is False
     assert report["accuracy_gate_passed"] is False
 
 
@@ -199,7 +201,7 @@ def test_recording_cli_detects_local_input_replacement_before_scoring(tmp_path):
     events = [
         {"type": "subtitle", "sentence_id": 1, "beg": 0,
          "is_final": True, "text": "Keep these words"},
-        {"type": "end"},
+        {"type": "end", "reason": "completed"},
     ]
     with FakeRecognitionService(events, hold_events=True) as service:
         process = subprocess.Popen([
@@ -240,7 +242,7 @@ def test_recording_and_scoring_clis_preserve_remote_sample_identity_without_hash
     events = [
         {"type": "subtitle", "sentence_id": 1, "beg": 0,
          "is_final": True, "text": "Keep these words"},
-        {"type": "end"},
+        {"type": "end", "reason": "completed"},
     ]
     with FakeRecognitionService(events) as service:
         service.media_path = media_path
@@ -298,6 +300,45 @@ def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(tmp_pat
     assert report["transcription_accuracy_passed"] is False
 
 
+@pytest.mark.parametrize(("reason", "recording_status", "completion_status", "exit_ok"), [
+    ("completed", "completed", "completed", True),
+    ("cancelled", "cancelled", "cancelled", False),
+    ("error", "failed", "failed", False),
+    (None, "completion_unverified", "completion_unverified", False),
+])
+def test_recording_and_scoring_clis_require_explicit_normal_completion(
+        tmp_path, reason, recording_status, completion_status, exit_ok):
+    input_path = tmp_path / "sample.wav"
+    write_wav(input_path)
+    input_hash = hashlib.sha256(input_path.read_bytes()).hexdigest()
+    recording_path = tmp_path / "recording.json"
+    end = {"type": "end"}
+    if reason is not None:
+        end["reason"] = reason
+    events = [
+        {"type": "subtitle", "sentence_id": 1, "beg": 0,
+         "is_final": True, "text": "Keep these words"},
+        end,
+    ]
+    with FakeRecognitionService(events) as service:
+        process = subprocess.run([
+            sys.executable, str(Path(__file__).with_name("run_original_acceptance.py")),
+            str(input_path), "--server-url", service.url, "--output", str(recording_path),
+        ], capture_output=True, text=True)
+
+    recording = json.loads(recording_path.read_text(encoding="utf-8"))
+    manifest = {"dataset": "fixed", "config": "en", "sha256": input_hash, "seconds": 1,
+                "items": [{"reference": "Keep these words"}]}
+    report = run_score_cli(tmp_path, manifest, recording)
+
+    assert (process.returncode == 0) is exit_ok, process.stdout + process.stderr
+    assert recording["recording_status"] == recording_status
+    assert recording["completion_reason"] == (reason or "completion_unverified")
+    assert report["completion_status"] == completion_status
+    assert report["completion_reason"] == (reason or "completion_unverified")
+    assert report["session_without_errors"] is exit_ok
+
+
 def test_recording_and_scoring_clis_keep_error_distinct_from_transport_end(tmp_path):
     input_path = tmp_path / "sample.wav"
     write_wav(input_path)
@@ -306,7 +347,7 @@ def test_recording_and_scoring_clis_keep_error_distinct_from_transport_end(tmp_p
         {"type": "subtitle", "sentence_id": 1, "beg": 0,
          "is_final": True, "text": "Keep these words"},
         {"type": "error", "message": "recognition failed"},
-        {"type": "end"},
+        {"type": "end", "reason": "error"},
     ]
     with FakeRecognitionService(events) as service:
         process = subprocess.run([
@@ -352,7 +393,7 @@ def test_recording_and_scoring_clis_reject_translated_caption_events(tmp_path):
     events = [
         {"type": "subtitle", "sentence_id": 1, "beg": 0,
          "is_final": True, "text": "Keep these words", "translated": True},
-        {"type": "end"},
+        {"type": "end", "reason": "completed"},
     ]
     with FakeRecognitionService(events) as service:
         process = subprocess.run([
@@ -394,7 +435,7 @@ def test_scoring_cli_uses_fixed_normalization_with_revisions_retractions_and_ano
                       "is_final": True, "text": "Don't close"},
                      {"type": "subtitle", "sentence_id": None, "beg": 3,
                       "is_final": True, "text": "３ windows!"},
-                     {"type": "end"},
+                     {"type": "end", "reason": "completed"},
                  ]}
 
     report = run_score_cli(tmp_path, manifest, recording)
@@ -415,7 +456,7 @@ def test_scoring_cli_reports_chinese_character_error_rate(tmp_path):
                  "input_sha256_after": reference_hash, "input_unchanged": True,
                  "recording_status": "completed", "completion_signal": "end", "errors": [],
                  "events": [{"type": "subtitle", "sentence_id": 1, "beg": 0,
-                             "is_final": True, "text": "别太装"}, {"type": "end"}]}
+                             "is_final": True, "text": "别太装"}, {"type": "end", "reason": "completed"}]}
 
     report = run_score_cli(tmp_path, manifest, recording, language="zh")
 
@@ -440,7 +481,7 @@ def test_retracted_and_revised_final_captions_do_not_duplicate_the_score():
               {"type": "caption_remove", "sentence_id": 1},
               {"type": "subtitle", "sentence_id": 2, "beg": 0, "is_final": True, "text": "Keep"},
               {"type": "subtitle", "sentence_id": 2, "beg": 0, "is_final": True, "text": "Keep these words"},
-              {"type": "end"}]
+              {"type": "end", "reason": "completed"}]
     result = score(manifest, {"events": events, "errors": []}, "en")
     assert result["error_rate"] == 0
     assert result["transcript"] == "Keep these words"
@@ -449,7 +490,7 @@ def test_retracted_and_revised_final_captions_do_not_duplicate_the_score():
     assert not score(manifest, {"events": events, "errors": ["stopped early"]}, "en")["accuracy_gate_passed"]
 
 
-@pytest.mark.parametrize("tail", [[], [{"type": "error", "message": "stopped early"}, {"type": "end"}]])
+@pytest.mark.parametrize("tail", [[], [{"type": "error", "message": "stopped early"}, {"type": "end", "reason": "error"}]])
 def test_incomplete_or_failed_event_stream_cannot_pass_without_an_error_summary(tail):
     manifest = {"dataset": "fixed", "config": "en", "sha256": "test", "seconds": 1,
                 "items": [{"reference": "Keep these words"}]}
@@ -466,7 +507,7 @@ def test_captions_with_null_sentence_ids_remain_distinct_by_timestamp():
                 "items": [{"reference": "Keep these words"}]}
     events = [{"type": "subtitle", "sentence_id": None, "beg": 0, "is_final": True, "text": "Keep"},
               {"type": "subtitle", "sentence_id": None, "beg": 1, "is_final": True, "text": "these words"},
-              {"type": "end"}]
+              {"type": "end", "reason": "completed"}]
     result = score(manifest, {"events": events}, "en")
     assert result["transcript"] == "Keep these words"
     assert result["transcription_accuracy_passed"]
@@ -479,7 +520,7 @@ def test_anonymous_withdrawal_removes_anonymous_captions_but_keeps_identified_on
     events = [{"type": "subtitle", "sentence_id": None, "beg": 0, "is_final": True, "text": "Wrong"},
               {"type": "subtitle", "sentence_id": None, "beg": 1, "is_final": True, "text": "also wrong"},
               {"type": "subtitle", "sentence_id": 1, "beg": 0, "is_final": True, "text": "Keep these words"},
-              {"type": "caption_remove", "sentence_id": None}, {"type": "end"}]
+              {"type": "caption_remove", "sentence_id": None}, {"type": "end", "reason": "completed"}]
     result = score(manifest, {"events": events}, "en")
     assert result["transcript"] == "Keep these words"
     assert result["reference_sha256"] == "test"
@@ -495,7 +536,7 @@ def test_translation_in_events_cannot_be_hidden_by_the_summary(summary):
     manifest = {"dataset": "fixed", "config": "en", "sha256": "test", "seconds": 1,
                 "items": [{"reference": "Keep these words"}]}
     events = [{"type": "subtitle", "sentence_id": 1, "beg": 0, "is_final": True,
-               "text": "Keep these words", "translated": True}, {"type": "end"}]
+               "text": "Keep these words", "translated": True}, {"type": "end", "reason": "completed"}]
     result = score(manifest, {"events": events, **summary}, "en")
     assert result["translated_cues"] == 1
     assert not result["accuracy_gate_passed"]

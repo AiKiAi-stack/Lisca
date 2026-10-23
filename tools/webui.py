@@ -778,6 +778,9 @@ async def ws_endpoint(ws: WebSocket):
         translation = None
         translation_clauses = {}
         caption_seen = False
+        terminal_reason = "error"
+        normal_completion = False
+        worker_failed = False
 
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
@@ -1039,6 +1042,7 @@ async def ws_endpoint(ws: WebSocket):
                     emit(o2)
                 if translation:
                     translation.finish()
+                normal_completion = True
                 # Batch engines finish the whole file before the player starts.
                 # Send ready only after subtitles have reached the browser.
                 if not ready_sent:
@@ -1049,6 +1053,8 @@ async def ws_endpoint(ws: WebSocket):
             finally:
                 src.close()
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
+            worker_failed = True
+            terminal_reason = "error"
             if phase == "input_validation":
                 message = "输入地址无法识别：请提供有效 URL 或本机已存在的文件路径"
             elif phase == "platform_resolution":
@@ -1086,7 +1092,13 @@ async def ws_endpoint(ws: WebSocket):
             if put in _LOG_SINKS:
                 _LOG_SINKS.remove(put)
             logger.info("会话结束")
-            put({"type": "end"})
+            if worker_failed:
+                terminal_reason = "error"
+            elif stop.is_set():
+                terminal_reason = "cancelled"
+            elif normal_completion:
+                terminal_reason = "completed"
+            put({"type": "end", "reason": terminal_reason})
 
     threading.Thread(target=worker, daemon=True).start()
 

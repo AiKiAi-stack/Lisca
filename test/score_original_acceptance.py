@@ -53,15 +53,31 @@ def score(manifest, recording, language):
     edits = edit_distance(ref, hyp)
     error_rate = edits / len(ref)
     events = recording["events"]
-    transport_ended = any(event["type"] == "end" for event in events)
+    end_event = next((event for event in reversed(events) if event.get("type") == "end"), None)
+    transport_ended = end_event is not None
+    reported_reason = end_event.get("reason") if end_event else None
+    if reported_reason in ("completed", "cancelled", "error"):
+        completion_reason = reported_reason
+    elif recording.get("completion_signal") == "cancelled":
+        completion_reason = "cancelled"
+    else:
+        completion_reason = "completion_unverified"
+    if completion_reason == "completed":
+        completion_status = "completed"
+    elif completion_reason == "cancelled":
+        completion_status = "cancelled"
+    elif completion_reason == "error" or recording.get("recording_status") == "failed":
+        completion_status = "failed"
+    else:
+        completion_status = "completion_unverified"
     no_errors = not recording.get("errors") and not any(event["type"] == "error" for event in events)
     if "recording_status" in recording:
         complete = (recording["recording_status"] == "completed"
                     and recording.get("completion_signal") == "end"
-                    and transport_ended and no_errors)
+                    and transport_ended and completion_reason == "completed" and no_errors)
     else:
         # Legacy recordings can still be scored for accuracy, but cannot prove provenance.
-        complete = bool(active) and transport_ended and no_errors
+        complete = bool(active) and transport_ended and completion_reason == "completed" and no_errors
     translated = max(recording.get("translated_cues", 0),
                      sum(bool(event.get("translated")) for event in events))
     reference_sha256 = manifest.get("sha256")
@@ -108,6 +124,8 @@ def score(manifest, recording, language):
             "source_url": recording.get("source_url"),
             "sample_interval": recording.get("sample_interval"),
             "recording_status": recording.get("recording_status", "legacy_unknown"),
+            "completion_status": completion_status,
+            "completion_reason": completion_reason,
             "completion_signal": recording.get("completion_signal"),
             "samples": len(manifest["items"]),
             "audio_seconds": manifest["seconds"], "normalization": __doc__.split("\n\n")[1].strip(),
