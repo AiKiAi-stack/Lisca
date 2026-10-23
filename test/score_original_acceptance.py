@@ -72,10 +72,12 @@ def score(manifest, recording, language):
                                if valid_input_hash and valid_reference_hash else None)
     if recording.get("source_kind") == "remote_stream":
         sample = recording.get("sample_interval") or {}
-        source_status = ("sampled_remote" if recording.get("source_url")
-                         and sample.get("started_at_utc") and sample.get("ended_at_utc")
-                         else "missing_remote_sample")
+        source_status = "not_verified"
+        source_observation_status = ("sampled_remote" if recording.get("source_url")
+                                     and sample.get("started_at_utc") and sample.get("ended_at_utc")
+                                     else "missing_remote_sample")
     elif recording.get("source_kind") == "local_file":
+        source_observation_status = None
         if not valid_input_hash or not valid_reference_hash:
             source_status = "missing_hash"
         elif (recording.get("input_unchanged") is not True
@@ -88,8 +90,10 @@ def score(manifest, recording, language):
             source_status = "verified"
     elif "source_kind" not in recording and "input_sha256" not in recording:
         source_status = "legacy_missing_identity"
+        source_observation_status = None
     else:
         source_status = "missing_identity"
+        source_observation_status = None
     source_verified = source_status == "verified"
     transcription_accuracy_passed = (complete and not translated
                                      and error_rate <= (.10 if language == "zh" else .15))
@@ -100,6 +104,7 @@ def score(manifest, recording, language):
             "source_kind": recording.get("source_kind", "unknown"),
             "source_verified": bool(source_verified),
             "source_status": source_status,
+            "source_observation_status": source_observation_status,
             "source_url": recording.get("source_url"),
             "sample_interval": recording.get("sample_interval"),
             "recording_status": recording.get("recording_status", "legacy_unknown"),
@@ -110,7 +115,7 @@ def score(manifest, recording, language):
             "error_rate": error_rate, "session_without_errors": complete,
             "transcription_accuracy_passed": transcription_accuracy_passed,
             "translated_cues": translated,
-            "accuracy_gate_passed": transcription_accuracy_passed,
+            "accuracy_gate_passed": transcription_accuracy_passed and source_verified,
             "sync_gate_passed": None, "sync_status": "not_assessed",
             "release_gate_passed": False,
             "transcript": transcript, "reference": reference}

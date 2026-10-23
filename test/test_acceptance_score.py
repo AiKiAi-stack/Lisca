@@ -169,6 +169,7 @@ def test_scoring_cli_names_a_reference_hash_mismatch_without_erasing_accuracy(tm
     assert report["source_status"] == "hash_mismatch"
     assert report["source_verified"] is False
     assert report["transcription_accuracy_passed"] is True
+    assert report["accuracy_gate_passed"] is False
 
 
 def test_scoring_cli_keeps_legacy_recordings_unverified(tmp_path):
@@ -187,6 +188,7 @@ def test_scoring_cli_keeps_legacy_recordings_unverified(tmp_path):
     assert report["source_status"] == "legacy_missing_identity"
     assert report["source_verified"] is False
     assert report["transcription_accuracy_passed"] is True
+    assert report["accuracy_gate_passed"] is False
 
 
 def test_recording_cli_detects_local_input_replacement_before_scoring(tmp_path):
@@ -227,6 +229,8 @@ def test_recording_cli_detects_local_input_replacement_before_scoring(tmp_path):
 
     assert report["source_status"] == "input_changed"
     assert report["source_verified"] is False
+    assert report["transcription_accuracy_passed"] is True
+    assert report["accuracy_gate_passed"] is False
 
 
 def test_recording_and_scoring_clis_preserve_remote_sample_identity_without_hashing_url(tmp_path):
@@ -257,9 +261,11 @@ def test_recording_and_scoring_clis_preserve_remote_sample_identity_without_hash
     assert "private" not in json.dumps(recording)
     assert recording["sample_interval"]["started_at_utc"]
     assert recording["sample_interval"]["ended_at_utc"]
-    assert report["source_status"] == "sampled_remote"
+    assert report["source_status"] == "not_verified"
+    assert report["source_observation_status"] == "sampled_remote"
     assert report["input_matches_reference"] is None
     assert report["source_verified"] is False
+    assert report["accuracy_gate_passed"] is False
 
 
 def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(tmp_path):
@@ -438,7 +444,8 @@ def test_retracted_and_revised_final_captions_do_not_duplicate_the_score():
     result = score(manifest, {"events": events, "errors": []}, "en")
     assert result["error_rate"] == 0
     assert result["transcript"] == "Keep these words"
-    assert result["accuracy_gate_passed"]
+    assert result["transcription_accuracy_passed"]
+    assert not result["accuracy_gate_passed"]
     assert not score(manifest, {"events": events, "errors": ["stopped early"]}, "en")["accuracy_gate_passed"]
 
 
@@ -462,7 +469,8 @@ def test_captions_with_null_sentence_ids_remain_distinct_by_timestamp():
               {"type": "end"}]
     result = score(manifest, {"events": events}, "en")
     assert result["transcript"] == "Keep these words"
-    assert result["accuracy_gate_passed"]
+    assert result["transcription_accuracy_passed"]
+    assert not result["accuracy_gate_passed"]
 
 
 def test_anonymous_withdrawal_removes_anonymous_captions_but_keeps_identified_ones():
@@ -478,7 +486,8 @@ def test_anonymous_withdrawal_removes_anonymous_captions_but_keeps_identified_on
     assert result["input_sha256"] is None
     assert result["source_status"] == "legacy_missing_identity"
     assert result["source_verified"] is False
-    assert result["accuracy_gate_passed"]
+    assert result["transcription_accuracy_passed"]
+    assert not result["accuracy_gate_passed"]
 
 
 @pytest.mark.parametrize("summary", [{}, {"translated_cues": 0}])
