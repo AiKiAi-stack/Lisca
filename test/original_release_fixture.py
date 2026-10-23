@@ -25,21 +25,24 @@ import webui  # noqa: E402
 from cloud_translation import CloudConfigStore  # noqa: E402
 
 
-def generate_media(path, seconds=8, silent=False):
+def generate_media(path, seconds=8, silent=False, silent_seconds=0, with_audio=True):
     with av.open(str(path), "w") as output:
         video = output.add_stream("libx264", rate=10)
         video.width, video.height, video.pix_fmt = 320, 180, "yuv420p"
         video.codec_context.thread_count = 1
         video.options = {"preset": "ultrafast"}
-        audio = output.add_stream("aac", rate=16000)
-        audio.layout = "mono"
+        audio = output.add_stream("aac", rate=16000) if with_audio else None
+        if audio:
+            audio.layout = "mono"
         for index in range(seconds * 10):
             pixels = np.full((180, 320, 3), (30, 45 + index % 100, 90), dtype=np.uint8)
             frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
             frame.pts, frame.time_base = index, Fraction(1, 10)
             for packet in video.encode(frame):
                 output.mux(packet)
-            signal = np.zeros(1600) if silent else .12 * np.sin(
+            if audio is None:
+                continue
+            signal = np.zeros(1600) if silent or index < silent_seconds * 10 else .12 * np.sin(
                 2 * math.pi * 440 * (np.arange(1600) + index * 1600) / 16000)
             frame = av.AudioFrame.from_ndarray(signal.astype(np.float32)[None, :],
                                               format="fltp", layout="mono")
@@ -48,6 +51,8 @@ def generate_media(path, seconds=8, silent=False):
             for packet in audio.encode(frame):
                 output.mux(packet)
         for stream in (video, audio):
+            if stream is None:
+                continue
             for packet in stream.encode(None):
                 output.mux(packet)
 
@@ -67,8 +72,15 @@ class RecognitionFixture:
         self.steps = deque(self.script())
 
     def script(self):
-        if self.mode == "silent":
+        if self.mode in ("silent", "no-progress"):
             return []
+        if self.mode == "controls":
+            return [(beg + 1.8, (float(beg), beg + 1.8, f"Prepared sentence {beg // 2 + 1}.",
+                      [(float(beg), beg + 1.8, f"Prepared sentence {beg // 2 + 1}.")],
+                      True, beg // 2 + 1)) for beg in range(0, 40, 2)]
+        if self.mode == "silence-speech":
+            return [(5.8, (4., 5.8, "静音后的第一句原文。", None, True, 1)),
+                    (7.8, (6., 7.8, "Speech continues after silence.", None, True, 2))]
         if self.mode == "withdrawn":
             return [(1.0, (0., 5., "This sentence was withdrawn.", None, True, 1)),
                     (1.2, (0., 5., "", None, True, 1)),
@@ -108,8 +120,13 @@ class RecognitionFixture:
 def main():
     directory = ROOT / "logs" / "original-release-fixture"
     directory.mkdir(parents=True, exist_ok=True)
-    for name, seconds, silent in [("normal", 8, False), ("long", 12, False), ("silent", 20, True)]:
-        generate_media(directory / (name + ".mp4"), seconds, silent)
+    media = {"normal": (8, False, 0, True), "long": (12, False, 0, True),
+             "silent": (20, True, 0, True), "controls": (40, False, 0, True),
+             "no-progress": (40, False, 0, True),
+             "silence-speech": (12, False, 4, True), "video-only": (3, False, 0, False)}
+    for name, arguments in media.items():
+        generate_media(directory / (name + ".mp4"), *arguments)
+    (directory / "invalid.bin").write_bytes(b"This is not decodable media.")
     state = {"mode": "normal", "started": 0, "active": 0, "audio_seconds": 0.,
              "lock": threading.Lock()}
     with tempfile.TemporaryDirectory(prefix="original-release-config-") as config:
@@ -125,13 +142,13 @@ def main():
             with state["lock"]:
                 snapshot = {key: value for key, value in state.items() if key != "lock"}
             return {**snapshot, "simulated_recognition": True,
-                    "media": {name: str(directory / (name + ".mp4"))
-                              for name in ("normal", "long", "silent")}}
+                    "media": {**{name: str(directory / (name + ".mp4")) for name in media},
+                              "invalid": str(directory / "invalid.bin")}}
 
         @webui.app.post("/__fixture/scenario")
         async def fixture_scenario(request: Request):
             mode = (await request.json())["mode"]
-            if mode not in ("normal", "long", "silent", "withdrawn"):
+            if mode not in (*media, "withdrawn"):
                 raise ValueError("Unknown offline scenario")
             with state["lock"]:
                 state["mode"] = mode
