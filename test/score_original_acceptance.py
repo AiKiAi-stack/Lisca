@@ -6,6 +6,7 @@ This measures transcript accuracy, not browser timing or caption visibility.
 """
 import argparse
 import json
+import math
 from pathlib import Path
 import re
 import unicodedata
@@ -34,9 +35,20 @@ def valid_sha256(value):
 
 def score(manifest, recording, language):
     active = {}
+    latest_revision = {}
     for event in recording["events"]:
         sentence_id = event.get("sentence_id")
         identity = ("sentence", sentence_id) if sentence_id is not None else ("time", event.get("beg"))
+        revision = event.get("revision")
+        identified_revision = (sentence_id is not None
+                              and isinstance(revision, (int, float))
+                              and not isinstance(revision, bool)
+                              and (isinstance(revision, int) or math.isfinite(revision)))
+        if identified_revision:
+            previous_revision = latest_revision.get(identity)
+            if previous_revision is not None and revision <= previous_revision:
+                continue
+            latest_revision[identity] = revision
         if event["type"] == "caption_remove":
             if sentence_id is None and event.get("beg") is None:
                 # The server withdraws all anonymous captions without a start time.
