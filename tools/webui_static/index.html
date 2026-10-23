@@ -151,6 +151,7 @@
   let ws = null;
   let hlsPlayer = null;  // hls.js 实例（HLS 直播，ticket-19）
   const captionPresenter = new CaptionPresenter();
+  let captionRevisions = new Map();
   let translatedSession = false;
   let subs = [];        // [{beg, end, text, words}] 句子列表（partial 累计，同句原地更新）
   let previewSubs = []; // 连续两个 partial 均未改动的完整短句，等待整句 final 时也能播放
@@ -488,6 +489,13 @@
     const sourceText = typeof s.text === 'string' ? s.text : '';
     const spokenText = normalize(words.map(w => w[2]).join(''));
     const expectedText = normalize(sourceText);
+    const playerWidth = document.getElementById('playerWrap')?.clientWidth || 1200;
+    const style = getComputedStyle(currentEl);
+    const fontSize = parseFloat(style.fontSize) || 30;
+    const padding = (parseFloat(style.paddingLeft) || 15) + (parseFloat(style.paddingRight) || 15);
+    const maxTextWidth = Math.max(1, playerWidth * (playerWidth <= 720 ? .94 : .90) - padding);
+    const maxHanChars = Math.max(4, Math.min(26, Math.floor(maxTextWidth * 2 / fontSize)));
+    const maxLatinChars = Math.max(8, Math.min(48, Math.floor(maxTextWidth * 2 / (fontSize * .60))));
     if (words.length >= 2 && expectedText && spokenText === expectedText) {
       // Use the finalized sentence as the text source. ASR word timestamps can
       // split one spelling across adjacent tokens ("wh" + "istles"); adding
@@ -554,7 +562,7 @@
           if (!clause.length) return;
           const text = sourceText.slice(clause[0].rawStart, clause[clause.length - 1].rawEnd);
           const hasHan = /\p{Script=Han}/u.test(text);
-          const maxChars = hasHan ? 26 : 48;
+          const maxChars = hasHan ? maxHanChars : maxLatinChars;
           if (text.length <= maxChars) {
             pushSpan(clause);
           } else {
@@ -603,20 +611,32 @@
       .map(part => part.trim()).filter(Boolean);
     const parts = rawParts.flatMap(part => {
       if (/\p{Script=Han}/u.test(part)) {
-        if (part.length <= 26) return [part];
-        const count = Math.ceil(part.length / 26);
+        if (part.length <= maxHanChars) return [part];
+        const count = Math.ceil(part.length / maxHanChars);
         const size = Math.ceil(part.length / count);
         return Array.from({length:count}, (_, index) => part.slice(index * size,
           (index + 1) * size).trim()).filter(Boolean);
       }
-      if (part.length <= 48) return [part];
+      if (part.length <= maxLatinChars) return [part];
       const tokens = part.match(/\S+\s*/g) || [part];
-      return tokens.reduce((chunks, token) => {
-        const current = chunks[chunks.length - 1] || '';
-        if (current.length && (current + token).trim().length > 44) chunks.push(token.trim());
-        else chunks[chunks.length - 1] = current + token;
-        return chunks;
-      }, ['']).map(chunk => chunk.trim()).filter(Boolean);
+      const chunks = [];
+      let current = '';
+      for (const token of tokens) {
+        const word = token.trim();
+        if (word.length > maxLatinChars) {
+          if (current.trim()) chunks.push(current.trim());
+          for (let offset = 0; offset < word.length; offset += maxLatinChars)
+            chunks.push(word.slice(offset, offset + maxLatinChars));
+          current = '';
+        } else if (current && (current + token).trim().length > maxLatinChars) {
+          chunks.push(current.trim());
+          current = token;
+        } else {
+          current += token;
+        }
+      }
+      if (current.trim()) chunks.push(current.trim());
+      return chunks;
     });
     if (!Number.isFinite(beg) || !Number.isFinite(end) || parts.length <= 1)
       return [{beg, end, text: s.text.trim()}];
@@ -774,6 +794,13 @@
   }
 
   function onSubtitle(msg) {
+    if (msg.sentence_id != null && Number.isFinite(msg.revision)) {
+      const id = String(msg.sentence_id);
+      const revision = msg.revision;
+      const latestRevision = captionRevisions.get(id);
+      if (latestRevision != null && revision <= latestRevision) return;
+      captionRevisions.set(id, revision);
+    }
     // In-flight final revisions remain valid while the user has paused.
     // Preserve them for playback instead of dropping transcript data.
     if (msg.translated && seekPending && (msg.end ?? msg.beg) < player.currentTime - .25) return;
@@ -918,6 +945,7 @@
     // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
     if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); }
     captionPresenter.reset();
+    captionRevisions = new Map();
     translatedSession = false;
     currentEl.dataset.caption = 'empty';
     subs = [];
@@ -1106,8 +1134,16 @@
       }
       const msg = timelineMapped ? offsetMediaMessage(input, mediaOffset) : input;
       if (msg.type === 'caption_remove') {
-        if ((captionPresenter.seen.get(String(msg.sentence_id)) ?? -1) > msg.revision) return;
-        captionPresenter.remove(msg.sentence_id, msg.revision);
+        if (msg.sentence_id != null && Number.isFinite(msg.revision)) {
+          const id = String(msg.sentence_id);
+          const revision = msg.revision;
+          const latestRevision = captionRevisions.get(id) ?? -1;
+          if (revision < latestRevision) return;
+          captionRevisions.set(id, Math.max(latestRevision, revision));
+        }
+        const revision = Number.isFinite(msg.revision) ? msg.revision : 0;
+        if ((captionPresenter.seen.get(String(msg.sentence_id)) ?? -1) > revision) return;
+        captionPresenter.remove(msg.sentence_id, revision);
         const removed = new Set(subs.filter(s => s.sentenceId === msg.sentence_id).map(s => s.historyItem));
         removed.forEach(item => item?.remove());
         historyItems = historyItems.filter(item => !removed.has(item));

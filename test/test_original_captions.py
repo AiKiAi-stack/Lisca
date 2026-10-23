@@ -94,6 +94,60 @@ def test_connection_check_does_not_start_a_translation_request(tmp_path, monkeyp
     assert calls == ["asr", "closed"]
 
 
+def test_original_caption_revisions_increase_across_withdrawal_and_correction(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
+    monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            for _ in range(6):
+                yield b"\x00" * 3200
+        def close(self): pass
+
+    class Engine:
+        def __init__(self):
+            self.events = iter([
+                (0.0, 1.0, "先前原文。", None, True, 7),
+                (0.0, 1.0, "撤回前修订。", None, True, 7),
+                (0.0, 1.0, "", None, True, 7),
+                (0.0, 1.0, "先前原文。", None, True, 7),
+                (0.0, 1.0, "撤回前修订。", None, True, 7),
+                (0.0, 1.0, "修订后的原文。", None, True, 7),
+            ])
+        def transcribe_chunk(self, _audio):
+            return next(self.events, (None, None, "", None))
+        def poll(self): return (None, None, "", None)
+        def finish(self): return self.poll()
+        def close(self): pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "test-private-key"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "url": "https://media.test/revision.mp4",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    old = next(event for event in events
+               if event["type"] == "subtitle" and event["text"] == "先前原文。")
+    removed = next(event for event in events if event["type"] == "caption_remove")
+    corrected = next(event for event in events
+                     if event["type"] == "subtitle" and event["text"] == "修订后的原文。")
+    captions = [event for event in events if event["type"] == "subtitle"]
+    assert [event["text"] for event in captions] == [
+        "先前原文。", "撤回前修订。", "修订后的原文。"]
+    assert old["sentence_id"] == removed["sentence_id"] == corrected["sentence_id"] == 7
+    assert old["revision"] < removed["revision"] < corrected["revision"]
+
+
 def test_original_language_selection_is_validated_before_any_cloud_request(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
     with TestClient(webui.app) as client:
