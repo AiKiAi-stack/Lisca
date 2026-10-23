@@ -1,60 +1,175 @@
 """Record explicitly requested original-language recognition; no credentials in artifacts."""
 import argparse
 import asyncio
+from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import time
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 import av
 import websockets
 
 
-async def run(path, label):
+def utc_now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def file_identity(path):
+    stat = Path(path).stat()
+    return {"device": stat.st_dev, "inode": stat.st_ino, "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns}
+
+
+def redact_remote_source(source):
+    parts = urlsplit(source)
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urlunsplit((parts.scheme, host, parts.path,
+                       "[redacted]" if parts.query else "", ""))
+
+
+def write_recording(path, output_path, events, status, completion_signal, errors,
+                    started_at, started, metadata=None, source_before=None):
+    is_remote = path.startswith(("http://", "https://"))
+    source_kind = "remote_stream" if is_remote else "local_file"
+    finished_at = utc_now()
+    input_hash = None
+    input_hash_after = None
+    input_unchanged = False
+    identity_after = None
+    if not is_remote:
+        input_hash = source_before["sha256"] if source_before else None
+        try:
+            identity_after = file_identity(path)
+            input_hash_after = sha256_file(path)
+        except OSError as exc:
+            errors.append({"type": "source_read_error", "message": str(exc)})
+            status = "failed"
+        input_unchanged = bool(
+            source_before
+            and identity_after == source_before["identity"]
+            and input_hash_after == input_hash
+        )
+    remote_source = redact_remote_source(path) if is_remote else None
+    elapsed = round(time.monotonic() - started, 3)
+    result = {
+        "input": remote_source if is_remote else str(Path(path).resolve()),
+        "source_kind": source_kind,
+        "input_sha256": input_hash,
+        "input_sha256_after": input_hash_after,
+        "input_identity_before": source_before["identity"] if source_before else None,
+        "input_identity_after": identity_after,
+        "input_unchanged": input_unchanged if not is_remote else None,
+        "source_url": remote_source,
+        "sample_interval": {"started_at_utc": started_at, "ended_at_utc": finished_at,
+                            "elapsed_seconds": elapsed},
+        "recording_status": status,
+        "completion_signal": completion_signal,
+        "mode": "transcribe",
+        "metadata": metadata,
+        "events": events,
+        "errors": errors,
+        "final_cues": [e for e in events if e.get("type") == "subtitle" and e.get("is_final")],
+        "translated_cues": sum(bool(e.get("translated")) for e in events),
+        "completed_after_ms": round(elapsed * 1000) if status == "completed" else None,
+    }
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return result
+
+
+async def run(path, label, output_path, server_url):
     root = Path(__file__).resolve().parents[1]
     directory = root / "logs" / "original-caption-acceptance"
-    directory.mkdir(parents=True, exist_ok=True)
-    with av.open(path) as media:
-        metadata = {"duration": media.duration / av.time_base if media.duration else None,
-            "audio": [{"codec": s.codec_context.name, "rate": s.codec_context.sample_rate,
-                       "start_time": float(s.start_time * s.time_base) if s.start_time is not None else None}
-                      for s in media.streams.audio]}
-    payload = {"url": path, "mode": "transcribe", "source": "auto"}
-    request = Request("http://127.0.0.1:8002/api/cloud/sessions", data=json.dumps(payload).encode(),
-                      headers={"Content-Type": "application/json"})
-    with urlopen(request, timeout=10) as response:
-        ticket = json.load(response)
+    output_path = output_path or directory / (label + ".json")
+    server_url = server_url.rstrip("/")
+    websocket_url = server_url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+    is_remote = path.startswith(("http://", "https://"))
+    input_path = path if is_remote else str(Path(path).resolve())
+    source_before = None
+    metadata = None
+    payload = {"url": input_path, "mode": "transcribe", "source": "auto"}
+    started_at = utc_now()
     started = time.monotonic()
     events = []
+    errors = []
+    status = "failed"
+    completion_signal = None
+    ticket = None
     try:
-        async with websockets.connect("ws://127.0.0.1:8002/ws?session=" + ticket["session"],
+        if not is_remote:
+            source_before = {"identity": file_identity(input_path), "sha256": sha256_file(input_path)}
+        with av.open(input_path) as media:
+            metadata = {"duration": media.duration / av.time_base if media.duration else None,
+                        "audio": [{"codec": s.codec_context.name, "rate": s.codec_context.sample_rate,
+                                   "start_time": float(s.start_time * s.time_base)
+                                   if s.start_time is not None else None}
+                                  for s in media.streams.audio]}
+        request = Request(server_url + "/api/cloud/sessions", data=json.dumps(payload).encode(),
+                          headers={"Content-Type": "application/json"})
+        with urlopen(request, timeout=10) as response:
+            ticket = json.load(response)
+        async with websockets.connect(websocket_url + "/ws?session=" + ticket["session"],
                                       max_size=2**23) as socket:
             while True:
                 message = await asyncio.wait_for(socket.recv(), timeout=90)
                 event = json.loads(message)
                 events.append({**event, "observed_after_ms": round((time.monotonic()-started)*1000)})
-                if event["type"] == "end":
+                if event.get("type") == "error":
+                    errors.append(event)
+                if event.get("type") == "end":
+                    completion_signal = "end"
+                    status = "failed" if errors else "completed"
                     break
+    except asyncio.CancelledError:
+        status, completion_signal = "cancelled", "cancelled"
+        errors.append({"type": "cancelled", "message": "Recording cancelled by operator"})
+    except KeyboardInterrupt:
+        status, completion_signal = "cancelled", "cancelled"
+        errors.append({"type": "cancelled", "message": "Recording cancelled by operator"})
+    except Exception as exc:
+        status = "failed"
+        errors.append({"type": "recording_error", "message": str(exc)})
     finally:
-        with urlopen(Request("http://127.0.0.1:8002/api/cloud/sessions/" + ticket["session"],
-                             method="DELETE"), timeout=20):
-            pass
-    finals = [e for e in events if e["type"] == "subtitle" and e.get("is_final")]
-    errors = [e for e in events if e["type"] == "error"]
-    result = {"input": path, "mode": "transcribe", "metadata": metadata, "events": events,
-              "final_cues": finals, "errors": errors,
-              "translated_cues": sum(bool(e.get("translated")) for e in events),
-              "completed_after_ms": round((time.monotonic()-started)*1000)}
-    (directory / (label + ".json")).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
-    print(json.dumps({k:v for k,v in result.items() if k != "events"},ensure_ascii=False),flush=True)
-    if errors or not finals or result["translated_cues"]:
+        if ticket and ticket.get("session"):
+            try:
+                with urlopen(Request(server_url + "/api/cloud/sessions/" + ticket["session"],
+                                     method="DELETE"), timeout=20):
+                    pass
+            except Exception as exc:
+                errors.append({"type": "cleanup_error", "message": str(exc)})
+                status = "failed"
+        if errors and status == "completed":
+            status = "failed"
+        result = write_recording(input_path, output_path, events, status, completion_signal,
+                                 errors, started_at, started, metadata, source_before)
+    print(json.dumps({k: v for k, v in result.items() if k not in ("events", "final_cues", "input")},
+                     ensure_ascii=False), flush=True)
+    if (status != "completed" or not result["final_cues"] or result["translated_cues"]
+            or result["input_unchanged"] is False):
         raise SystemExit("Original-language recognition did not pass")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path")
+    parser.add_argument("path", help="Local media path or remote stream URL")
     parser.add_argument("--label", default="user-video")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--server-url", default="http://127.0.0.1:8002",
+                        help="Recognition session service base URL")
     args = parser.parse_args()
     media_input = args.path if args.path.startswith(("http://", "https://")) else str(Path(args.path).resolve())
-    asyncio.run(run(media_input, args.label))
+    asyncio.run(run(media_input, args.label, args.output, args.server_url))
