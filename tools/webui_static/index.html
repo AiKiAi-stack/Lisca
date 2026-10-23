@@ -494,7 +494,10 @@
     const fontSize = parseFloat(style.fontSize) || 30;
     const padding = (parseFloat(style.paddingLeft) || 15) + (parseFloat(style.paddingRight) || 15);
     const maxTextWidth = Math.max(1, playerWidth * (playerWidth <= 720 ? .94 : .90) - padding);
-    const maxHanChars = Math.max(4, Math.min(26, Math.floor(maxTextWidth * 2 / fontSize)));
+    // Han glyphs occupy roughly one font-size each. Round each display line
+    // down before doubling: flooring the combined width can fit one extra
+    // glyph that the browser then wraps onto a third line.
+    const maxHanChars = Math.max(4, Math.min(26, Math.floor(maxTextWidth / fontSize) * 2));
     const maxLatinChars = Math.max(8, Math.min(48, Math.floor(maxTextWidth * 2 / (fontSize * .60))));
     if (words.length >= 2 && expectedText && spokenText === expectedText) {
       // Use the finalized sentence as the text source. ASR word timestamps can
