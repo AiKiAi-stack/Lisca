@@ -703,6 +703,9 @@ async def ws_endpoint(ws: WebSocket):
         fed_sec = 0.0
         playback_ceiling = None
         pending_sentences = []
+        caption_revisions = {}
+        caption_texts = {}
+        withdrawn_caption_texts = {}
         translation = None
         translation_clauses = {}
         caption_seen = False
@@ -713,6 +716,19 @@ async def ws_endpoint(ws: WebSocket):
             beg, end, text, words = o[:4]
             is_final = bool(o[4]) if len(o) > 4 else True
             sentence_id = o[5] if len(o) > 5 else None
+            revision = None
+            if original_mode and sentence_id is not None:
+                revision_key = str(sentence_id)
+                fingerprint = " ".join(str(text or "").split())
+                # ASR callbacks do not carry provider revisions. After an explicit
+                # withdrawal, do not turn a retransmitted copy of that exact body
+                # into a newer client revision; genuinely changed text can recover.
+                if fingerprint and fingerprint in withdrawn_caption_texts.get(revision_key, set()):
+                    return
+                revision = caption_revisions.get(revision_key, -1) + 1
+                caption_revisions[revision_key] = revision
+                if fingerprint:
+                    caption_texts.setdefault(revision_key, set()).add(fingerprint)
             if text or ((translation or original_mode) and is_final and sentence_id is not None):
                 if translation:
                     key = sentence_id if sentence_id is not None else round(beg, 1)
@@ -730,8 +746,11 @@ async def ws_endpoint(ws: WebSocket):
                         translation_clauses.pop(key, None)
                     return
                 if original_mode and not text and is_final:
+                    previous_texts = caption_texts.pop(str(sentence_id), set())
+                    if previous_texts:
+                        withdrawn_caption_texts.setdefault(str(sentence_id), set()).update(previous_texts)
                     pending_sentences[:] = [item for item in pending_sentences if item["id"] != sentence_id]
-                    put({"type": "caption_remove", "sentence_id": sentence_id, "revision": 0})
+                    put({"type": "caption_remove", "sentence_id": sentence_id, "revision": revision})
                     return
                 # Use the API sentence id when available. Nearby sentence starts
                 # can be less than a second apart and must not share one hold.
@@ -767,10 +786,13 @@ async def ws_endpoint(ws: WebSocket):
                          word_text)
                         for word_beg, word_end, word_text in words
                     ]
-                put({"type": "subtitle", "beg": beg + timeline_offset,
+                message = {"type": "subtitle", "beg": beg + timeline_offset,
                      "end": end + timeline_offset if end is not None else None,
                      "text": text, "words": shifted_words, "is_final": is_final,
-                     "sentence_id": sentence_id})
+                     "sentence_id": sentence_id}
+                if revision is not None:
+                    message["revision"] = revision
+                put(message)
 
         # 服务端日志（ticket-14）：连接即推环形缓冲快照，之后实时推送
         for line in list(_SERVER_LOGS)[-200:]:
