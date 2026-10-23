@@ -40,7 +40,7 @@ def redact_remote_source(source):
                        "[redacted]" if parts.query else "", ""))
 
 
-def write_recording(path, output_path, events, status, completion_signal, errors,
+def write_recording(path, output_path, events, status, completion_signal, completion_reason, errors,
                     started_at, started, metadata=None, source_before=None):
     is_remote = path.startswith(("http://", "https://"))
     source_kind = "remote_stream" if is_remote else "local_file"
@@ -77,6 +77,7 @@ def write_recording(path, output_path, events, status, completion_signal, errors
                             "elapsed_seconds": elapsed},
         "recording_status": status,
         "completion_signal": completion_signal,
+        "completion_reason": completion_reason,
         "mode": "transcribe",
         "metadata": metadata,
         "events": events,
@@ -108,6 +109,7 @@ async def run(path, label, output_path, server_url):
     errors = []
     status = "failed"
     completion_signal = None
+    completion_reason = None
     ticket = None
     try:
         if not is_remote:
@@ -132,13 +134,18 @@ async def run(path, label, output_path, server_url):
                     errors.append(event)
                 if event.get("type") == "end":
                     completion_signal = "end"
-                    status = "failed" if errors else "completed"
+                    reason = event.get("reason")
+                    completion_reason = (reason if reason in ("completed", "cancelled", "error")
+                                         else "completion_unverified")
+                    status = {"completed": "completed", "cancelled": "cancelled",
+                              "error": "failed", "completion_unverified": "completion_unverified"}[
+                                  completion_reason]
                     break
     except asyncio.CancelledError:
-        status, completion_signal = "cancelled", "cancelled"
+        status, completion_signal, completion_reason = "cancelled", "cancelled", "cancelled"
         errors.append({"type": "cancelled", "message": "Recording cancelled by operator"})
     except KeyboardInterrupt:
-        status, completion_signal = "cancelled", "cancelled"
+        status, completion_signal, completion_reason = "cancelled", "cancelled", "cancelled"
         errors.append({"type": "cancelled", "message": "Recording cancelled by operator"})
     except Exception as exc:
         status = "failed"
@@ -155,7 +162,8 @@ async def run(path, label, output_path, server_url):
         if errors and status == "completed":
             status = "failed"
         result = write_recording(input_path, output_path, events, status, completion_signal,
-                                 errors, started_at, started, metadata, source_before)
+                                 completion_reason, errors, started_at, started, metadata,
+                                 source_before)
     print(json.dumps({k: v for k, v in result.items() if k not in ("events", "final_cues", "input")},
                      ensure_ascii=False), flush=True)
     if (status != "completed" or not result["final_cues"] or result["translated_cues"]

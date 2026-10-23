@@ -175,7 +175,7 @@ def test_departed_viewer_releases_capacity_without_interrupting_others(monkeypat
                 f"/share/{share['token']}/ws?viewer_id={replacement.json()['viewer_id']}"
             ) as replacement_socket:
                 assert host.post(f"/share/stop/{share['token']}").status_code == 200
-                assert replacement_socket.receive_json()["type"] == "end"
+                assert replacement_socket.receive_json() == {"type": "end", "reason": "cancelled"}
 
 
 def test_fourth_viewer_is_rejected_before_receiving_media_access(monkeypatch):
