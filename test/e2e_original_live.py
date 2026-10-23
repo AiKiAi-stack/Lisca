@@ -68,17 +68,21 @@ def main(mode, seconds):
                            "pause_events": observed["pauses"],
                            "backward_frames": sum(b < a - .15 for a, b in zip(frames, frames[1:])),
                            "frame_count": len(frames), "page_errors": errors})
-            assert not errors and result["backward_frames"] == 0, result
-            assert result["frame_count"] > 60, result
+            assert not errors and result["backward_frames"] == 0, dict(result)
+            assert result["frame_count"] > 60, dict(result)
             if mode == "live-gap":
-                assert any("部分缺失" in sample["status"] for sample in samples), result
-                assert application_wait <= 2.15, result
-                assert result["media_advance_seconds"] >= seconds - 3, result
+                assert any("部分缺失" in sample["status"] for sample in samples), dict(result)
+                assert application_wait <= 2.15, dict(result)
+                assert result["media_advance_seconds"] >= seconds - 3, dict(result)
                 for sample in samples:
                     assert not (sample["time"] > 6 and "Late sentence" in sample["text"]), sample
             else:
                 visible = [sample for sample in samples if sample["text"].startswith("Live sentence")]
-                assert len(visible) >= 20, result
+                assert len(visible) >= 20, dict(result)
+                for sample in visible:
+                    number = int(sample["text"].split()[-1].rstrip("."))
+                    expected_start = (number - 1) * 2
+                    assert expected_start - .15 <= sample["time"] <= expected_start + 1.65, sample
             result["passed"] = True
             page.screenshot(path=str(directory / (mode + ".png")))
         finally:
