@@ -14,11 +14,11 @@
 
 **Verification:** 从记录工具的输入及参考 manifest 到最终报告，覆盖公开 CLI 行为；识别录音可使用离线事件样本。
 
-- [ ] 录音保存实际本地输入 SHA-256，与参考集声明分别表达；评分明确报告是否匹配。
-- [ ] 输入错配、缺少来源证明、录音期间文件替换或旧格式缺失身份不能报告为已核验来源。
-- [ ] 远端直播按来源与采样区间保留证据，不把 URL 当作不可变文件哈希。
-- [ ] CER/WER 使用预先固定的归一化，修订和撤回不重复计数，无 ID 字幕正确保留与撤回。
-- [ ] 缺少正常完成证据、存在错误或翻译事件时不通过；取消与传输结束不被混同为成功。
-- [ ] 报告区分转写准确率、数据来源证明和完整发布门槛，缺少画面/时间指标不能宣称同步通过。
+- [x] 录音保存实际本地输入 SHA-256，与参考集声明分别表达；评分明确报告是否匹配。证据：`/tmp/stream-asr-impl-20261023/notes/evidence.md`，local recorder→scorer CLI test。
+- [x] 输入错配、缺少来源证明、录音期间文件替换或旧格式缺失身份不能报告为已核验来源。证据：same evidence file, mismatch/legacy CLI tests and active recorder input-replacement test.
+- [x] 远端直播按来源与采样区间保留证据，不把 URL 当作不可变文件哈希。证据：same evidence file, remote recorder→scorer CLI test.
+- [x] CER/WER 使用预先固定的归一化，修订和撤回不重复计数，无 ID 字幕正确保留与撤回。证据：same evidence file, English revision/withdrawal and Chinese CER CLI tests.
+- [x] 缺少正常完成证据、存在错误或翻译事件时不通过；取消与传输结束不被混同为成功。证据：same evidence file, missing-end, cancelled, error+end, and translation CLI tests.
+- [x] 报告区分转写准确率、数据来源证明和完整发布门槛，缺少画面/时间指标不能宣称同步通过。证据：same evidence file, report asserts separate accuracy/provenance fields, `sync_gate_passed: null`, and `release_gate_passed: false`.
 
 **External prerequisites:** 固定参考文字与离线录音足以开发；真实数据集执行在 09/10。
