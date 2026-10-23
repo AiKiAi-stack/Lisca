@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import os
+import re
 import secrets
 import socket
 import shutil
@@ -24,7 +25,8 @@ import threading
 import time
 import warnings
 from collections import deque
-from urllib.parse import urljoin, urlparse
+from itertools import chain
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 
 # 代理 verify=False 的告警压掉（ticket-17）
 warnings.filterwarnings("ignore", message=".*InsecureRequestWarning.*")
@@ -63,6 +65,28 @@ _SHARE_LOCK = threading.RLock()
 _CLOUD = CloudConfigStore(os.path.join(os.path.dirname(UPLOAD_DIR), ".data", "cloud.bin"))
 _CLOUD_JOBS: dict = {}
 _CLOUD_LOCK = threading.RLock()
+
+
+def _redact_url(value: str) -> str:
+    """Keep source identity useful in diagnostics while hiding credentials."""
+    try:
+        parts = urlsplit(value)
+        if not parts.scheme or not parts.netloc:
+            return value
+        host = parts.netloc.rsplit("@", 1)[-1]
+        query = urlencode([(key, "[已隐藏]") for key, _ in parse_qsl(
+            parts.query, keep_blank_values=True
+        )])
+        return urlunsplit((parts.scheme, host, parts.path, query, ""))
+    except ValueError:
+        return "[已隐藏 URL]"
+
+
+_URL_IN_TEXT = re.compile(r"(?:https?|rtsp|rtmp|rtp)://[^\s\"'<>]+", re.I)
+
+
+def _redact_urls_in_text(value: str) -> str:
+    return _URL_IN_TEXT.sub(lambda match: _redact_url(match.group(0)), value)
 
 
 @app.get("/api/cloud")
@@ -312,10 +336,20 @@ async def share_media(token: str, viewer_id: str, media_id: str, request: Reques
                 _resolve_audio_url(url) if role == "audio" else _resolve_video_url(url)
             )
         except Exception as exc:  # noqa: BLE001 - page resolver errors are user-visible
-            raise HTTPException(status_code=502, detail=f"直播源解析失败: {str(exc)[:180]}") from exc
+            logger.warning("共享直播平台页面解析失败: %s", _redact_urls_in_text(str(exc)))
+            raise HTTPException(
+                status_code=502,
+                detail="平台页面解析失败：请检查链接、访问权限和解析器支持情况",
+            ) from None
     if os.path.isfile(url):
         return FileResponse(url)
-    return await _proxy_stream(request, url, share=share, viewer_id=viewer_id)
+    try:
+        return await _proxy_stream(request, url, share=share, viewer_id=viewer_id)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - keep pull errors distinct from page parsing
+        logger.warning("共享直播媒体拉流失败: %s", _redact_urls_in_text(str(exc)))
+        raise HTTPException(status_code=502, detail="媒体拉流失败：请检查来源、网络和访问权限") from None
 
 
 class _ServerLogHandler(logging.Handler):
@@ -428,12 +462,16 @@ async def _proxy_stream(request: Request, stream_url: str,
         req = client.build_request("GET", stream_url, headers=headers)
         upstream = await client.send(req, stream=True)
     except Exception as exc:  # noqa: BLE001 - 代理层失败要完整入日志（ticket-16）
-        logger.warning("代理请求失败 %s: %s", stream_url[:80], exc)
+        logger.warning("代理请求失败 %s: %s", _redact_url(stream_url)[:120],
+                       _redact_urls_in_text(str(exc)))
         await client.aclose()
         raise
     if upstream.status_code >= 400:
         logger.warning("代理上游非 2xx %s -> HTTP %s（%s）",
-                       stream_url[:80], upstream.status_code, request.url.path)
+                       _redact_url(stream_url)[:120], upstream.status_code, request.url.path)
+        await upstream.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="媒体拉流失败：上游拒绝或无法提供媒体")
     pass_headers = {k: v for k, v in upstream.headers.items()
                     if k.lower() in ("content-type", "content-length", "accept-ranges", "content-range")}
     content_type = upstream.headers.get("content-type", "").lower()
@@ -469,8 +507,18 @@ async def video_proxy(url: str, request: Request):
         return FileResponse(url)
     kind, _ = classify(url)
     if kind == "page":
-        url = await _resolve_video_url(url)
-    return await _proxy_stream(request, url)
+        try:
+            url = await _resolve_video_url(url)
+        except Exception as exc:  # noqa: BLE001 - expose the failed stage, not resolver output
+            logger.warning("平台页面解析失败: %s", _redact_urls_in_text(str(exc)))
+            raise HTTPException(status_code=502, detail="平台页面解析失败：请检查链接、访问权限和解析器支持情况") from None
+    try:
+        return await _proxy_stream(request, url)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - proxy failures are distinct from parsing failures
+        logger.warning("媒体拉流失败: %s", _redact_urls_in_text(str(exc)))
+        raise HTTPException(status_code=502, detail="媒体拉流失败：请检查来源、网络和访问权限") from None
 
 
 @app.get("/audio")
@@ -480,8 +528,18 @@ async def audio_proxy(url: str, request: Request):
         return FileResponse(url)
     kind, _ = classify(url)
     if kind == "page":
-        url = await _resolve_audio_url(url)
-    return await _proxy_stream(request, url)
+        try:
+            url = await _resolve_audio_url(url)
+        except Exception as exc:  # noqa: BLE001 - expose the failed stage, not resolver output
+            logger.warning("平台页面解析失败: %s", _redact_urls_in_text(str(exc)))
+            raise HTTPException(status_code=502, detail="平台页面解析失败：请检查链接、访问权限和解析器支持情况") from None
+    try:
+        return await _proxy_stream(request, url)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - proxy failures are distinct from parsing failures
+        logger.warning("媒体拉流失败: %s", _redact_urls_in_text(str(exc)))
+        raise HTTPException(status_code=502, detail="媒体拉流失败：请检查来源、网络和访问权限") from None
 
 
 @app.get("/channels")
@@ -491,19 +549,26 @@ async def channels_proxy(url: str):
     浏览器跨域不能直接读 m3u，统一走本地代理（补 UA/Referer）。"""
     import httpx
 
-    if os.path.exists(url):
-        with open(url, encoding="utf-8", errors="replace") as f:
-            text = f.read()
-    else:
-        headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True, verify=False) as client:
-            resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-            text = resp.content.decode("utf-8", "replace")
+    try:
+        if os.path.exists(url):
+            with open(url, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        else:
+            headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
+            async with httpx.AsyncClient(timeout=20, follow_redirects=True, verify=False) as client:
+                resp = await client.get(url, headers=headers)
+                resp.raise_for_status()
+                text = resp.content.decode("utf-8", "replace")
+    except Exception as exc:  # noqa: BLE001 - distinguish fetch failures from malformed lists
+        logger.warning("频道列表读取失败: %s", _redact_urls_in_text(str(exc)))
+        raise HTTPException(
+            status_code=502,
+            detail="频道列表读取失败：请检查地址、网络和访问权限",
+        ) from None
     try:
         return parse_m3u(text)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=f"频道列表解析失败：{exc}") from None
 
 
 _PROBE_CACHE: dict = {}  # url -> (ts, {ok, latency_ms})，缓存 5 分钟
@@ -556,7 +621,8 @@ async def probe_stream(url: str):
             result["mbps"] = round(n / dt / 1024 / 1024, 1) if dt > 0 else 0
             result["ok"] = sresp.status_code < 400 and n > 0
     except Exception as exc:  # noqa: BLE001 - 检测失败即频道失效
-        logger.warning("probe 失败 %s: %s", url[:60], exc)
+        logger.warning("probe 失败 %s: %s", _redact_url(url)[:120],
+                       _redact_urls_in_text(str(exc)))
         result["ok"] = False
     _PROBE_CACHE[url] = (time.time(), dict(result))
     return result
@@ -669,6 +735,9 @@ async def ws_endpoint(ws: WebSocket):
             queue.put_nowait(item)
             if share:
                 share.publish(item)
+        for name in ("message", "line"):
+            if isinstance(item.get(name), str):
+                item[name] = _redact_urls_in_text(item[name])
         if cloud:
             for name in ("message", "line"):
                 if name in item:
@@ -777,15 +846,16 @@ async def ws_endpoint(ws: WebSocket):
             put({"type": "log", "line": line})
         _LOG_SINKS.append(put)
         logger.info("会话开始 url=%s engine=%s silence=%s",
-                    url[:80], engine_name, silence)
+                    _redact_url(url)[:120], engine_name, silence)
 
         engine = None
-        phase = "media"
+        phase = "input_validation"
         try:
+            kind, target = classify(url)
+            phase = "platform_resolution" if kind == "page" else "media_open"
             real_url = resolve_stream_url(url)
             if stop.is_set():
                 return
-            kind, target = classify(url)
             http_headers = None
             if kind == "page":
                 p = urlparse(target)
@@ -801,20 +871,46 @@ async def ws_endpoint(ws: WebSocket):
                     engine_kwargs.update(api_key=cloud["config"].api_key,
                                          language_hints=[] if cloud["source"] == "auto" else [cloud["source"]])
             if urlparse(real_url).path.lower().endswith(".m3u8"):
-                put({"type": "status", "message": f"正在检查直播源: {real_url[:60]}"})
+                put({"type": "status", "message": f"正在检查直播源: {_redact_url(real_url)[:100]}"})
             source_kwargs = {"http_headers": http_headers}
             if cloud and cloud["start_at"]:
                 source_kwargs["start_sec"] = cloud["start_at"]
+            phase = "media_open"
             src = StreamSource(real_url, **source_kwargs)
             timeline_offset = getattr(src, "timeline_offset_sec", 0.0)
             try:
-                if urlparse(real_url).path.lower().endswith(".m3u8") and hasattr(src, "container"):
+                is_hls = urlparse(real_url).path.lower().endswith(".m3u8")
+                if hasattr(src, "container"):
                     video_streams = src.container.streams.video
-                    if not video_streams:
+                    if is_hls and not video_streams:
                         raise ValueError("直播源没有视频轨，已停止识别以避免黑屏时继续调用 API")
-                    codec = video_streams[0].codec_context.name
-                    if codec == "mpeg2video":
-                        raise ValueError("直播源使用 MPEG-2 视频编码，浏览器无法播放；已停止识别。请换 H.264 频道")
+                    if video_streams and video_streams[0].codec_context.name == "mpeg2video":
+                        raise ValueError("媒体使用 MPEG-2 视频编码，浏览器无法播放；已停止识别。请换用浏览器支持的来源")
+                if stop.is_set():
+                    return
+
+                def decoded_chunks():
+                    nonlocal phase
+                    chunks = iter(src.iter_chunks())
+                    while True:
+                        phase = "media_preflight" if engine is None else "media_decode"
+                        try:
+                            chunk = next(chunks)
+                        except StopIteration:
+                            return
+                        phase = "media_ready"
+                        yield chunk
+
+                chunks = iter(decoded_chunks())
+                phase = "media_preflight"
+                try:
+                    first_chunk = next(chunks)
+                except StopIteration:
+                    phase = "media_empty"
+                    raise ValueError("输入没有可解码的音频内容") from None
+                if not first_chunk:
+                    phase = "media_empty"
+                    raise ValueError("输入没有可解码的音频内容")
                 if stop.is_set():
                     return
                 phase = "recognition"
@@ -826,8 +922,8 @@ async def ws_endpoint(ws: WebSocket):
                 prefetch_local = original_mode and os.path.isfile(real_url)
                 if batch_mode and not os.path.isfile(real_url):
                     raise ValueError("FunASR Vulkan（文件模式）只支持本地媒体文件；直播流请使用实时引擎")
-                put({"type": "status", "message": f"引擎就绪，开始拉流: {real_url[:60]}"})
-                logger.info("引擎就绪 %s，拉流 %s", engine_name, real_url[:80])
+                put({"type": "status", "message": f"引擎就绪，开始拉流: {_redact_url(real_url)[:100]}"})
+                logger.info("引擎就绪 %s，拉流 %s", engine_name, _redact_url(real_url)[:120])
                 # 音频持续送入 ASR；视频元素同时承载 HLS 音轨，并保持在已送入音频的
                 # delay 秒之后播放。这样延迟覆盖整个画面和声音，而非只延迟字幕。
                 ready_sent = False
@@ -840,7 +936,8 @@ async def ws_endpoint(ws: WebSocket):
                 last = time.monotonic()
                 feed_clock = last
                 playback_ceiling = timeline_offset
-                for chunk in src.iter_chunks():
+                for chunk in chain((first_chunk,), chunks):
+                    phase = "recognition"
                     if stop.is_set():
                         break
                     if not clock_sent and urlparse(real_url).path.lower().endswith('.m3u8'):
@@ -908,6 +1005,7 @@ async def ws_endpoint(ws: WebSocket):
                             ready_sent = True
                 if stop.is_set():
                     return
+                phase = "recognition"
                 o = engine.finish()
                 if o[0] is not None:
                     emit(o)
@@ -929,11 +1027,30 @@ async def ws_endpoint(ws: WebSocket):
             finally:
                 src.close()
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
-            message = str(exc)[:300]
-            if cloud and not isinstance(exc, (CloudError, ValueError)):
-                message = ("无法读取媒体：请检查来源、网络和编码；尚未开始云端识别"
-                           if phase == "media" else
-                           "语音识别服务异常：请检查 Key、模型权限和网络后重试")
+            if phase == "input_validation":
+                message = "输入地址无法识别：请提供有效 URL 或本机已存在的文件路径"
+            elif phase == "platform_resolution":
+                message = "平台页面解析失败：请检查链接、访问权限和解析器支持情况"
+            elif phase == "media_open":
+                detail = str(exc)
+                if "没有音频流" in detail:
+                    message = "输入中没有音频轨，未启动识别"
+                elif "MPEG-2" in detail:
+                    message = detail
+                elif "没有视频轨" in detail:
+                    message = detail
+                else:
+                    message = "无法打开媒体流：请检查来源、网络和访问权限；未启动识别"
+            elif phase == "media_preflight":
+                message = "输入音频解码失败，未启动识别"
+            elif phase == "media_empty":
+                message = "输入没有可解码的音频内容，未启动识别"
+            elif phase == "media_decode":
+                message = "媒体拉流或音频解码失败，已停止后续识别"
+            elif cloud and not isinstance(exc, CloudError):
+                message = "语音识别服务异常：请检查 Key、模型权限和网络后重试"
+            else:
+                message = _redact_urls_in_text(str(exc))[:300]
             logger.warning("worker 异常: %s", message)
             put({"type": "error", "message": message})
         finally:

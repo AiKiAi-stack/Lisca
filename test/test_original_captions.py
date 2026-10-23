@@ -87,7 +87,10 @@ def test_connection_check_does_not_start_a_translation_request(tmp_path, monkeyp
     monkeypatch.setattr(webui, "QwenTranslator", forbidden)
     with TestClient(webui.app) as client:
         client.put("/api/cloud", json={"api_key": "test-private-key"})
-        assert client.post("/api/cloud/check").status_code == 200
+        response = client.post("/api/cloud/check")
+        assert response.status_code == 200
+        assert "已发起连接" in response.json()["message"]
+        assert "实际认证和语音识别将在播放时验证" in response.json()["message"]
     assert calls == ["asr", "closed"]
 
 
@@ -128,6 +131,152 @@ def test_silent_source_releases_playback_without_inventing_a_caption(tmp_path, m
     assert any(e['type']=='ready' and e.get('silent') for e in events)
     assert not any(e['type'] in ('subtitle','preview') for e in events)
     assert any(e.get('local_silence_through', 0) and e['local_silence_through'] >= 1.5 for e in events)
+
+
+def test_undecodable_audio_is_rejected_before_recognizer_creation(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    recognizers = []
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            raise RuntimeError('fixture decoder failure')
+            yield b''
+        def close(self): pass
+
+    class Engine:
+        def close(self): pass
+
+    def create_engine(*_args, **_kwargs):
+        recognizers.append('created')
+        return Engine()
+
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', create_engine)
+    with TestClient(webui.app) as client:
+        client.put('/api/cloud', json={'api_key': 'test-private-key'})
+        ticket = client.post('/api/cloud/sessions', json={
+            'url': 'https://media.test/invalid-audio.mp4',
+        }).json()
+        with client.websocket_connect('/ws?session=' + ticket['session']) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event['type'] == 'end':
+                    break
+
+    error = next(event for event in events if event['type'] == 'error')
+    assert recognizers == []
+    assert '解码' in error['message']
+
+
+def test_missing_audio_track_is_actionable_and_never_starts_recognition(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    recognizers = []
+    signed_url = 'https://media.test/no-audio.mp4?token=private-no-audio-token'
+
+    class Source:
+        def __init__(self, url, **_kwargs):
+            raise ValueError(f'输入中没有音频流: {url}')
+
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: recognizers.append('created'))
+    with TestClient(webui.app) as client:
+        client.put('/api/cloud', json={'api_key': 'test-private-key'})
+        ticket = client.post('/api/cloud/sessions', json={'url': signed_url}).json()
+        with client.websocket_connect('/ws?session=' + ticket['session']) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event['type'] == 'end':
+                    break
+
+    error = next(event for event in events if event['type'] == 'error')
+    assert recognizers == []
+    assert '没有音频轨' in error['message']
+    assert 'private-no-audio-token' not in str(events)
+    assert 'test-private-key' not in str(events)
+
+
+def test_known_unplayable_mpeg2_input_is_rejected_before_recognition(tmp_path, monkeypatch):
+    import types
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    recognizers = []
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            self.container = types.SimpleNamespace(streams=types.SimpleNamespace(video=[
+                types.SimpleNamespace(codec_context=types.SimpleNamespace(name='mpeg2video'))
+            ]))
+        def iter_chunks(self):
+            raise AssertionError('known unsupported video must fail before audio decoding')
+            yield b''
+        def close(self): pass
+
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: recognizers.append('created'))
+    with TestClient(webui.app) as client:
+        client.put('/api/cloud', json={'api_key': 'test-private-key'})
+        ticket = client.post('/api/cloud/sessions', json={
+            'url': 'https://media.test/known-mpeg2.mp4',
+        }).json()
+        with client.websocket_connect('/ws?session=' + ticket['session']) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event['type'] == 'end':
+                    break
+
+    error = next(event for event in events if event['type'] == 'error')
+    assert recognizers == []
+    assert 'MPEG-2' in error['message']
+    assert '无法播放' in error['message']
+
+
+def test_cloud_session_diagnostics_hide_signed_media_url_parameters(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            yield b'\x00' * 3200
+        def close(self): pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio): return (None, None, '', None)
+        def poll(self): return (None, None, '', None)
+        def finish(self): return self.poll()
+        def close(self): pass
+
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    signed_url = 'https://media.test/live.m3u8?token=private-media-token&sig=private-signature'
+    with TestClient(webui.app) as client:
+        config_response = client.put('/api/cloud', json={'api_key': 'test-private-key'})
+        assert 'test-private-key' not in config_response.text
+        ticket = client.post('/api/cloud/sessions', json={'url': signed_url})
+        assert ticket.status_code == 200
+        assert 'private-media-token' not in ticket.text
+        with client.websocket_connect('/ws?session=' + ticket.json()['session']) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event['type'] == 'end':
+                    break
+
+    assert any(event['type'] == 'status' and '正在检查直播源:' in event['message']
+               for event in events)
+    assert 'private-media-token' not in str(events)
+    assert 'private-signature' not in str(events)
+    assert 'test-private-key' not in str(events)
 
 
 def test_local_audio_is_bounded_ahead_of_the_realtime_recognizer(tmp_path, monkeypatch):

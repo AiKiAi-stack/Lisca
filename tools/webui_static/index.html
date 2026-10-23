@@ -172,9 +172,23 @@
   const logText = document.getElementById('logText');
   const copyLogBtn = document.getElementById('copyLogBtn');
   const logBuffer = [];
+  function redactDiagnosticDetail(value) {
+    return String(value ?? '').replace(/(?:https?|rtsp|rtmp|rtp):\/\/[^\s"'<>]+/gi, raw => {
+      try {
+        const source = new URL(raw);
+        source.username = '';
+        source.password = '';
+        source.hash = '';
+        for (const key of [...source.searchParams.keys()]) source.searchParams.set(key, '[已隐藏]');
+        return source.toString();
+      } catch (_) {
+        return '[已隐藏 URL]';
+      }
+    });
+  }
   function logEvent(type, detail) {
     const ts = new Date().toISOString().slice(11, 23);
-    logBuffer.push(`[${ts}] ${type}: ${detail}`);
+    logBuffer.push(`[${ts}] ${type}: ${redactDiagnosticDetail(detail)}`);
     if (logBuffer.length > 500) logBuffer.shift();
     if (!logPanel.hidden) logText.value = logBuffer.join('\n');
   }
