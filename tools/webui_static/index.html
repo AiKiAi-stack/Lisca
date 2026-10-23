@@ -162,6 +162,12 @@
   let playbackLimit = null;
   let seekPending = false; // seek 后清空当前句显示，等新数据（ADR-0001）
   let aligningInitialPlayback = false;
+  let lastStableMediaPosition = 0;
+  let pendingSeekOrigin = null;
+  let pendingLocalSeek = null;
+  let pendingLocalSeekTimer = null;
+  let restoringSeek = null;
+  let skipReconnectOnNextPlay = false;
   let subEnabled = true; // 中间字幕显示开关（ticket-13）
   let activeShareToken = null;
   let sharedViewerActive = false;
@@ -749,6 +755,74 @@
   // 历史原地修订 partial；视频叠层只显示 API 已确认的完整句子。
   let uiPaused = false;  // 前端暂停标志：暂停期间忽略新数据（后端同时停止解析）
 
+  function cancelPendingLocalSeek() {
+    if (pendingLocalSeekTimer != null) clearTimeout(pendingLocalSeekTimer);
+    pendingLocalSeekTimer = null;
+    pendingLocalSeek = null;
+  }
+
+  function preparedLocalPosition(time) {
+    if (originalCaptionsComplete) return true;
+    if (Number.isFinite(playbackLimit) && time <= playbackLimit + 0.05) return true;
+    return subs.some(s => s.isFinal !== false && Number.isFinite(s.beg)
+      && Number.isFinite(s.end) && s.end > s.beg && s.beg <= time && s.end > time)
+      || previewSubs.some(s => Number.isFinite(s.beg) && Number.isFinite(s.end)
+        && s.beg <= time && s.end > time);
+  }
+
+  function finishLocalSeekRestore() {
+    const restore = restoringSeek;
+    if (!restore) return;
+    restoringSeek = null;
+    pendingSeekOrigin = null;
+    lastStableMediaPosition = restore.position;
+    seekPending = false;
+    holdingForSync = false;
+    syncSubtitle();
+    if (restore.resume && player.paused) {
+      // Dismissing the dialog resumes on the existing session; dialog time is not a user pause.
+      pauseStartedAt = performance.now();
+      skipReconnectOnNextPlay = true;
+      player.play().catch(() => {});
+    }
+  }
+
+  function requestLocalSeekRestart(destination, origin, resumeAfterCancel) {
+    if (!pendingLocalSeek) {
+      pendingLocalSeek = {destination, origin, resumeAfterCancel};
+      holdingForSync = true;
+      holdingForBuffer = false;
+      if (!uiPaused) {
+        pauseStartedAt = performance.now();
+        uiPaused = true;
+        if (ws && ws.readyState === 1) ws.send('pause');
+      }
+      audioEl.pause();
+      player.pause();
+    } else {
+      pendingLocalSeek.destination = destination;
+    }
+    if (pendingLocalSeekTimer != null) clearTimeout(pendingLocalSeekTimer);
+    pendingLocalSeekTimer = setTimeout(() => {
+      pendingLocalSeekTimer = null;
+      const pending = pendingLocalSeek;
+      if (!pending) return;
+      if (window.confirm('该位置还没有准备好字幕。继续会从目标位置重建识别，并可能再次调用 API/产生费用。是否继续？')) {
+        cancelPendingLocalSeek();
+        connect(activeInput, null, pending.destination);
+        return;
+      }
+      cancelPendingLocalSeek();
+      restoringSeek = {position:pending.origin, resume:pending.resumeAfterCancel};
+      if (Math.abs(player.currentTime - pending.origin) < 0.05) {
+        finishLocalSeekRestore();
+      } else {
+        player.currentTime = pending.origin;
+        audioEl.currentTime = pending.origin;
+      }
+    }, 300);
+  }
+
   function holdCaptionForCloudReconnect() {
     if (!uiPaused || !cloudPlayback || sharedViewerActive || !activeInput || /^https?:/i.test(activeInput)) return false;
     cloudResumeRequired = true;
@@ -883,6 +957,11 @@
 
   async function connect(forceUrl, shareToken = null, startAt = 0) {
     const generation = ++connectionGeneration;
+    cancelPendingLocalSeek();
+    pendingSeekOrigin = null;
+    restoringSeek = null;
+    lastStableMediaPosition = Number.isFinite(startAt) ? startAt : 0;
+    skipReconnectOnNextPlay = false;
     if (hlsPlayer) { const previous = hlsPlayer; hlsPlayer = null; previous.destroy(); }
     cloudResumeRequired = false;
     pauseStartedAt = null;
@@ -1203,15 +1282,24 @@
         setStatus('出错', true);
         playStarted = true;  // 解除播放拦截，允许手动看片（无字幕）
       } else if (msg.type === 'end') {
-        playbackGuard.done = true;
-        document.getElementById('captionActions').hidden = true;
-        originalCaptionsComplete = originalCaptionMode && !isHls && !currentEl.classList.contains('err');
+        const processingComplete = msg.reason === 'completed';
+        playbackGuard.done = processingComplete;
+        document.getElementById('captionActions').hidden = processingComplete;
+        document.getElementById('retryCaptions').hidden = processingComplete;
+        originalCaptionsComplete = processingComplete && originalCaptionMode && !isHls
+          && !currentEl.classList.contains('err');
         if (cloudResumeRequired) setStatus('识别连接已关闭；继续播放时将从暂停位置重新连接');
-        else if (!currentEl.classList.contains('err')) setStatus(originalCaptionsComplete ? '原文字幕已生成，可播放或跳转' : '音频处理结束');
+        else if (!currentEl.classList.contains('err')) {
+          setStatus(originalCaptionsComplete ? '原文字幕已生成，可播放或跳转'
+            : processingComplete ? '音频处理结束'
+            : msg.reason === 'cancelled' ? '识别已取消；已准备字幕仍可回看'
+            : msg.reason === 'error' ? '识别未完成，可重试或仅播放'
+            : '识别结束状态未确认，可重试或仅播放');
+        }
         playStarted = true;  // 同上（静默视频等零字幕场景）
-        // Source/API 已结束，没有更多 ASR 水位可以更新；播放剩余已缓冲的 A/V。
-        playbackLimit = Infinity;
-        if (holdingForBuffer && !uiPaused) {
+        // Only a successful drain proves there is no more ASR waterline to wait for.
+        if (processingComplete) playbackLimit = Infinity;
+        if (processingComplete && holdingForBuffer && !uiPaused) {
           holdingForBuffer = false;
           player.play().catch(() => {});
         }
@@ -1267,6 +1355,15 @@
   // 字幕整句快照 + 连续音视频延迟闸门。
   setInterval(() => { syncSubtitle(); syncPlaybackToBuffer(); }, 100);
   player.addEventListener('seeked', syncSubtitle);
+  player.addEventListener('seeking', () => {
+    if (aligningInitialPlayback || restoringSeek) return;
+    if (pendingSeekOrigin == null)
+      pendingSeekOrigin = pendingLocalSeek?.origin ?? lastStableMediaPosition;
+  });
+  player.addEventListener('timeupdate', () => {
+    if (!player.seeking && !pendingLocalSeek && !restoringSeek)
+      lastStableMediaPosition = player.currentTime;
+  });
   // 本地文件容器/编码不受浏览器支持（如 .mkv）时 <video> 静默失败成黑屏
   // ticket-16：完整错误入日志（code/message/src/状态），code>0 即停会话（音频+API 停）
   player.addEventListener('error', () => {
@@ -1299,12 +1396,19 @@
       audioEl.currentTime = pendingStartAt;
       pendingStartAt = null;
     }
+    lastStableMediaPosition = player.currentTime;
     logEvent('video_ok', `dur=${(player.duration || 0).toFixed(1)}s`);
   });
   // 播放联动：video 控制画面与进度，audio 跟随出声；暂停时前后端都冻结（真正停止解析）
   player.addEventListener('play', () => {
     if (recognitionOnlyStopped && playStarted) { uiPaused = false; pauseStartedAt = null; audioEl.play().catch(() => {}); return; }
-    if (resumeClosedCloudAfterPause()) return;
+    if (skipReconnectOnNextPlay) {
+      skipReconnectOnNextPlay = false;
+      pauseStartedAt = null;
+    } else {
+      if (resumeClosedCloudAfterPause()) return;
+      pauseStartedAt = null;
+    }
     if (!playStarted) {
       // 字幕未就绪时手动播放会让视频领先 ASR 一段固定偏移，时间窗永远不匹配
       // → 叠加字幕全程空白（用户 bug）。拦截：暂停，等首条字幕后统一自动播放。
@@ -1334,29 +1438,61 @@
     logEvent('pause', `t=${player.currentTime.toFixed(1)}`);
   });
   player.addEventListener('seeked', () => {
+    const destination = player.currentTime;
+    if (restoringSeek && Math.abs(destination - restoringSeek.position) < 0.1) {
+      finishLocalSeekRestore();
+      return;
+    }
+    const origin = pendingLocalSeek?.origin ?? pendingSeekOrigin ?? lastStableMediaPosition;
+    const resumeAfterCancel = pendingLocalSeek?.resumeAfterCancel ?? (!uiPaused && !player.paused);
+    pendingSeekOrigin = null;
+    lastStableMediaPosition = destination;
     captionPresenter.reset();
     document.getElementById('lateCaption').hidden = true;
-    audioEl.currentTime = player.currentTime;
+    audioEl.currentTime = destination;
     if (aligningInitialPlayback) {
       aligningInitialPlayback = false;
       seekPending = false;
-      logEvent('sync_seeked', `t=${player.currentTime.toFixed(1)}`);
+      logEvent('sync_seeked', `t=${destination.toFixed(1)}`);
       syncSubtitle();
       return;
     }
-    if (recognitionOnlyStopped || originalCaptionsComplete) { seekPending = false; syncSubtitle(); return; }
+    if (recognitionOnlyStopped || originalCaptionsComplete) {
+      cancelPendingLocalSeek();
+      seekPending = false;
+      syncSubtitle();
+      return;
+    }
     if (cloudPlayback && !sharedViewerActive && activeInput && !/^https?:/i.test(activeInput)) {
-      const destination = player.currentTime;
-      connect(activeInput, null, destination);
+      if (preparedLocalPosition(destination)) {
+        const resume = pendingLocalSeek?.resumeAfterCancel;
+        cancelPendingLocalSeek();
+        holdingForSync = false;
+        seekPending = false;
+        syncSubtitle();
+        logEvent('seek_reuse', `t=${destination.toFixed(1)}`);
+        if (resume && player.paused) {
+          skipReconnectOnNextPlay = true;
+          player.play().catch(() => {});
+        }
+        return;
+      }
+      seekPending = true;
+      currentEl.textContent = '⏳ 等待确认跳转；原字幕处理已暂停…';
+      requestLocalSeekRestart(destination, origin, resumeAfterCancel);
       return;
     }
     seekPending = true;  // 跳转后清空当前句显示，等新数据（ADR-0001）
     currentEl.textContent = '⏳ 跳转中，字幕将随转写跟进…';
-    logEvent('seek', `t=${player.currentTime.toFixed(1)}`);
+    logEvent('seek', `t=${destination.toFixed(1)}`);
   });
 
   async function cancelCaptionProcessing(message, onlyPlay = false) {
     const generation = ++connectionGeneration;
+    cancelPendingLocalSeek();
+    pendingSeekOrigin = null;
+    restoringSeek = null;
+    skipReconnectOnNextPlay = false;
     recognitionOnlyStopped = true;
     playbackGuard.done = true;
     cloudResumeRequired = false;
@@ -1403,6 +1539,10 @@
   shareAddressEl.onchange = () => { shareCopyBtn.dataset.url = shareAddressEl.value; };
   stopBtn.onclick = async () => {
     const generation = ++connectionGeneration;
+    cancelPendingLocalSeek();
+    pendingSeekOrigin = null;
+    restoringSeek = null;
+    skipReconnectOnNextPlay = false;
     playbackGuard.done = true;
     cloudPlayback = false;
     originalCaptionMode = false;
