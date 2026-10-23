@@ -838,6 +838,7 @@ async def ws_endpoint(ws: WebSocket):
                 clock_sent = False
                 silence_run = 0.0
                 last = time.monotonic()
+                feed_clock = last
                 playback_ceiling = timeline_offset
                 for chunk in src.iter_chunks():
                     if stop.is_set():
@@ -850,16 +851,22 @@ async def ws_endpoint(ws: WebSocket):
                             put({'type': 'timeline', 'audio_pts': first_pts})
                         clock_sent = True
                     # 客户端暂停：停止推流解析（字幕冻结，省 API 调用）
+                    pause_begin = time.monotonic()
                     while paused.is_set():
                         if stop.is_set():
                             break
                         time.sleep(0.2)
+                    feed_clock += time.monotonic() - pause_begin
                     if stop.is_set():
                         break
                     # Pace by the actual PCM duration (including a short tail).
                     chunk_sec = len(chunk) / (16000 * 2)
-                    if not batch_mode and not prefetch_local:
-                        wait = chunk_sec - (time.monotonic() - last)
+                    if not batch_mode:
+                        # A realtime recognizer cannot consume a whole long file
+                        # in one burst. Keep only two seconds ahead of its clock;
+                        # playback can start from stable phrases before file EOF.
+                        wait = (fed_sec + chunk_sec - 2.0 - (time.monotonic() - feed_clock)
+                                if prefetch_local else chunk_sec - (time.monotonic() - last))
                         if wait > 0:
                             if cloud and stop.wait(wait):
                                 break
@@ -890,7 +897,9 @@ async def ws_endpoint(ws: WebSocket):
                             default=float("inf"),
                         )
                         playback_ceiling = max(playback_ceiling, min(feed_target, pending_target))
-                        put({"type": "buffer", "play_at": playback_ceiling})
+                        put({"type": "buffer", "play_at": playback_ceiling,
+                             "local_silence_through": timeline_offset + fed_sec
+                             if original_mode and silence_run >= 1.5 else None})
                         if not ready_sent and (not original_mode or caption_seen or silence_run >= 1.5) and fed_sec >= delay_sec \
                                 and playback_ceiling >= timeline_offset + 0.25:
                             put({"type": "ready", "delay": delay_sec,

@@ -127,3 +127,31 @@ def test_silent_source_releases_playback_without_inventing_a_caption(tmp_path, m
                 if event['type']=='end': break
     assert any(e['type']=='ready' and e.get('silent') for e in events)
     assert not any(e['type'] in ('subtitle','preview') for e in events)
+    assert any(e.get('local_silence_through', 0) and e['local_silence_through'] >= 1.5 for e in events)
+
+
+def test_local_audio_is_bounded_ahead_of_the_realtime_recognizer(tmp_path, monkeypatch):
+    import time
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    sent=[]
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            for _ in range(30): yield b'\x00' * 3200
+        def close(self): pass
+    class Engine:
+        def transcribe_chunk(self, _audio): sent.append(time.monotonic()); return self.poll()
+        def poll(self): return (None,None,'',None)
+        def finish(self): return self.poll()
+        def close(self): pass
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    monkeypatch.setattr(webui.os.path, 'isfile', lambda _p: True)
+    with TestClient(webui.app) as client:
+        client.put('/api/cloud',json={'api_key':'test-private-key'})
+        ticket=client.post('/api/cloud/sessions',json={'url':'https://media.test/bounded.mp4'}).json()
+        with client.websocket_connect('/ws?session='+ticket['session']) as socket:
+            while socket.receive_json()['type']!='end': pass
+    assert len(sent)==30
+    assert sent[-1]-sent[0] >= .85, 'three seconds of audio must not be sent in one burst'

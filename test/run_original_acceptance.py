@@ -56,4 +56,5 @@ if __name__ == "__main__":
     parser.add_argument("path")
     parser.add_argument("--label", default="user-video")
     args = parser.parse_args()
-    asyncio.run(run(str(Path(args.path).resolve()), args.label))
+    media_input = args.path if args.path.startswith(("http://", "https://")) else str(Path(args.path).resolve())
+    asyncio.run(run(media_input, args.label))

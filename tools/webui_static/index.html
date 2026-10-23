@@ -89,6 +89,7 @@
   let useCaptionBuffer = false;
   const playbackGuard = new CaptionPlaybackGuard();
   let recognitionOnlyStopped = false;
+  let captionHasSpeech = false;
   let cloudResumeRequired = false;
   let pauseStartedAt = null;
   let connectionGeneration = 0;
@@ -838,12 +839,14 @@
 
   async function connect(forceUrl, shareToken = null, startAt = 0) {
     const generation = ++connectionGeneration;
+    if (hlsPlayer) { const previous = hlsPlayer; hlsPlayer = null; previous.destroy(); }
     cloudResumeRequired = false;
     pauseStartedAt = null;
     originalCaptionsComplete = false;
     originalCaptionMode = false;
     useCaptionBuffer = false;
     recognitionOnlyStopped = false;
+    captionHasSpeech = false;
     document.getElementById('captionActions').hidden = true;
     document.getElementById('playOnly').hidden = false;
     const previousCloud = activeCloudSession;
@@ -1011,7 +1014,6 @@
       // HLS（ticket-19）：hls.js 播放——Chrome 原生 HLS 只支持 fMP4 分片，
       // IPTV 直播源几乎全是 MPEG-TS，需 hls.js 转封装成 fMP4 供 MSE 播放；
       // 播放列表/分片均走本地代理（同源，无 CORS/防盗链问题）。
-      if (hlsPlayer) hlsPlayer.destroy();
       player.removeAttribute('src');
       player.load();
       // Retain downloaded A/V while ASR finalizes; a ten-second forward buffer
@@ -1023,30 +1025,35 @@
         maxBufferLength: 120,
         backBufferLength: 120,
         fragLoadingConcurrency: 1,  // 串行拉分片：不与他人（ASR 拉流）抢慢源带宽
-        fragLoadingMaxRetry: 6,
-        manifestLoadingMaxRetry: 6,
-        levelLoadingMaxRetry: 6,
+        fragLoadingMaxRetry: 0,
+        manifestLoadingMaxRetry: 0,
+        levelLoadingMaxRetry: 0,
       });
       hlsPlayer.loadSource(sharedViewerActive ? viewerInfo.video
         : `/video?url=${encodeURIComponent(url)}`);
       hlsPlayer.attachMedia(player);
+      const currentHls = hlsPlayer;
       let mediaRecoveryAttempts = 0;
       hlsPlayer.on(Hls.Events.INIT_PTS_FOUND, (_evt, data) => {
+        if (hlsPlayer !== currentHls) return;
         if (data.id !== 'main' || videoClockPts != null) return;
         videoClockPts = data.initPTS / data.timescale;
         flushMediaClock();
       });
       hlsPlayer.on(Hls.Events.ERROR, (_evt, data) => {
+        if (hlsPlayer !== currentHls) return;
         if (!data.fatal) return;
         logEvent('hls_error', `${data.type}/${data.details}`);
         if (mediaRecoveryAttempts >= 2) {
-          if (!sharedViewerActive) showCaptionRecovery('直播源恢复失败（已重试 2 次），识别已停止；请换源或重试');
+          if (!sharedViewerActive && !recognitionOnlyStopped) showCaptionRecovery('直播源恢复失败（已重试 2 次），识别已停止；请换源或重试');
           else setStatus('直播源恢复失败，请重新加入或联系主机', true);
           if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
           document.getElementById('playOnly').hidden = true;
           return;
         }
         mediaRecoveryAttempts++;
+        setStatus(`正在恢复直播源（${mediaRecoveryAttempts}/2）…`);
+        logEvent('media_recovery', `${mediaRecoveryAttempts}/2`);
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR && hlsPlayer) {
           hlsPlayer.startLoad();  // 网络抖动自动重连
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hlsPlayer) {
@@ -1094,17 +1101,18 @@
         previewSubs = previewSubs.filter(s => s.sentenceId !== msg.sentence_id);
         syncSubtitle();
       } else if (msg.type === 'subtitle') {
+        if (msg.text) captionHasSpeech = true;
         playbackGuard.progress(msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg, performance.now());
         onSubtitle(msg);
       } else if (msg.type === 'preview') {
         onPreview(msg);
       } else if (msg.type === 'buffer') {
+        if (Number.isFinite(msg.local_silence_through)) playbackGuard.progress(msg.local_silence_through, performance.now());
         if (!sharedViewerActive) {
           playbackLimit = Number.isFinite(msg.play_at) ? msg.play_at : playbackLimit;
           syncPlaybackToBuffer();
         }
       } else if (msg.type === 'ready') {
-        if (msg.silent) setStatus('暂未识别到语音，继续播放');
         originalCaptionMode = !!msg.original;
         useCaptionBuffer = !!msg.buffered;
         if (msg.progressive) {
@@ -1187,7 +1195,7 @@
       } else if (action === 'resume' || action === 'degrade') {
         holdingForBuffer = false;
         if (!uiPaused) player.play().catch(() => {});
-        setStatus(action === 'degrade' ? '字幕暂不可用，部分缺失；媒体继续播放，完整结果见记录' : '字幕已就绪，继续播放');
+        setStatus(action === 'degrade' ? '字幕暂不可用，部分缺失；媒体继续播放，完整结果见记录' : captionHasSpeech ? '字幕已就绪，继续播放' : '暂未识别到语音，继续播放');
       } else if (action === 'recovered') setStatus('原文字幕已追上当前播放位置');
       return;
     }
