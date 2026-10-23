@@ -47,6 +47,7 @@ def snapshot(page):
         history:document.querySelector('#history').innerText,
         lines:(caption.scrollHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom)) /
           (parseFloat(css.lineHeight) || parseFloat(css.fontSize)*1.3),
+        fontSize:parseFloat(css.fontSize),
         clipped:caption.scrollWidth>caption.clientWidth+1};
     }""")
 
@@ -111,6 +112,24 @@ def main():
             assert narrow["text"] and narrow["lines"] <= 2.1 and not narrow["clipped"], narrow
             results.append({"case": "narrow-long-caption", "passed": True, "snapshot": narrow})
             page.screenshot(path=str(directory / "narrow-caption.png"))
+            page.locator("#settingsBtn").click()
+            page.get_by_role("tab", name="字幕", exact=True).click()
+            page.locator("#sizeRange").focus()
+            page.locator("#sizeRange").press("End")
+            page.get_by_role("button", name="关闭设置", exact=True).click()
+            page.wait_for_timeout(300)
+            large = snapshot(page)
+            assert abs(large["fontSize"]-64) < .1, large
+            assert large["text"] and large["lines"] <= 2.1 and not large["clipped"], large
+            results.append({"case": "narrow-selected-large-font", "passed": True, "snapshot": large})
+            page.locator("#fullscreenBtn").click()
+            page.wait_for_function("document.fullscreenElement !== null")
+            full = snapshot(page)
+            assert full["text"] and abs(full["fontSize"]-64) < .1, full
+            assert full["lines"] <= 2.1 and not full["clipped"], full
+            results.append({"case": "fullscreen-selected-large-font", "passed": True, "snapshot": full})
+            page.screenshot(path=str(directory / "fullscreen-caption.png"))
+            page.locator("#exitFullscreenBtn").click()
             assert not errors, errors
         finally:
             stop_if_active(page)
