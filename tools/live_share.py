@@ -133,5 +133,5 @@ class LiveShare:
 
     def stop(self) -> None:
         self.stop_event.set()
-        self.publish({"type": "end"})
+        self.publish({"type": "end", "reason": "cancelled"})
         self.active = False

@@ -62,6 +62,7 @@ def test_default_cloud_session_keeps_original_speech_without_translation(tmp_pat
                 if event["type"] == "end":
                     break
     captions = [event for event in events if event["type"] == "subtitle"]
+    assert events[-1] == {"type": "end", "reason": "completed"}
     assert captions and "".join(cue["text"] for cue in captions) == text
     assert all(cue["is_final"] for cue in captions)
     assert not any(cue.get("translated") for cue in captions)
@@ -92,6 +93,84 @@ def test_connection_check_does_not_start_a_translation_request(tmp_path, monkeyp
         assert "已发起连接" in response.json()["message"]
         assert "实际认证和语音识别将在播放时验证" in response.json()["message"]
     assert calls == ["asr", "closed"]
+
+
+def test_deleting_cloud_session_ends_recording_as_cancelled(tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
+    monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
+    recognizer_started = threading.Event()
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            while True:
+                yield b"\x00" * 3200
+        def close(self): pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            recognizer_started.set()
+            return (0.0, 0.1, "partial", None, True, 1)
+        def poll(self): return (None, None, "", None)
+        def finish(self): return self.poll()
+        def close(self): pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "test-private-key"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "url": "https://media.test/live.m3u8",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as socket:
+            assert recognizer_started.wait(2)
+            assert client.delete("/api/cloud/sessions/" + ticket["session"]).json() == {"ok": True}
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    assert events[-1] == {"type": "end", "reason": "cancelled"}
+
+
+def test_recognition_error_ends_cloud_session_as_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
+    monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            yield b"\x00" * 3200
+        def close(self): pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            raise RuntimeError("test recognizer failure")
+        def poll(self): return (None, None, "", None)
+        def finish(self): return self.poll()
+        def close(self): pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "test-private-key"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "url": "https://media.test/error.mp4",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    assert any(event["type"] == "error" for event in events)
+    assert events[-1] == {"type": "end", "reason": "error"}
 
 
 def test_original_caption_revisions_increase_across_withdrawal_and_correction(tmp_path, monkeypatch):
