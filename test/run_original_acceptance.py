@@ -5,12 +5,27 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 import time
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 import av
 import websockets
+
+
+URL_PATTERN = re.compile(r"(?i)\b(?:https?|wss?|rtmps?|ftps?|mms)://[^\s<>\"']+")
+SECRET_FIELD_PATTERN = re.compile(
+    r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|"
+    r"session(?:[_-]?(?:id|token))?|password|passwd|secret|credential|"
+    r"authorization|cookie|signature|sig|auth)[\"']?\s*[:=]\s*)"
+    r"(\"[^\"]*\"|'[^']*'|[^\s,;}&]+)"
+)
+SENSITIVE_FIELD_NAMES = {
+    "api_key", "access_token", "refresh_token", "token", "session", "session_id",
+    "session_token", "password", "passwd", "secret", "credential", "authorization",
+    "cookie", "signature", "sig", "auth",
+}
 
 
 def utc_now():
@@ -32,16 +47,94 @@ def file_identity(path):
 
 
 def redact_remote_source(source):
-    parts = urlsplit(source)
-    host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
+    return redact_text(source)
+
+
+def _is_sensitive_field(name):
+    normalized = str(name).lower().replace("-", "_")
+    return (normalized in SENSITIVE_FIELD_NAMES
+            or normalized.endswith(("_api_key", "_token", "_secret", "_password",
+                                    "_credential", "_signature", "_cookie", "_authorization",
+                                    "_sig", "_auth")))
+
+
+def _redact_url(url):
+    try:
+        parts = urlsplit(url)
+        hostname = parts.hostname
+        port = parts.port
+    except ValueError:
+        return "[redacted-url]"
+    if not parts.scheme or not parts.netloc or not hostname:
+        return "[redacted-url]"
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    if port:
+        host = f"{host}:{port}"
     return urlunsplit((parts.scheme, host, parts.path,
                        "[redacted]" if parts.query else "", ""))
 
 
+def redact_text(value, secrets=()):
+    def redact_url_match(match):
+        candidate = match.group(0)
+        suffix = ""
+        while candidate and candidate[-1] in ".,;:!?)}":
+            suffix = candidate[-1] + suffix
+            candidate = candidate[:-1]
+        return _redact_url(candidate) + suffix
+
+    text = URL_PATTERN.sub(redact_url_match, str(value))
+    text = SECRET_FIELD_PATTERN.sub(r"\1[redacted]", text)
+    for secret in secrets:
+        if secret and len(secret) >= 4:
+            text = text.replace(secret, "[redacted]")
+    return text
+
+
+def _url_secret_values(url):
+    try:
+        parts = urlsplit(url)
+        values = {parts.username, parts.password}
+        values.update(value for _key, value in parse_qsl(parts.query, keep_blank_values=True))
+    except (TypeError, ValueError):
+        return set()
+    return {value for value in values if value}
+
+
+def _collect_sensitive_values(value, secrets):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if _is_sensitive_field(key) and isinstance(item, str):
+                secrets.add(item)
+            _collect_sensitive_values(item, secrets)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _collect_sensitive_values(item, secrets)
+    elif isinstance(value, str):
+        for match in URL_PATTERN.finditer(value):
+            secrets.update(_url_secret_values(match.group(0).rstrip(".,;:!?)}")))
+
+
+def redact_recording(value, secrets=()):
+    secrets = set(secrets)
+    _collect_sensitive_values(value, secrets)
+
+    def redact(item, key=None):
+        if isinstance(item, dict):
+            return {redact_text(name, secrets): ("[redacted]" if _is_sensitive_field(name)
+                                                 else redact(child, name))
+                    for name, child in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [redact(child) for child in item]
+        if isinstance(item, str):
+            return "[redacted]" if key is not None and _is_sensitive_field(key) else redact_text(item, secrets)
+        return item
+
+    return redact(value)
+
+
 def write_recording(path, output_path, events, status, completion_signal, completion_reason, errors,
-                    started_at, started, metadata=None, source_before=None):
+                    started_at, started, metadata=None, source_before=None, secrets=()):
     is_remote = path.startswith(("http://", "https://"))
     source_kind = "remote_stream" if is_remote else "local_file"
     finished_at = utc_now()
@@ -88,6 +181,7 @@ def write_recording(path, output_path, events, status, completion_signal, comple
     }
     destination = Path(output_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    result = redact_recording(result, secrets)
     destination.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
 
@@ -111,6 +205,7 @@ async def run(path, label, output_path, server_url):
     completion_signal = None
     completion_reason = None
     ticket = None
+    secrets = _url_secret_values(path) | _url_secret_values(server_url)
     try:
         if not is_remote:
             source_before = {"identity": file_identity(input_path), "sha256": sha256_file(input_path)}
@@ -124,6 +219,8 @@ async def run(path, label, output_path, server_url):
                           headers={"Content-Type": "application/json"})
         with urlopen(request, timeout=10) as response:
             ticket = json.load(response)
+        if ticket.get("session"):
+            secrets.add(ticket["session"])
         async with websockets.connect(websocket_url + "/ws?session=" + ticket["session"],
                                       max_size=2**23) as socket:
             while True:
@@ -163,7 +260,7 @@ async def run(path, label, output_path, server_url):
             status = "failed"
         result = write_recording(input_path, output_path, events, status, completion_signal,
                                  completion_reason, errors, started_at, started, metadata,
-                                 source_before)
+                                 source_before, secrets)
     print(json.dumps({k: v for k, v in result.items() if k not in ("events", "final_cues", "input")},
                      ensure_ascii=False), flush=True)
     if (status != "completed" or not result["final_cues"] or result["translated_cues"]
