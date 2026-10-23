@@ -14,7 +14,7 @@
 
 **Verification:** 公开会话与真实浏览器，服务/媒体故障注入，外部请求及音频投送计数；覆盖请求开始、响应中与退避等待的竞态。
 
-- [ ] 认证、权限、额度、限流、网络、服务暂不可用和未知错误按可用证据提示；无服务商依据时不编造分类。
+- [x] 认证、权限、额度、限流、网络、服务暂不可用和未知错误按可用证据提示；无服务商依据时不编造分类。证据：`/home/wbb/.local/share/stream-with-asr/notes/recovery.md`；`test_cloud_ws_classifies_failures_only_from_provider_evidence`（公开 POST/WS）、`test_callback_preserves_structured_sdk_error_without_raw_message`。
 - [ ] 同一临时故障总计恢复最多 2 次；媒体和识别层不能叠加隐式重试，失败本身不重置计数。
 - [ ] 当前次数与等待可观察；采用已确认的 1 秒、2 秒初始退避，取消可打断等待；认证/权限/已知额度错误等待用户操作。
 - [ ] 混合网络/媒体/识别故障直接测试共用预算，而非只重复同一种错误。

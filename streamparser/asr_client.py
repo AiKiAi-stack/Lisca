@@ -16,6 +16,19 @@ class ASRState(Enum):
     STOPPED = auto()
 
 
+class RecognitionFailure(RuntimeError):
+    """SDK callback failure with structured fields and no raw provider message."""
+
+    def __init__(self, status_code=None, code=None):
+        self.status_code = status_code
+        self.code = code
+        super().__init__("DashScope recognition request failed")
+
+
+class ASRTransportFailure(ConnectionError):
+    """Audio transport failed; intentionally does not retain exception text."""
+
+
 class _Callback(RecognitionCallback):
     def __init__(self, subtitle_buffer: deque, sentence_count: list, errors: Queue) -> None:
         super().__init__()
@@ -33,19 +46,8 @@ class _Callback(RecognitionCallback):
         pass
 
     def on_error(self, result: RecognitionResult) -> None:
-        message = ""
-        get_message = getattr(result, "get_message", None)
-        if callable(get_message):
-            try:
-                message = str(get_message() or "")
-            except Exception:  # noqa: BLE001 - SDK callback must not throw
-                message = ""
-        if not message:
-            try:
-                message = str(result)
-            except Exception:  # SDK response stringification can itself fail
-                message = "DashScope recognition failed"
-        self._errors.put(message or "DashScope ASR returned an unspecified error")
+        self._errors.put(RecognitionFailure(getattr(result, "status_code", None),
+                                            getattr(result, "code", None)))
 
     def on_event(self, result: RecognitionResult) -> None:
         sentence = result.get_sentence()
@@ -119,10 +121,12 @@ class ASRClient:
     def raise_if_error(self) -> None:
         """Raise the next asynchronous SDK error on the caller's thread."""
         try:
-            message = self._errors.get_nowait()
+            failure = self._errors.get_nowait()
         except Empty:
             return
-        raise RuntimeError(f"DashScope ASR error: {message}")
+        if isinstance(failure, BaseException):
+            raise failure
+        raise RuntimeError("DashScope ASR returned an unspecified error")
 
     def cancel(self) -> None:
         """Discard unsent audio on user cancellation instead of billing a backlog."""
@@ -156,7 +160,7 @@ class ASRClient:
                 try:
                     self._recognition.send_audio_frame(send_data)
                 except Exception:
-                    self._errors.put("ASR audio connection failed")
+                    self._errors.put(ASRTransportFailure())
                     self._running.clear()
                     self._cancelled.set()
                     return

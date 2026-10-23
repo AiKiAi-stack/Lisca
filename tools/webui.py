@@ -47,6 +47,7 @@ from stream_source import DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
 from live_share import LiveShare, MAX_VIEWERS  # noqa: E402
 from cloud_translation import (CloudConfigStore, CloudError, QwenTranslator, RequestStop,
                                TranslationSession, validate_pair)  # noqa: E402
+from provider_errors import classify_provider_failure  # noqa: E402
 
 app = FastAPI(title="实时字幕")
 
@@ -781,6 +782,16 @@ async def ws_endpoint(ws: WebSocket):
         terminal_reason = "error"
         normal_completion = False
         worker_failed = False
+        provider_exception = None
+
+        def call_provider(function, *args, **kwargs):
+            nonlocal provider_exception
+            try:
+                return function(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - preserve provider fields, not its text
+                if cloud:
+                    provider_exception = exc
+                raise
 
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
@@ -939,7 +950,7 @@ async def ws_endpoint(ws: WebSocket):
                 if stop.is_set():
                     return
                 phase = "recognition"
-                engine = create_engine(engine_name, **engine_kwargs)
+                engine = call_provider(create_engine, engine_name, **engine_kwargs)
                 if cloud and not original_mode:
                     translation = TranslationSession(QwenTranslator(cloud["config"],
                         cloud["source"], cloud["target"]), put, stop)
@@ -997,14 +1008,14 @@ async def ws_endpoint(ws: WebSocket):
                         last = time.monotonic()
                     audio = s16_to_f32(chunk)
                     silence_run = silence_run + chunk_sec if len(audio) and max(abs(audio)) < 0.005 else 0.0
-                    o = engine.transcribe_chunk(audio)
+                    o = call_provider(engine.transcribe_chunk, audio)
                     if not batch_mode:
                         fed_sec += chunk_sec
                     if o[0] is not None:
                         emit(o)
                     # 异步引擎（API）积压的句子逐条取出（增量，含 partial）
                     while True:
-                        o2 = engine.poll()
+                        o2 = call_provider(engine.poll)
                         if o2[0] is None:
                             break
                         emit(o2)
@@ -1031,12 +1042,12 @@ async def ws_endpoint(ws: WebSocket):
                 if stop.is_set():
                     return
                 phase = "recognition"
-                o = engine.finish()
+                o = call_provider(engine.finish)
                 if o[0] is not None:
                     emit(o)
                 # finish 后仍可能有剩余句子（异步引擎），poll 取尽
                 while True:
-                    o2 = engine.poll()
+                    o2 = call_provider(engine.poll)
                     if o2[0] is None:
                         break
                     emit(o2)
@@ -1055,6 +1066,8 @@ async def ws_endpoint(ws: WebSocket):
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
             worker_failed = True
             terminal_reason = "error"
+            provider_details = (classify_provider_failure(exc)
+                                if provider_exception is exc else None)
             if phase == "input_validation":
                 message = "输入地址无法识别：请提供有效 URL 或本机已存在的文件路径"
             elif phase == "platform_resolution":
@@ -1075,12 +1088,21 @@ async def ws_endpoint(ws: WebSocket):
                 message = "输入没有可解码的音频内容，未启动识别"
             elif phase == "media_decode":
                 message = "媒体拉流或音频解码失败，已停止后续识别"
+            elif provider_details is not None:
+                message = provider_details.pop("message")
+                logger.warning("provider failure category=%s status=%s code=%s",
+                               provider_details["failure_category"],
+                               provider_details["provider_status"],
+                               provider_details["provider_code"])
             elif cloud and not isinstance(exc, CloudError):
                 message = "语音识别服务异常：请检查 Key、模型权限和网络后重试"
             else:
                 message = _redact_urls_in_text(str(exc))[:300]
             logger.warning("worker 异常: %s", message)
-            put({"type": "error", "message": message})
+            error_event = {"type": "error", "message": message}
+            if provider_details is not None:
+                error_event.update(provider_details)
+            put(error_event)
         finally:
             if translation:
                 translation.close()
