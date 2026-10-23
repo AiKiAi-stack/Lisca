@@ -223,7 +223,13 @@ test_audio/
 logs/
 results/
 uploads/
-.scratch/
+# Keep scratch data private except the approved local task Markdown files.
+.scratch/*
+!.scratch/original-caption-release/
+.scratch/original-caption-release/*
+!.scratch/original-caption-release/issues/
+.scratch/original-caption-release/issues/*
+!.scratch/original-caption-release/issues/*.md
 .qwen/
 .data/
 .cache/

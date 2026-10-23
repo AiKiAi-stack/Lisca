@@ -2,6 +2,8 @@
 
 日期：2026-10-23（Asia/Shanghai）。用户暂时无法登录 GitHub，先将待办保存在仓库；以下 L 编号是本地编号，尚未创建 GitHub Issue，也不代表已实施或通过验收。
 
+**接续状态：** 用户已确认[首版实现规格 / TR](2026-10-23-original-caption-release-spec.md)及[12 项正式本地任务](2026-10-23-original-caption-ticket-proposal.md)。本文件的 L01–L06 仅保留历史拆分来源；执行状态以正式逐项任务为准，映射见任务索引，迁移 GitHub 时不再把本文件的大项重复创建为另一套执行任务。
+
 需求基线：[原文字幕 PRD v1.0](2026-10-21-live-translation-prd.md)；模式决策：[ADR-0008](../adr/0008-original-language-captions.md)。下列优先级是实施顺序，标签采用仓库默认标签。登录恢复后，先查询已有 Issue，再将缺失项逐条创建并回填链接，避免重复建单。
 
 ## L01：将验收录音与固定参考音频绑定，防止评分来源错配
