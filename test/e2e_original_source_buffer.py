@@ -24,7 +24,7 @@ def main():
             configure(page)
             # Hold only the browser's fourth fragment. The real decoder/ASR
             # side uses its independent source connection and keeps progressing.
-            page.route(re.compile(r"/video\?url=.*seg03\.ts(?:&|$)"), pending.append)
+            page.route(re.compile(r"/video\?url=.*seg03\.ts(?:&|$)"), lambda route: pending.append(route))
             request("/__fixture/scenario", {"mode": "live-normal"})
             page.locator("#url").fill(fixture["live_url"])
             page.locator("#start").click()
@@ -36,10 +36,12 @@ def main():
             buffering = snapshot(page)
             page.wait_for_timeout(1000)
             following = snapshot(page)
+            indicator = page.locator("#sourceBufferStatus")
+            following["source_buffer_status"] = indicator.inner_text() if indicator.count() else None
             assert abs(following["time"] - buffering["time"]) < .15, (buffering, following)
             result["buffering_snapshot"] = following
-            assert "缓冲" in following["status"] and any(
-                word in following["status"] for word in ("来源", "媒体")), dict(result)
+            assert following["source_buffer_status"] and "缓冲" in following["source_buffer_status"], dict(result)
+            assert indicator.is_visible()
             assert request("/__fixture/state")["started"] == count
             pending.pop().continue_()
             page.wait_for_function("document.querySelector('video').currentTime>7", timeout=10000)
