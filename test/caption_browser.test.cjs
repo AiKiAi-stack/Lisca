@@ -12,6 +12,64 @@ function browser({playerWidth=260,fontSize=30}={}){
  vm.runInContext(html.slice(html.indexOf('function captionSegments('),html.indexOf('function onPreview(')),context);
  return {context,current,late,push:cue=>context.onSubtitle({type:'subtitle',translated:true,sentence_id:1,beg:0,end:2,is_final:true,text:'这句译文必须出现在视频内。',...cue}),tick(ms){context.now=ms;context.syncSubtitle();}};
 }
+function seekBrowser({position=0,playbackLimit=0,paused=true,confirmResult=true}={}){
+ const b=browser(),c=b.context,listeners={},confirmMessages=[],timers=new Map();let nextTimer=1;
+ Object.assign(c,{aligningInitialPlayback:false,recognitionOnlyStopped:false,originalCaptionsComplete:false,
+   originalCaptionMode:true,cloudPlayback:true,sharedViewerActive:false,activeInput:'local.mp4',playbackLimit,
+   lastStableMediaPosition:position,pendingSeekOrigin:position,pendingLocalSeek:null,
+   pendingLocalSeekTimer:null,restoringSeek:null,confirmMessages,
+   setTimeout(callback){const id=nextTimer++;timers.set(id,callback);return id;},
+   clearTimeout(id){timers.delete(id);},
+   window:{confirm(message){confirmMessages.push(message);return confirmResult;}},
+   ws:{readyState:1,messages:[],send(message){this.messages.push(message);}},
+   connect(...args){c.reconnected=args;},
+   syncSubtitle(){},audioEl:{currentTime:position,pause(){},play(){return Promise.resolve();}}});
+ c.player={currentTime:position,paused,ended:false,addEventListener(name,callback){listeners[name]=callback;},
+   pause(){this.paused=true;},play(){this.paused=false;return Promise.resolve();}};
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const helpersStart=html.indexOf('  function cancelPendingLocalSeek()');
+ const helpersEnd=html.indexOf('  function holdCaptionForCloudReconnect()',helpersStart);
+ const start=html.indexOf("  player.addEventListener('seeked', () => {");
+ const end=html.indexOf('\n\n  async function cancelCaptionProcessing',start);
+ vm.runInContext(html.slice(helpersStart,helpersEnd)+html.slice(start,end),c);
+ return {context:c,seek(target){c.player.currentTime=target;listeners.seeked();},
+   flushTimers(){for(const callback of timers.values())callback();timers.clear();},finishRestore(){listeners.seeked();}};
+}
+function endedSession(reason){
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:true}]]);
+ const c={generation:1,connectionGeneration:1,recognitionOnlyStopped:false,audioClockPts:null,
+   timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:msg=>msg,
+   playbackGuard:{done:false},document:{getElementById:id=>elements.get(id)},
+   originalCaptionMode:true,isHls:false,currentEl:{classList:{contains:()=>false}},
+   cloudResumeRequired:false,status:'',setStatus(message){c.status=message;},playStarted:false,
+   playbackLimit:5,holdingForBuffer:false,uiPaused:false,player:{play(){return Promise.resolve();}},
+   ws:{closed:false,close(){this.closed=true;}}};
+ const start=html.indexOf('    function receiveMessage(input) {');
+ const end=html.indexOf('    ws.onmessage = ',start);
+ vm.runInNewContext(html.slice(start,end),c);
+ c.receiveMessage(reason === undefined ? {type:'end'} : {type:'end',reason});
+ return c;
+}
+function playBrowser({position=2,pauseStartedAt=0,now=3000,readyState=1}={}){
+ const b=browser(),c=b.context,listeners={};
+ Object.assign(c,{pauseStartedAt,uiPaused:true,cloudResumeRequired:false,connectionGeneration:1,recognitionOnlyStopped:false,
+   originalCaptionsComplete:false,cloudPlayback:true,sharedViewerActive:false,activeInput:'local.mp4',
+   playStarted:true,holdingForSync:false,holdingForBuffer:false,skipReconnectOnNextPlay:false,
+   ws:{readyState,messages:[],send(message){this.messages.push(message);}},
+   audioEl:{pause(){},play(){return Promise.resolve();}},
+   setStatus(){},syncSubtitle(){},logEvent(){},performance:{now:()=>c.now}});
+ c.now=now;
+ c.player={currentTime:position,paused:false,ended:false,addEventListener(name,callback){listeners[name]=callback;},
+   pause(){this.paused=true;},play(){this.paused=false;return Promise.resolve();}};
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const helpersStart=html.indexOf('  function holdCaptionForCloudReconnect()');
+ const helpersEnd=html.indexOf('  function sharedWordRatio(',helpersStart);
+ const playStart=html.indexOf("  player.addEventListener('play', () => {");
+ const playEnd=html.indexOf("  player.addEventListener('pause', () => {",playStart);
+ vm.runInContext(html.slice(helpersStart,helpersEnd)+html.slice(playStart,playEnd),c);
+ return {context:c,play(){listeners.play();}};
+}
 test('late complete translations appear on the video rather than disappearing',()=>{const b=browser();b.push({});b.tick(0);assert.match(b.current.textContent,/这句译文/);assert.equal(b.late.hidden,true);});
 test('provider token drafts never become visible subtitles or a second reading frame',()=>{const b=browser();b.push({is_final:false,end:null,text:'这'});b.tick(0);assert.equal(b.current.textContent,'');assert.equal(b.late.hidden,true);});
 test('a completed cue remains readable after its source interval has expired',()=>{const b=browser();b.context.player.currentTime=1.9;b.push({});b.tick(0);b.context.player.currentTime=2.1;b.tick(100);assert.match(b.current.textContent,/这句译文/);});
@@ -28,6 +86,13 @@ test('original captions split to two-line phrases at a narrow player width',()=>
 test('large desktop caption settings reduce original phrase width to two lines',()=>{const b=browser({playerWidth:900,fontSize:64});const text='字幕字号调大之后每个原文短句也要按较窄可读行宽拆分以免遮挡画面内容'.repeat(3);const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=24),segments);assert.equal(segments.map(s=>s.text).join(''),text);});
 test('maximum font size still fits two lines on the narrowest player',()=>{const b=browser({playerWidth:260,fontSize:64});const text='窄屏大字号字幕仍需要遵守播放器的真实可用宽度并切成能完整阅读的短句'.repeat(2);const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=7),segments);assert.equal(segments.map(s=>s.text).join(''),text);});
 test('320px captions at maximum font size split at the actual two-line Han capacity',()=>{const b=browser({playerWidth:288,fontSize:64});const text='这是一段用于验证字幕在窄屏和放大字号后仍保持完整短句的原文内容';const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=6),segments);assert.equal(segments.map(s=>s.text).join(''),text);});
+test('an unfinished local seek inside the prepared range reuses subtitles without reconnecting',()=>{const b=seekBrowser({position:2,playbackLimit:5});b.seek(4);assert.equal(b.context.reconnected,undefined);assert.equal(b.context.confirmMessages.length,0);});
+test('an unfinished local seek outside the prepared range asks before a billed restart',()=>{const b=seekBrowser({position:2,playbackLimit:5});b.seek(8);assert.deepEqual(b.context.ws.messages,['pause']);assert.equal(b.context.reconnected,undefined);b.flushTimers();assert.equal(b.context.confirmMessages.length,1);assert.match(b.context.confirmMessages[0],/可能.*API|API.*计费/);assert.deepEqual(Array.from(b.context.reconnected),['local.mp4',null,8]);});
+test('declining an unprepared seek restores the old position and playback without reconnecting',()=>{const b=seekBrowser({position:2,playbackLimit:5,paused:false,confirmResult:false});b.seek(8);b.flushTimers();assert.equal(b.context.player.currentTime,2);b.finishRestore();assert.equal(b.context.player.paused,false);assert.equal(b.context.skipReconnectOnNextPlay,true);assert.equal(b.context.reconnected,undefined);});
+test('continuous unprepared seeks ask once and restart only at the final position',()=>{const b=seekBrowser({position:2,playbackLimit:5});b.seek(7);b.seek(8);b.seek(9);b.flushTimers();assert.equal(b.context.confirmMessages.length,1);assert.deepEqual(Array.from(b.context.reconnected),['local.mp4',null,9]);});
+test('a short local resume clears its pause clock and uses the existing socket',()=>{const b=playBrowser();b.play();assert.equal(b.context.pauseStartedAt,null);assert.deepEqual(b.context.ws.messages,['resume']);assert.equal(b.context.reconnected,undefined);});
+test('a completed worker end marks local original captions reusable',()=>{const c=endedSession('completed');assert.equal(c.originalCaptionsComplete,true);assert.equal(c.playbackLimit,Infinity);assert.equal(c.playbackGuard.done,true);});
+test('cancelled, failed, and legacy worker ends do not claim completion or unbounded media',()=>{for(const reason of ['cancelled','error',undefined]){const c=endedSession(reason);assert.equal(c.originalCaptionsComplete,false);assert.equal(c.playbackLimit,5);assert.equal(c.playbackGuard.done,false);}});
 test('long English captions wrap to two lines on a narrow player',()=>{const b=browser({playerWidth:260,fontSize:30});const sentence='This complete English caption should keep its words and remain easy to read on a narrow player.';const text=[sentence,sentence].join(' ');const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=25),segments);assert.equal(segments.map(s=>s.text).join(' ').replace(/\s+/g,' '),text.replace(/\s+/g,' '));});
 
 test('resizing a pending queue reapplies its budget without replacing the current page',()=>{const p=new CaptionPresenter();p.enqueue({sentence_id:1,beg:0,text:'第一句完整的字幕。'});const current=p.tick(0,0);p.enqueue({sentence_id:2,beg:0,text:'这是一段较长的字幕用于检查放大字号之后待显示分页的总阅读时间仍然受到限制不会无限积压。'.repeat(3)});p.setColumns(12);assert.ok(p.current.text.startsWith('第一句'));assert.ok(p.queue.reduce((n,c)=>n+c.hold,0)<=14000);assert.equal(current.text,'第一句完整的字幕。');});
@@ -63,7 +128,8 @@ test('preparing captions times out even if only heartbeats arrive',()=>{const g=
 test('a user pause does not consume the caption failure timeout',()=>{const g=new CaptionPlaybackGuard();g.reset({now:0,live:false});g.tick({now:1000,time:0,limit:0,ready:false,userPaused:true});assert.equal(g.tick({now:40000,time:0,limit:0,ready:false,userPaused:false}),'none');});
 test('a late result cannot repeatedly pause a degraded live stream',()=>{const g=new CaptionPlaybackGuard();g.reset({now:0,live:true});assert.equal(g.tick({now:0,time:10,limit:10,ready:true}),'hold');assert.equal(g.tick({now:2000,time:10,limit:10,ready:true}),'degrade');g.progress(10.1,2100);assert.equal(g.tick({now:4000,time:12,limit:10.1,ready:true}),'none');assert.equal(g.tick({now:5000,time:13,limit:15,ready:true}),'recovered');});
 
-test('explicit stop disables the original-caption timeout and hides recovery actions',async()=>{const b=bufferBrowser(),c=b.context;const els=new Map();c.document={getElementById:id=>{if(!els.has(id))els.set(id,{hidden:false,textContent:''});return els.get(id)}};Object.assign(c,{stopBtn:{style:{}},startBtn:{style:{}},shareCopyBtn:{style:{}},shareAddressEl:{hidden:false},activeCloudSession:null,activeShareToken:null,connectionGeneration:1,stallTimer:null,hlsPlayer:null,ws:null});c.currentEl.classList.remove=()=>{};const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');vm.runInContext(html.slice(html.indexOf('stopBtn.onclick = async'),html.indexOf('const sharedPath =')),c);await c.stopBtn.onclick();assert.equal(c.playbackGuard.done,true);assert.equal(c.cloudPlayback,false);assert.equal(c.document.getElementById('captionActions').hidden,true);});
+test('explicit stop disables the original-caption timeout and hides recovery actions',async()=>{const b=bufferBrowser(),c=b.context;const els=new Map();c.document={getElementById:id=>{if(!els.has(id))els.set(id,{hidden:false,textContent:''});return els.get(id)}};Object.assign(c,{stopBtn:{style:{}},startBtn:{style:{}},shareCopyBtn:{style:{}},shareAddressEl:{hidden:false},activeCloudSession:null,activeShareToken:null,connectionGeneration:1,stallTimer:null,hlsPlayer:null,ws:null,pendingLocalSeek:null,pendingLocalSeekTimer:null,pendingSeekOrigin:null,restoringSeek:null,skipReconnectOnNextPlay:false,clearTimeout(){}});c.currentEl.classList.remove=()=>{};const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');vm.runInContext(html.slice(html.indexOf('stopBtn.onclick = async'),html.indexOf('const sharedPath =')),c);await c.stopBtn.onclick();assert.equal(c.playbackGuard.done,true);assert.equal(c.cloudPlayback,false);assert.equal(c.document.getElementById('captionActions').hidden,true);});
+test('stopping cancels a debounced local seek before it can ask or restart',async()=>{const b=bufferBrowser(),c=b.context;const els=new Map();c.document={getElementById:id=>{if(!els.has(id))els.set(id,{hidden:false,textContent:''});return els.get(id)}};const cleared=[];Object.assign(c,{stopBtn:{style:{}},startBtn:{style:{}},shareCopyBtn:{style:{}},shareAddressEl:{hidden:false},activeCloudSession:null,activeShareToken:null,connectionGeneration:1,stallTimer:null,hlsPlayer:null,ws:null,pendingLocalSeek:{destination:8,origin:2,resumeAfterCancel:true},pendingLocalSeekTimer:17,clearTimeout:id=>cleared.push(id)});c.currentEl.classList.remove=()=>{};const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');const helperStart=html.indexOf('  function cancelPendingLocalSeek()');const helperEnd=html.indexOf('  function preparedLocalPosition(',helperStart);vm.runInContext(html.slice(helperStart,helperEnd),c);vm.runInContext(html.slice(html.indexOf('stopBtn.onclick = async'),html.indexOf('const sharedPath =')),c);await c.stopBtn.onclick();assert.equal(c.pendingLocalSeek,null);assert.equal(c.pendingLocalSeekTimer,null);assert.deepEqual(cleared,[17]);});
 
 test('verified silent audio advances progress without a fabricated subtitle',()=>{const g=new CaptionPlaybackGuard();g.reset({now:0,live:false});g.progress(20,19000);assert.equal(g.tick({now:20000,time:18,limit:20,ready:true}),'none');});
 function hlsFailureHandler(){const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');const c={recoveries:0,cancellations:0,mediaRecoveryAttempts:0,sharedViewerActive:false,recognitionOnlyStopped:false,logEvent(){},setStatus(){},showCaptionRecovery(){c.cancellations++},document:{getElementById:()=>({hidden:false})},Hls:{Events:{ERROR:'error'},ErrorTypes:{NETWORK_ERROR:'network',MEDIA_ERROR:'media'}}};const source={on(_event,callback){c.callback=callback},startLoad(){c.recoveries++},destroy(){c.destroyed=true}};c.hlsPlayer=source;c.currentHls=source;vm.createContext(c);vm.runInContext(html.slice(html.indexOf('hlsPlayer.on(Hls.Events.ERROR'),html.indexOf('player.muted = false;  // HLS 直播')),c);return c;}
