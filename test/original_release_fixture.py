@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import webui  # noqa: E402
 from cloud_translation import CloudConfigStore  # noqa: E402
+from original_release_hls import generate_hls, serve_hls  # noqa: E402
 
 
 def generate_media(path, seconds=8, silent=False, silent_seconds=0, with_audio=True):
@@ -81,6 +82,21 @@ class RecognitionFixture:
         if self.mode == "silence-speech":
             return [(5.8, (4., 5.8, "静音后的第一句原文。", None, True, 1)),
                     (7.8, (6., 7.8, "Speech continues after silence.", None, True, 2))]
+        if self.mode == "live-normal":
+            return [(beg + 1.5, (float(beg), beg + 1.5, f"Live sentence {beg // 2 + 1}.",
+                      None, True, beg // 2 + 1)) for beg in range(0, 60, 2)]
+        if self.mode == "live-gap":
+            return [(1.5, (0., 1.5, "Live first sentence.", None, True, 1)),
+                    (1.7, (1.5, None, "Pending live words", None, False, 2)),
+                    (5., (1.5, 2.5, "Late sentence two.", None, True, 2)),
+                    (5.1, (2.5, None, "Pending later words", None, False, 3)),
+                    (7.5, (2.5, 3.5, "Late sentence three.", None, True, 3)),
+                    (7.6, (3.5, None, "Pending later words again", None, False, 4)),
+                    (9.5, (3.5, 4.5, "Late sentence four.", None, True, 4)),
+                    (9.6, (4.5, None, "Pending last delayed words", None, False, 5)),
+                    (11.5, (4.5, 5.5, "Late sentence five.", None, True, 5)),
+                    *[(beg + .5, (float(beg), beg + 2., f"Recovered sentence {beg}.",
+                                  None, True, beg)) for beg in range(12, 58, 2)]]
         if self.mode == "withdrawn":
             return [(1.0, (0., 5., "This sentence was withdrawn.", None, True, 1)),
                     (1.2, (0., 5., "", None, True, 1)),
@@ -128,7 +144,11 @@ def main():
         generate_media(directory / (name + ".mp4"), *arguments)
     (directory / "invalid.bin").write_bytes(b"This is not decodable media.")
     state = {"mode": "normal", "started": 0, "active": 0, "audio_seconds": 0.,
-             "lock": threading.Lock()}
+             "lock": threading.Lock(), "live_started": time.monotonic()}
+    hls_directory = directory / "hls"
+    hls_directory.mkdir(exist_ok=True)
+    generate_hls(hls_directory)
+    source = serve_hls(hls_directory, state)
     with tempfile.TemporaryDirectory(prefix="original-release-config-") as config:
         webui._CLOUD = CloudConfigStore(Path(config) / "cloud.bin")
 
@@ -142,21 +162,28 @@ def main():
             with state["lock"]:
                 snapshot = {key: value for key, value in state.items() if key != "lock"}
             return {**snapshot, "simulated_recognition": True,
+                    "live_url": f"http://127.0.0.1:{source.server_port}/live.m3u8",
                     "media": {**{name: str(directory / (name + ".mp4")) for name in media},
                               "invalid": str(directory / "invalid.bin")}}
 
         @webui.app.post("/__fixture/scenario")
         async def fixture_scenario(request: Request):
             mode = (await request.json())["mode"]
-            if mode not in (*media, "withdrawn"):
+            if mode not in (*media, "withdrawn", "live-normal", "live-gap"):
                 raise ValueError("Unknown offline scenario")
             with state["lock"]:
                 state["mode"] = mode
+                if mode.startswith("live-"):
+                    state["live_started"] = time.monotonic()
             return {"mode": mode, "simulated_recognition": True}
 
         print(json.dumps({"fixture": "offline recognition substitute", "port": 8002,
                           "real_cloud_calls": False}), flush=True)
-        uvicorn.run(webui.app, host="127.0.0.1", port=8002, log_level="warning")
+        try:
+            uvicorn.run(webui.app, host="127.0.0.1", port=8002, log_level="warning")
+        finally:
+            source.shutdown()
+            source.server_close()
 
 
 if __name__ == "__main__":
