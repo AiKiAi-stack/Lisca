@@ -77,6 +77,10 @@ def main(recovery_only=False):
                                for left, right in zip(samples, samples[1:])
                                if left["paused"] and left["ready_state"] >= 3)
                     assert held <= 2.15, (held, samples)
+                    first_history = next(item["history"] for item in samples if item["history"])
+                    history_rows = page.locator("#history > div").all_inner_texts()
+                    assert len(history_rows) == 3 and first_history in following["history"], history_rows
+                    observation["retained_history_rows"] = history_rows
                 results.append({"case": mode + "-media-continues", "passed": True,
                                 "recognizers_started": expected, "snapshots": [first, following],
                                 "recovery_samples": samples})
