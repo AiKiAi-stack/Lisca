@@ -919,7 +919,7 @@ async def ws_endpoint(ws: WebSocket):
             sentence_id = o[5] if len(o) > 5 else None
             revision = None
             fingerprint = None
-            if original_mode:
+            if original_mode and sentence_id is not None:
                 revision_key = str(sentence_id)
                 normalized = " ".join(str(text or "").split())
                 fingerprint = (hashlib.sha256(normalized.encode("utf-8")).digest()
@@ -1008,7 +1008,8 @@ async def ws_endpoint(ws: WebSocket):
                         clause_fingerprint = (
                             hashlib.sha256(clause_normalized.encode("utf-8")).digest()
                             if clause_normalized else None)
-                        if original_mode and clause_fingerprint:
+                        if (original_mode and sentence_id is not None
+                                and clause_fingerprint):
                             revision_key = str(sentence_id)
                             if clause_fingerprint in withdrawn_caption_texts.get(
                                     revision_key, set()):

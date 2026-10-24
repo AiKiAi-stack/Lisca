@@ -59,6 +59,107 @@ def test_original_caption_accepts_many_live_drafts_before_final(tmp_path, monkey
     assert events[-1] == {"type": "end", "reason": "completed"}
 
 
+def test_original_caption_allows_many_anonymous_legacy_finals(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
+    monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
+    captions = [f"匿名兼容句子{index}。" for index in range(1, 13)]
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            for _ in captions:
+                yield b"\x00" * 3200
+        def close(self): pass
+
+    class Engine:
+        def __init__(self):
+            # The four-field legacy callback has no sentence ID and defaults to final.
+            self.events = iter((index * 1.0, index * 1.0 + 0.8, text, None)
+                               for index, text in enumerate(captions))
+        def transcribe_chunk(self, _audio):
+            return next(self.events, (None, None, "", None))
+        def poll(self): return (None, None, "", None)
+        def finish(self): return self.poll()
+        def close(self): pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "test-private-key"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "url": "https://media.test/anonymous-legacy-finals.mp4",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    subtitles = [event for event in events if event["type"] == "subtitle"]
+    assert [event["text"] for event in subtitles] == captions
+    assert all(event["sentence_id"] is None for event in subtitles)
+    assert all(event["is_final"] is True for event in subtitles)
+    assert all("revision" not in event for event in subtitles)
+    assert not any(event["type"] == "error" for event in events)
+    assert events[-1] == {"type": "end", "reason": "completed"}
+
+
+def test_anonymous_previews_do_not_consume_identified_caption_retention_budget(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
+    monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
+    monkeypatch.setattr(webui, "_MAX_SESSION_CAPTION_RETENTION_FINGERPRINTS", 1)
+    repeated_text = "匿名来源中的重复短句。"
+    draft = repeated_text + "后续内容仍在识别中"
+    words = [(0.0, 0.4, repeated_text), (0.4, 0.8, "后续内容仍在识别中")]
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            for _ in range(4):
+                yield b"\x00" * 3200
+        def close(self): pass
+
+    class Engine:
+        def __init__(self):
+            self.events = iter([
+                (0.0, 0.8, draft, words, False),
+                (0.0, 0.8, draft, words, False),
+                (2.0, 2.8, draft, [(2.0, 2.4, repeated_text),
+                                   (2.4, 2.8, "后续内容仍在识别中")], False),
+                (2.0, 2.8, draft, [(2.0, 2.4, repeated_text),
+                                   (2.4, 2.8, "后续内容仍在识别中")], False),
+            ])
+        def transcribe_chunk(self, _audio):
+            return next(self.events, (None, None, "", None))
+        def poll(self): return (None, None, "", None)
+        def finish(self): return self.poll()
+        def close(self): pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "test-private-key"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "url": "https://media.test/anonymous-previews.mp4",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    previews = [event for event in events if event["type"] == "preview"]
+    assert [event["text"] for event in previews] == [repeated_text, repeated_text]
+    assert [event["beg"] for event in previews] == [0.0, 2.0]
+    assert not any(event["type"] == "error" for event in events)
+    assert events[-1] == {"type": "end", "reason": "completed"}
+
+
 def test_withdrawal_suppresses_source_revision_that_released_stable_preview(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
     monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
