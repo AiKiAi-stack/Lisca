@@ -437,3 +437,12 @@ UI 美化曾安装并应用 `frontend-design`（anthropics/skills）和 `ui-ux-p
 > 这是 Windows/Ubuntu 双系统共用的 stream-with-asr 仓库。请先阅读根目录 handoff.md、AGENTS.md、当前 PRD、ADR-0008 及 2026-10-23 实现规格，再核对实际 Git 与工作区。继续 feat/original-caption-release 的原文字幕首版工作；先核对已集成代码、任务状态和无付费真实浏览器证据，修复 64px/全屏等尚未闭环项，再按已确认依赖推进。共用文件可直接访问，路径按实际挂载点处理，不能覆写 Windows 环境或清理未确认 worktree。保留唯一 8002、用户已延后的 08/11，以及尚未通过的发布门槛；不要自动恢复翻译或无限调用付费 API。
 
 本次交接只新增本文件；没有修改产品代码、关闭任务、迁移磁盘、创建迁移包、提交/推送、重启服务或重新执行付费验收。后续请按实际结果更新本文，避免再次把历史快照当当前状态。
+
+
+## 2026-10-24 接续交接
+
+当前集成分支 `feat/original-caption-release`，代码提交 `fe0ff14`。01–07实现及离线行为回归完成，188项Python通过/1项Windows跳过，90项Node通过；真实浏览器覆盖恢复、共享历史截断及旧媒体回调。所有这些识别均为模拟，不能替代真实语言质量。
+
+当前状态以 `docs/plans/2026-10-23-original-caption-implementation-status.md`、`docs/plans/2026-10-24-original-caption-code-review.md`、`docs/plans/2026-10-24-original-caption-release-evidence.md` 和正式12项本地Issue为准。两语五分钟单说话人媒体及一分钟候选已在项目 `uploads/acceptance-media/`，文本/哈希/许可证见研究清单。09/10还缺本轮真实配置、独立听审和质量/直播长测；08/11用户延期，12未通过，暂不开下一份TR/spec。
+
+普通页面已恢复到 `http://127.0.0.1:8002/`，页面和资源健康；当前没有识别配置、没有真实云调用。GitHub已登录AiKiAi-stack，本轮只有本地提交和任务记录，没有推送或在线Issue/PR。临时实现工作区已清理，分支和日志保留。
