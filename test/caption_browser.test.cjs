@@ -45,13 +45,38 @@ function endedSession(reason){
    playbackGuard:{done:false},document:{getElementById:id=>elements.get(id)},
    originalCaptionMode:true,isHls:false,currentEl:{classList:{contains:()=>false}},
    cloudResumeRequired:false,status:'',setStatus(message){c.status=message;},playStarted:false,
-   playbackLimit:5,holdingForBuffer:false,uiPaused:false,player:{play(){return Promise.resolve();}},
+   playbackLimit:5,holdingForBuffer:false,uiPaused:false,recoveredRevisionOffsets:null,player:{play(){return Promise.resolve();}},
    ws:{closed:false,close(){this.closed=true;}}};
  const start=html.indexOf('    function receiveMessage(input) {');
  const end=html.indexOf('    ws.onmessage = ',start);
  vm.runInNewContext(html.slice(start,end),c);
  c.receiveMessage(reason === undefined ? {type:'end'} : {type:'end',reason});
  return c;
+}
+function terminalCloseSession(reason,{awaitingTimeline=false}={}){
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:false}]]);
+ const recoveries=[];
+ const c={generation:1,connectionGeneration:1,terminalReceived:false,recognitionOnlyStopped:false,recoveredRevisionOffsets:null,
+   audioClockPts:awaitingTimeline?0:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:msg=>msg,
+   playbackGuard:{done:false},document:{getElementById:id=>elements.get(id)},
+   originalCaptionMode:true,isHls:false,currentEl:{classList:{contains:()=>false}},
+   cloudResumeRequired:false,setStatus(){},playStarted:false,playbackLimit:5,holdingForBuffer:false,
+   uiPaused:false,player:{currentTime:8,play(){return Promise.resolve();}},
+   recoveryController:{pending:null,cancelled:false},activeInput:'local.mp4',sharedViewerActive:false,
+   logEvent(){},scheduleSessionRecovery(...args){recoveries.push(args);return {status:'scheduled'};},
+   connect(){},showCaptionRecovery(){},startBtn:{style:{}},stopBtn:{style:{}},shareCopyBtn:{style:{}},
+   shareAddressEl:{hidden:false},ws:null};
+ c.ws={close(code,reason){this.closeCode=code;this.closeReason=reason;this.onclose({code:code??1005});}};
+ const closeStart=html.indexOf('    ws.onclose = (event) => {');
+ const closeEnd=html.indexOf('\n    };',closeStart)+'\n    };'.length;
+ vm.runInNewContext(html.slice(closeStart,closeEnd),c);
+ const receiveStart=html.indexOf('    function receiveMessage(input) {');
+ const receiveEnd=html.indexOf('    ws.onmessage = ',receiveStart);
+ vm.runInNewContext(html.slice(receiveStart,receiveEnd),c);
+ c.receiveMessage({type:'end',reason});
+ if(awaitingTimeline)c.ws.onclose({code:1005});
+ return {context:c,recoveries};
 }
 function playBrowser({position=2,pauseStartedAt=0,now=3000,readyState=1}={}){
  const b=browser(),c=b.context,listeners={};
@@ -95,6 +120,20 @@ test('continuous unprepared seeks ask once and restart only at the final positio
 test('a short local resume clears its pause clock and uses the existing socket',()=>{const b=playBrowser();b.play();assert.equal(b.context.pauseStartedAt,null);assert.deepEqual(b.context.ws.messages,['resume']);assert.equal(b.context.reconnected,undefined);});
 test('a completed worker end marks local original captions reusable',()=>{const c=endedSession('completed');assert.equal(c.originalCaptionsComplete,true);assert.equal(c.playbackLimit,Infinity);assert.equal(c.playbackGuard.done,true);});
 test('cancelled, failed, and legacy worker ends do not claim completion or unbounded media',()=>{for(const reason of ['cancelled','error',undefined]){const c=endedSession(reason);assert.equal(c.originalCaptionsComplete,false);assert.equal(c.playbackLimit,5);assert.equal(c.playbackGuard.done,false);}});
+test('a terminal worker end never schedules another recovery from its socket close',()=>{
+ for(const reason of ['completed','cancelled','error']){
+  const {context,recoveries}=terminalCloseSession(reason);
+  assert.equal(recoveries.length,0,`${reason} end must not schedule recovery`);
+  assert.equal(context.ws.closeCode,1000);
+  assert.equal(context.terminalReceived,true);
+ }
+});
+test('a terminal end waiting for its media timeline still suppresses close recovery',()=>{
+ const {context,recoveries}=terminalCloseSession('completed',{awaitingTimeline:true});
+ assert.equal(recoveries.length,0);
+ assert.deepEqual(context.queuedMediaMessages.map(message=>message.type),['end']);
+ assert.equal(context.terminalReceived,true);
+});
 test('long English captions wrap to two lines on a narrow player',()=>{const b=browser({playerWidth:260,fontSize:30});const sentence='This complete English caption should keep its words and remain easy to read on a narrow player.';const text=[sentence,sentence].join(' ');const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=25),segments);assert.equal(segments.map(s=>s.text).join(' ').replace(/\s+/g,' '),text.replace(/\s+/g,' '));});
 
 test('resizing a pending queue reapplies its budget without replacing the current page',()=>{const p=new CaptionPresenter();p.enqueue({sentence_id:1,beg:0,text:'第一句完整的字幕。'});const current=p.tick(0,0);p.enqueue({sentence_id:2,beg:0,text:'这是一段较长的字幕用于检查放大字号之后待显示分页的总阅读时间仍然受到限制不会无限积压。'.repeat(3)});p.setColumns(12);assert.ok(p.current.text.startsWith('第一句'));assert.ok(p.queue.reduce((n,c)=>n+c.hold,0)<=14000);assert.equal(current.text,'第一句完整的字幕。');});
@@ -115,6 +154,38 @@ test('captions without a revision retain the legacy client behavior',()=>{const 
 test('a cloud disconnect during local pause preserves the caption and reconnects at the same position on play',()=>{const b=browser();b.push({});vm.runInContext('uiPaused=true',b.context);assert.equal(b.context.holdCaptionForCloudReconnect(),true);assert.match(b.current.textContent,/这句译文/);assert.equal(b.context.resumeClosedCloudAfterPause(),true);assert.deepEqual(Array.from(b.context.reconnected).slice(0,3),['test.mp4',null,10]);assert.equal(b.context.reconnected[3].automaticRecovery,true);assert.equal(b.context.cloudResumeRequired,false);assert.equal(b.context.resumeClosedCloudAfterPause(),false);});
 test('cloud failures during normal playback remain visible errors rather than silent reconnect loops',()=>{const b=browser();assert.equal(b.context.holdCaptionForCloudReconnect(),false);assert.equal(b.context.cloudResumeRequired,false);});
 
+test('automatic live recovery rebases restarted sentence revisions without losing caption identity',()=>{
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const start=html.indexOf('  function rebaseRecoveredCaptionRevision(');
+ const end=html.indexOf('\n\n  async function connect(',start);
+ const c={};vm.createContext(c);vm.runInContext(html.slice(start,end),c);
+ const offsets=new Map(),latest=new Map([['sentence-1',5]]);
+ const first=c.rebaseRecoveredCaptionRevision({type:'subtitle',sentence_id:'sentence-1',revision:0},offsets,latest);
+ const next=c.rebaseRecoveredCaptionRevision({type:'subtitle',sentence_id:'sentence-1',revision:1},offsets,latest);
+ const removal=c.rebaseRecoveredCaptionRevision({type:'caption_remove',sentence_id:'sentence-1',revision:2},offsets,latest);
+ assert.deepEqual([first.revision,next.revision,removal.revision],[6,7,8]);
+ assert.equal(first.sentence_id,'sentence-1');
+ assert.equal(c.rebaseRecoveredCaptionRevision({type:'subtitle',sentence_id:'new',revision:0},offsets,latest).revision,0);
+ assert.equal(c.rebaseRecoveredCaptionRevision({type:'subtitle',sentence_id:'legacy'},offsets,latest).revision,undefined);
+});
+
+test('only automatic original-caption recovery on an active live HLS source preserves the media player',()=>{
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const start=html.indexOf('  function shouldPreserveLiveMedia(');
+ const end=html.indexOf('\n\n  function rebaseRecoveredCaptionRevision(',start);
+ const c={};vm.createContext(c);vm.runInContext(html.slice(start,end),c);
+ const source={};
+ assert.equal(c.shouldPreserveLiveMedia({automaticRecovery:true,live:true,originalCaptionMode:true,
+   sharedViewerActive:false,hlsPlayer:source}),true);
+ for(const changed of [
+   {automaticRecovery:false,live:true,originalCaptionMode:true,sharedViewerActive:false,hlsPlayer:source},
+   {automaticRecovery:true,live:false,originalCaptionMode:true,sharedViewerActive:false,hlsPlayer:source},
+   {automaticRecovery:true,live:true,originalCaptionMode:false,sharedViewerActive:false,hlsPlayer:source},
+   {automaticRecovery:true,live:true,originalCaptionMode:true,sharedViewerActive:true,hlsPlayer:source},
+   {automaticRecovery:true,live:true,originalCaptionMode:true,sharedViewerActive:false,hlsPlayer:null},
+ ]) assert.equal(c.shouldPreserveLiveMedia(changed),false);
+});
+
 test('a long local pause reconnects before reusing a potentially expired ASR socket',()=>{const b=browser();b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),true);assert.deepEqual(Array.from(b.context.reconnected),['test.mp4',null,10]);});
 test('a short local pause continues on the existing open recognition connection',()=>{const b=browser();b.context.pauseStartedAt=0;b.context.now=3000;assert.equal(b.context.resumeClosedCloudAfterPause(),false);assert.equal(b.context.reconnected,undefined);});
 
@@ -123,6 +194,7 @@ test('completed original captions resume locally without opening another billed 
 
 function bufferBrowser(){const b=browser(),c=b.context;const {CaptionPlaybackGuard}=require('../tools/webui_static/playback_guard.js');c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live:true});c.showCaptionRecovery=message=>{c.status=message};Object.assign(c,{useCaptionBuffer:true,originalCaptionMode:true,holdingForBuffer:false,uiPaused:false,playbackLimit:10,urlEl:{value:'https://stream.test/live.m3u8'},setStatus(t){c.status=t},audioEl:{pause(){},play(){return Promise.resolve()}},player:{currentTime:10,paused:false,pause(){this.paused=true},play(){this.paused=false;return Promise.resolve()}}});const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');vm.runInContext(html.slice(html.indexOf('function syncPlaybackToBuffer()'),html.indexOf('// 字幕整句快照')),c);return b;}
 test('live original captions release the playback hold after the two-second failure budget',()=>{const b=bufferBrowser();b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,true);b.context.now=2100;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,false);assert.match(b.context.status,/部分缺失|暂不可用/);b.context.now=2400;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,false);});
+test('a live source starts after the bounded wait even when no first caption or ready event arrives',()=>{const b=bufferBrowser(),c=b.context;c.playStarted=false;c.player.currentTime=0;c.player.paused=true;c.playbackLimit=5;c.playbackGuard.reset({now:0,live:true});c.now=0;c.syncPlaybackToBuffer();assert.equal(c.holdingForBuffer,true);assert.equal(c.player.paused,true);c.now=1999;c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);c.now=2000;c.syncPlaybackToBuffer();assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);assert.match(c.status,/部分缺失|暂不可用/);});
 test('an unfinished local file holds at its caption boundary rather than playing ahead',()=>{const b=bufferBrowser();b.context.urlEl.value='test.mp4';b.context.playbackGuard.live=false;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,true);});
 
 const {CaptionPlaybackGuard}=require('../tools/webui_static/playback_guard.js');
@@ -209,40 +281,86 @@ test('only-play cancels pending recovery while leaving the media player running'
 test('verified silent audio advances progress without a fabricated subtitle',()=>{const g=new CaptionPlaybackGuard();g.reset({now:0,live:false});g.progress(20,19000);assert.equal(g.tick({now:20000,time:18,limit:20,ready:true}),'none');});
 function recoveryBrowser(){
  const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const Hls=require('../tools/webui_static/hls.min.js');
  const {RecoveryController}=require('../tools/webui_static/recovery_controller.js');
- let now=0,nextId=1;const timers=new Map(),actions=[];
+ let now=0,nextId=1;const timers=new Map(),actions=[],recoveryOrder=[];
  const c={recoveries:0,cancellations:0,sharedViewerActive:false,recognitionOnlyStopped:false,
    originalCaptionMode:true,uiPaused:false,activeInput:'https://stream.test/live.m3u8',
    audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],
-   connectionGeneration:1,generation:1,playbackLimit:0,player:{currentTime:8},
+   connectionGeneration:1,generation:1,playbackLimit:0,recoveredRevisionOffsets:null,playbackGuard:{live:true},player:{currentTime:8},
    RecoveryController,recoveryController:null,performance:{now:()=>now},
    setTimeout(callback,delay){const id=nextId++;timers.set(id,{callback,at:now+delay});return id;},
    clearTimeout(id){timers.delete(id);},logEvent(){},setStatus(message){c.status=message;},
-   showCaptionRecovery(){c.cancellations++;},holdCaptionForCloudReconnect(){return false;},
+   showCaptionRecovery(){c.cancellations++;},showRecognitionFailure(message){c.cancellations++;c.status=message;},
+   holdCaptionForCloudReconnect(){return false;},
    connect(...args){actions.push(['recognition',args]);},
    document:{getElementById:()=>({hidden:false})},
-   currentEl:{textContent:'',classList:{contains:()=>false,add(){},remove(){}}},
-   Hls:{Events:{ERROR:'error'},ErrorTypes:{NETWORK_ERROR:'network',MEDIA_ERROR:'media'}}};
+   currentEl:{textContent:'',classList:{contains:()=>false,add(){},remove(){}}},Hls};
  c.recoveryController=new RecoveryController({setTimeout:c.setTimeout,clearTimeout:c.clearTimeout});
  c.recoveryController.begin();
- const source={on(_event,callback){c.callback=callback;},startLoad(){c.recoveries++;actions.push(['media']);},
+ const schedule=c.recoveryController.schedule.bind(c.recoveryController);
+ c.recoveryController.schedule=(...args)=>{recoveryOrder.push('schedule');return schedule(...args);};
+ const source={on(_event,callback){c.callback=callback;},stopLoad(){c.stoppedLoads=(c.stoppedLoads||0)+1;recoveryOrder.push('stopLoad');},
+   startLoad(){c.recoveries++;actions.push(['media']);},
    recoverMediaError(){c.recoveries++;actions.push(['media']);},destroy(){c.destroyed=true;}};
  c.hlsPlayer=source;c.currentHls=source;
  vm.createContext(c);
  const helperStart=html.indexOf('  function scheduleSessionRecovery(');
  const helperEnd=html.indexOf('  async function cloudRequest(',helperStart);
  vm.runInContext(html.slice(helperStart,helperEnd),c);
- const mediaStart=html.indexOf('      hlsPlayer.on(Hls.Events.ERROR');
+ const mediaStart=html.indexOf('      const hlsNetworkLoadErrors = new Set([');
  const mediaEnd=html.indexOf('      player.muted = false;  // HLS 直播',mediaStart);
- vm.runInContext(html.slice(mediaStart,mediaEnd),c);
+ vm.runInContext(`if (true) {\n${html.slice(mediaStart,mediaEnd)}`,c);
  const wsStart=html.indexOf('    function receiveMessage(input) {');
  const wsEnd=html.indexOf('    ws.onmessage = ',wsStart);
  vm.runInContext(html.slice(wsStart,wsEnd),c);
- return {context:c,actions,mediaFailure(){c.callback(null,{fatal:true,type:'network'});},
+ return {context:c,actions,recoveryOrder,
+   mediaFailure(){c.callback(null,{fatal:true,type:c.Hls.ErrorTypes.NETWORK_ERROR});},
+   mediaLoaderFailure(details,code=503){c.callback(null,{fatal:false,type:c.Hls.ErrorTypes.NETWORK_ERROR,
+     details,response:{code}});},
    recognitionFailure(retryable=true){c.receiveMessage({type:'error',message:'连接中断',retryable});},
    advance(ms){now+=ms;for(const [id,job] of [...timers])if(job.at<=now){timers.delete(id);job.callback();}}};
 }
 test('an old HLS fatal event cannot stop a newly selected source',()=>{const b=recoveryBrowser(),c=b.context;c.hlsPlayer={};b.mediaFailure();assert.equal(c.cancellations,0);assert.equal(c.recoveries,0);});
+test('the preserved HLS instance can recover a media error after ASR reconnect advances the generation',()=>{
+ const b=recoveryBrowser(),c=b.context;
+ c.connectionGeneration=2; // automatic ASR reconnect; the active HLS instance is unchanged
+ b.mediaFailure();
+ assert.equal(c.recoveryController.pending.attempt,1);
+ b.advance(1000);
+ assert.equal(c.recoveries,1);
+ assert.equal(c.destroyed,undefined);
+});
+test('a nonfatal HLS fragment load failure consumes the shared media recovery budget',()=>{
+ const b=recoveryBrowser(),c=b.context;
+ b.mediaLoaderFailure(c.Hls.ErrorDetails.FRAG_LOAD_ERROR);
+ assert.equal(c.recoveryController.attempts,1);
+ assert.equal(c.recoveryController.pending.delayMs,1000);
+ assert.equal(c.stoppedLoads,1);
+ assert.deepEqual(b.recoveryOrder,['stopLoad','schedule']);
+ b.advance(1000);
+ assert.deepEqual(b.actions.map(action=>action[0]),['media']);
+});
+test('nonfatal HLS manifest, level, fragment, key, and track load errors share the budget',()=>{
+ const Hls=require('../tools/webui_static/hls.min.js');
+ const detailNames=['MANIFEST_LOAD_ERROR','MANIFEST_LOAD_TIMEOUT','LEVEL_LOAD_ERROR','LEVEL_LOAD_TIMEOUT',
+   'FRAG_LOAD_ERROR','FRAG_LOAD_TIMEOUT','KEY_LOAD_ERROR','KEY_LOAD_TIMEOUT',
+   'AUDIO_TRACK_LOAD_ERROR','AUDIO_TRACK_LOAD_TIMEOUT','SUBTITLE_LOAD_ERROR','SUBTITLE_TRACK_LOAD_TIMEOUT'];
+ for(const name of detailNames){
+  const b=recoveryBrowser(),c=b.context,detail=Hls.ErrorDetails[name];
+  assert.ok(detail,`HLS ${name} must exist in the vendored version`);
+  b.mediaLoaderFailure(detail);
+  assert.equal(c.recoveryController.attempts,1,`${name} should use the shared media budget`);
+  assert.equal(c.stoppedLoads,1,`${name} should stop implicit HLS actions`);
+ }
+});
+test('a nonfatal HLS buffer-stall warning does not consume recovery budget',()=>{
+ const b=recoveryBrowser(),c=b.context;
+ c.callback(null,{fatal:false,type:c.Hls.ErrorTypes.MEDIA_ERROR,
+   details:c.Hls.ErrorDetails.BUFFER_STALLED_ERROR});
+ assert.equal(c.recoveryController.attempts,0);
+ assert.equal(c.stoppedLoads,undefined);
+});
 test('media and recognition failures share the same visible two-attempt budget',()=>{
  const b=recoveryBrowser(),c=b.context;
  b.mediaFailure();assert.equal(c.recoveryController.pending.delayMs,1000);
@@ -268,6 +386,27 @@ test('a paused session shows nonretryable provider errors for user action',()=>{
  b.recognitionFailure(false);
  assert.equal(c.recoveryController.attempts,0);assert.equal(c.recoveryController.pending,null);
  assert.equal(c.holdCalled,undefined);assert.equal(c.cancellations,1);
+});
+test('a nonretryable live recognition error keeps the healthy media player moving',()=>{
+ const b=recoveryBrowser(),c=b.context,els=new Map(),cloudRequests=[];
+ for(const id of ['captionActions','retryCaptions'])els.set(id,{hidden:true});
+ Object.assign(c,{cloudPlayback:true,playStarted:true,originalCaptionMode:true,activeCloudSession:'session-token',
+   activeShareToken:'share-token',connectionGeneration:1,recognitionOnlyStopped:false,playbackLimit:8,
+   playbackGuard:{live:true,done:false},holdingForSync:false,holdingForBuffer:false,
+   pauseStartedAt:null,cloudResumeRequired:false,subs:[],previewSubs:[],captionPresenter:{reset(){}},
+   cancelPendingLocalSeek(){},player:{currentTime:8,paused:false,pause(){this.paused=true;},play(){this.paused=false;return Promise.resolve();}},
+   audioEl:{pause(){}},ws:{readyState:1,close(){}},startBtn:{style:{}},stopBtn:{style:{}},
+   shareCopyBtn:{style:{}},shareAddressEl:{hidden:false},
+   document:{getElementById:id=>els.get(id)},cloudRequest:async(path,method)=>{cloudRequests.push([path,method]);return {};},fetch:async()=>({})});
+ const start=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ vm.runInContext(start.slice(start.indexOf('  async function cancelCaptionProcessing('),
+   start.indexOf('  document.getElementById(\'retryCaptions\').onclick')),c);
+ b.recognitionFailure(false);
+ assert.equal(c.player.paused,false);
+ assert.match(c.status,/部分缺失|暂不可用/);
+ assert.equal(c.activeCloudSession,null);assert.equal(c.activeShareToken,'share-token');
+ assert.deepEqual(cloudRequests,[['/api/cloud/sessions/session-token','DELETE']]);
+ assert.equal(els.get('retryCaptions').hidden,false);
 });
 test('switching content cancels an old generation recovery before it can reconnect',()=>{
  const b=recoveryBrowser(),c=b.context;b.recognitionFailure();
