@@ -12,6 +12,18 @@ def test_hls_clock_uses_decoded_pts_not_sliding_playlist_duration(monkeypatch):
     container.decode.return_value = [object()]
     av_open = MagicMock(return_value=container)
     monkeypatch.setattr("tools.stream_source.av.open", av_open)
+
+    class Response:
+        def read(self, _size=-1):
+            return b""
+
+        def geturl(self):
+            return "https://asr.test/live/index.m3u8"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: Response())
     resampled = MagicMock()
     resampled.pts = 19752000
     resampled.time_base = Fraction(1, 16000)
@@ -27,9 +39,10 @@ def test_hls_clock_uses_decoded_pts_not_sliding_playlist_duration(monkeypatch):
     assert source.timeline_offset_sec == 0
     options = av_open.call_args.kwargs["options"]
     assert options["live_start_index"] == "-3"
+
+
 def test_seek_starts_decoding_at_requested_local_position(tmp_path):
     import wave
-    from stream_source import StreamSource
 
     sample = tmp_path / "two-seconds.wav"
     with wave.open(str(sample), "wb") as output:
