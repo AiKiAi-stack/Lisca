@@ -319,6 +319,34 @@ def collect(args):
     checkpoint_post_delta = None
     browser = page = None
     sampler_started = False
+    next_progress_at = 0.0
+    progress_path = Path(output_dir).expanduser() / f"{args.label}.progress.json"
+
+    def write_progress():
+        nonlocal next_progress_at
+        now = time.monotonic()
+        if started is None or now < next_progress_at:
+            return
+        next_progress_at = now + 2
+        latest = samples[-1] if samples else {}
+        last_subtitle = next((event for event in reversed(events)
+                              if event["type"] == "subtitle"), {})
+        word_ends = [word[1] for word in last_subtitle.get("words") or []
+                     if len(word) > 1 and isinstance(word[1], (int, float))]
+        through = [last_subtitle["end"]] if isinstance(last_subtitle.get("end"), (int, float)) else []
+        _write_json(progress_path, {
+            "label": args.label, "running": True,
+            "elapsed_seconds": round(now - started, 3),
+            "session_post_start_count": posts["count"],
+            "sample_count": len(samples),
+            "media_time": latest.get("media_time"),
+            "paused": latest.get("paused"), "buffering": latest.get("buffering"),
+            "caption_visible": latest.get("visible"),
+            "latest_subtitle_observed_after_ms": last_subtitle.get("observed_after_ms"),
+            "latest_subtitle_end": last_subtitle.get("end"),
+            "latest_speech_through": max(through + word_ends, default=None),
+            "error_count": len(errors) + len(page_errors) + len(websocket_errors),
+        })
 
     def drain():
         nonlocal video_eof
@@ -450,6 +478,10 @@ def collect(args):
                     no_start_deadline = started + 15
                     while True:
                         drain()
+                        write_progress()
+                        if args.stop_file and args.stop_file.exists():
+                            stop_active("operator_signal")
+                            break
                         end = next((e for e in reversed(events) if e["type"] == "end"), None)
                         player_failure = next((fatal_player_sample(sample)
                                                for sample in reversed(samples[-5:])
@@ -522,8 +554,8 @@ def collect(args):
     if terminal_error and not any(error.get("type") == "terminal_error" for error in errors):
         errors.append({"type": "terminal_error"})
     hard_error = bool(errors)
-    if (remote and live_cap and stop_state["requested"]
-            and stop_state["trigger"] == "observation_cap"
+    if (stop_state["requested"]
+            and stop_state["trigger"] in ("observation_cap", "operator_signal")
             and stop_state["delete_status"] == 200 and posts["count"]
             and not terminal_error and not hard_error):
         status, signal, reason = "cancelled", "cancelled", "cancelled"
@@ -602,6 +634,13 @@ def collect(args):
         "recording_path": str(recording_path),
     }
     _write_json(report_path, report)
+    _write_json(progress_path, {
+        "label": args.label, "running": False,
+        "recording_status": recording["recording_status"],
+        "live_seconds_cap_reached": live_cap,
+        "operator_stop_trigger": stop_state.get("trigger"),
+        "report_path": str(report_path),
+    })
     success = (recording["recording_status"] == "completed"
                or (remote and live_cap and recording["recording_status"] == "cancelled"))
     return {"label": args.label, "recording_status": recording["recording_status"],
@@ -625,7 +664,11 @@ def parse_args(argv=None):
     parser.add_argument("--language", choices=("zh", "en"), help="Language for optional scoring")
     parser.add_argument("--checkpoints", type=parse_checkpoints, default=[],
                         help="Optional comma-separated local seek checkpoints, such as 5.1,23.8")
+    parser.add_argument("--stop-file", type=Path,
+                        help="Cancel only this observation if the file appears; preserve its report")
     args = parser.parse_args(argv)
+    if args.stop_file and args.stop_file.exists():
+        parser.error("--stop-file already exists; no observation was started")
     if not args.media.startswith(("http://", "https://")):
         args.media = str(Path(args.media).expanduser().resolve())
     if not math.isfinite(args.seconds) or args.seconds <= 0:
