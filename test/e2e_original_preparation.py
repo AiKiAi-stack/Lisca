@@ -36,6 +36,7 @@ def main():
               document.querySelector('#current').innerText.includes('静音后')""", timeout=12000)
             speech = snapshot(page)
             assert speech["time"] < 5.8, speech
+            assert "暂未识别到语音" not in speech["status"], speech
             results.append({"case": "silence-to-speech", "passed": True, "snapshot": speech})
             stop_if_active(page)
 
