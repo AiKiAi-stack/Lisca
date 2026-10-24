@@ -91,16 +91,19 @@ class StreamSource:
             finally:
                 self._remove_temporary_ca_file()
             raise
-        if not self.container.streams.audio:
+        try:
+            if not self.container.streams.audio:
+                raise ValueError(f"输入中没有音频流: {url_or_path}")
+            self.stream = self.container.streams.audio[0]
+            if start_sec:
+                self.container.seek(int(start_sec * av.time_base))
+            self.resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLING_RATE)
+            self.chunk_samples = int(chunk_sec * SAMPLING_RATE)
+            self._buf = b""
+            self._exhausted = False
+        except Exception:
             self.close()
-            raise ValueError(f"输入中没有音频流: {url_or_path}")
-        self.stream = self.container.streams.audio[0]
-        if start_sec:
-            self.container.seek(int(start_sec * av.time_base))
-        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLING_RATE)
-        self.chunk_samples = int(chunk_sec * SAMPLING_RATE)
-        self._buf = b""
-        self._exhausted = False
+            raise
 
     def iter_chunks(self):
         """yield bytes: 16kHz mono int16 little-endian PCM 数据块"""

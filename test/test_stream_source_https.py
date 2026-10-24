@@ -221,6 +221,49 @@ def test_hls_manifest_response_is_closed_when_open_fails(monkeypatch):
     assert response.closed
 
 
+@pytest.mark.parametrize("failure_stage", ["seek", "resampler"])
+def test_hls_constructor_failure_closes_opened_resources(
+    monkeypatch, tmp_path, failure_stage
+):
+    class Response:
+        closed = False
+
+        def geturl(self):
+            return "https://asr.test/live/index.m3u8"
+
+        def close(self):
+            self.closed = True
+
+    response = Response()
+    container = MagicMock()
+    container.streams.audio = [object()]
+    ca_file = tmp_path / "ca-bundle.pem"
+    ca_file.write_text("temporary test CA bundle", encoding="ascii")
+    monkeypatch.setattr(
+        "tools.stream_source._https_trust",
+        lambda: (object(), str(ca_file), str(ca_file)),
+    )
+    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
+    monkeypatch.setattr("tools.stream_source.av.open", lambda *_a, **_k: container)
+
+    if failure_stage == "seek":
+        container.seek.side_effect = RuntimeError("seek failed")
+        start_sec = 1
+    else:
+        def fail_resampler(**_kwargs):
+            raise RuntimeError("resampler failed")
+
+        monkeypatch.setattr("tools.stream_source.av.AudioResampler", fail_resampler)
+        start_sec = 0
+
+    with pytest.raises(RuntimeError, match=f"{failure_stage} failed"):
+        StreamSource("https://asr.test/live/index.m3u8", start_sec=start_sec)
+
+    assert container.close.called
+    assert response.closed
+    assert not ca_file.exists()
+
+
 def test_trusted_https_non_hls_media_still_decodes(
     https_hls, local_tls_material, monkeypatch
 ):
