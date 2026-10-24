@@ -182,8 +182,10 @@ def test_owner_disconnect_or_cloud_config_delete_allows_only_inflight_recognitio
     assert calls == {"transcribe": 1, "poll": 0, "finish": 0}
 
 
-def test_no_progress_watchdog_is_nonretryable_through_public_websocket(monkeypatch):
+def test_local_no_progress_watchdog_is_nonretryable_through_public_websocket(tmp_path, monkeypatch):
     clock = {"now": 0.0}
+    media = tmp_path / "local.wav"
+    media.touch()
 
     class Source:
         def __init__(self, *_args, **_kwargs):
@@ -212,7 +214,7 @@ def test_no_progress_watchdog_is_nonretryable_through_public_websocket(monkeypat
     with TestClient(webui.app) as client:
         client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
         ticket = client.post("/api/cloud/sessions", json={
-            "mode": "transcribe", "url": "https://media.test/live.mp4",
+            "mode": "transcribe", "url": str(media),
             "source": "auto",
         }).json()
         with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
@@ -228,6 +230,64 @@ def test_no_progress_watchdog_is_nonretryable_through_public_websocket(monkeypat
     assert error["retryable"] is False
     assert error["message"].startswith("识别连续 15 秒没有字幕或静音处理进展")
     assert events[-1] == {"type": "end", "reason": "error"}
+
+
+def test_live_no_progress_can_recover_after_twenty_seconds_through_public_websocket(monkeypatch):
+    clock = {"now": 0.0}
+    audio = b"\x00\x10" * 8000  # 0.5s of non-silent PCM; audio delivery is not progress.
+    calls = []
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            for _ in range(41):  # 20s with no captions, then a recoverable late result.
+                yield audio
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            calls.append(clock["now"])
+            clock["now"] += 0.5
+            if len(calls) == 41:
+                return (20.0, 20.5, "Recovered caption", None, True, 1)
+            return (None, None, "", None)
+
+        def poll(self):
+            return (None, None, "", None)
+
+        def finish(self):
+            return self.poll()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(webui, "_session_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(webui, "_session_wait", lambda stop, _seconds: stop.is_set())
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "mode": "transcribe", "url": "https://media.test/live.m3u8",
+            "source": "auto",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    assert not any(event["type"] == "error" for event in events), events[-5:]
+    assert any(event["type"] == "subtitle" and event["text"] == "Recovered caption"
+               for event in events), events[-5:]
+    assert len(calls) == 41, calls
+    assert events[-1] == {"type": "end", "reason": "completed"}
 
 
 def test_ws_event_backlog_overflow_is_visible_and_not_normal_completion(monkeypatch):

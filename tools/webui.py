@@ -1058,7 +1058,11 @@ async def ws_endpoint(ws: WebSocket):
 
         def check_no_progress() -> None:
             nonlocal phase
-            if original_mode and active_session_time() - last_progress_at >= 15.0:
+            # The 15s recognition-progress budget belongs to local preparation.
+            # Live playback has its own 2s client-side degrade path and must keep
+            # accepting audio so a late caption can recover coverage.
+            if (original_mode and prefetch_local
+                    and active_session_time() - last_progress_at >= 15.0):
                 phase = "no_progress"
                 raise TimeoutError("recognition made no progress for 15 seconds")
 
