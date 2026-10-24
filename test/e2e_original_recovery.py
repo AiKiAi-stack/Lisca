@@ -116,6 +116,30 @@ def main():
                             "observed_media_backoff_seconds": fragment_requests[1] - fragment_requests[0],
                             "status": snapshot(page)["status"], "public_diagnostics": diagnostics})
             page.unroute(pattern, fail_one_fragment)
+            stop_if_active(page)
+
+            # These failures happen within the same 1s backoff. Recognition
+            # recovery must also wake the HLS loader stopped by the media fault.
+            failed_fragments.clear()
+            fragment_requests.clear()
+            page.route(pattern, fail_one_fragment)
+            before = request("/__fixture/state")["started"]
+            open_scenario(page, "recovery-coincident-live", fixture["live_url"])
+            wait_state(page, lambda state: state["started"] == before + 2, timeout=15)
+            page.wait_for_function("document.querySelector('video').currentTime>.3", timeout=12000)
+            first = snapshot(page)
+            page.wait_for_timeout(3000)
+            following = snapshot(page)
+            coincident = request("/__fixture/state")
+            assert coincident["started"] == before + 2 and coincident["active"] == 1
+            assert following["time"] - first["time"] >= 2.5, (first, following)
+            assert len(failed_fragments) == 1 and len(fragment_requests) == 2, fragment_requests
+            assert fragment_requests[1] - fragment_requests[0] >= .85, fragment_requests
+            results.append({"case": "coincident-media-and-asr-resume-the-loader", "passed": True,
+                            "recognizers_started": 2, "injected_media_failures": 1,
+                            "observed_media_backoff_seconds": fragment_requests[1] - fragment_requests[0],
+                            "snapshots": [first, following]})
+            page.unroute(pattern, fail_one_fragment)
             assert not errors, errors
         finally:
             stop_if_active(page)

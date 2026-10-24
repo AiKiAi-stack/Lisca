@@ -97,7 +97,7 @@ class RecognitionFixture:
         if self.mode == "silence-speech":
             return [(5.8, (4., 5.8, "静音后的第一句原文。", None, True, 1)),
                     (7.8, (6., 7.8, "Speech continues after silence.", None, True, 2))]
-        if self.mode in ("live-normal", "recovery-live"):
+        if self.mode in ("live-normal", "recovery-live", "recovery-coincident-live"):
             return [(beg + 1.5, (float(beg), beg + 1.5, f"Live sentence {beg // 2 + 1}.",
                       None, True, beg // 2 + 1)) for beg in range(0, 60, 2)]
         if self.mode == "live-gap":
@@ -149,6 +149,8 @@ class RecognitionFixture:
             raise OfflineAuthenticationFailure("offline fixture authentication failure")
         if self.mode in ("recovery-network", "recovery-live") and self.elapsed >= 3:
             raise ConnectionError("offline fixture connection failure")
+        if self.mode == "recovery-coincident-live" and self.attempt == 1 and self.elapsed >= .3:
+            raise ConnectionError("offline fixture coincident connection failure")
         while self.steps and self.steps[0][0] <= self.elapsed:
             self.pending.append(self.steps.popleft()[1])
         return self.poll()
@@ -208,13 +210,13 @@ def main():
         async def fixture_scenario(request: Request):
             mode = (await request.json())["mode"]
             if mode not in (*media, "withdrawn", "long-en", "fast-en", "live-normal", "live-gap",
-                            "recovery-network", "recovery-auth", "recovery-live",
+                            "recovery-network", "recovery-auth", "recovery-live", "recovery-coincident-live",
                             "live-no-caption", "live-auth"):
                 raise ValueError("Unknown offline scenario")
             with state["lock"]:
                 state["mode"] = mode
                 state["scenario_started"] = 0
-                if mode.startswith("live-") or mode == "recovery-live":
+                if mode.startswith("live-") or mode in ("recovery-live", "recovery-coincident-live"):
                     state["live_started"] = time.monotonic()
             return {"mode": mode, "simulated_recognition": True}
 
