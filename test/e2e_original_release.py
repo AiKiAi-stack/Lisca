@@ -4,7 +4,9 @@ Requires original_release_fixture.py at the sole WebUI port, 8002. It refuses a
 regular service, never installs credentials, and writes only simulated evidence.
 """
 import json
+import os
 from pathlib import Path
+import shutil
 import time
 from urllib.request import Request, urlopen
 
@@ -12,6 +14,14 @@ from playwright.sync_api import sync_playwright
 
 BASE = "http://127.0.0.1:8002"
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def launch_browser(playwright):
+    executable = (os.environ.get("STREAM_ASR_BROWSER") or shutil.which("google-chrome")
+                  or shutil.which("chromium") or shutil.which("chromium-browser"))
+    options = {"executable_path": executable} if executable else {}
+    return playwright.chromium.launch(headless=True,
+        args=["--autoplay-policy=no-user-gesture-required"], **options)
 
 
 def request(path, data=None):
@@ -69,8 +79,7 @@ def main():
     directory.mkdir(parents=True, exist_ok=True)
     results = []
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(executable_path="/usr/bin/google-chrome",
-            headless=True, args=["--autoplay-policy=no-user-gesture-required"])
+        browser = launch_browser(playwright)
         page = browser.new_page(viewport={"width": 1280, "height": 800})
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))

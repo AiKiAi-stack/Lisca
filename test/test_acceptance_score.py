@@ -511,6 +511,49 @@ def test_scoring_cli_uses_fixed_normalization_with_revisions_retractions_and_ano
     assert report["source_verified"] is True
 
 
+def test_scoring_cli_ignores_late_stale_revision_after_retraction_and_accepts_newer_revision(tmp_path):
+    reference_hash = "a" * 64
+    manifest = {"dataset": "fixed", "config": "en", "sha256": reference_hash, "seconds": 1,
+                "items": [{"reference": "Keep the revised words"}]}
+    base = {"source_kind": "local_file", "input_sha256": reference_hash,
+            "input_sha256_after": reference_hash, "input_unchanged": True,
+            "recording_status": "completed", "completion_signal": "end", "errors": []}
+    stale_recording = {**base, "events": [
+        {"type": "subtitle", "sentence_id": 7, "revision": 1, "beg": 0,
+         "is_final": True, "text": "Keep these words"},
+        {"type": "caption_remove", "sentence_id": 7, "revision": 2},
+        {"type": "subtitle", "sentence_id": 7, "revision": 1, "beg": 0,
+         "is_final": True, "text": "Wrong stale resurrection"},
+        {"type": "end", "reason": "completed"},
+    ]}
+    revised_recording = {**base, "events": [
+        {"type": "subtitle", "sentence_id": 7, "revision": 1, "beg": 0,
+         "is_final": True, "text": "Keep these words"},
+        {"type": "caption_remove", "sentence_id": 7, "revision": 2},
+        {"type": "subtitle", "sentence_id": 7, "revision": 1, "beg": 0,
+         "is_final": True, "text": "Wrong stale resurrection"},
+        {"type": "subtitle", "sentence_id": 7, "revision": 3, "beg": 0,
+         "is_final": True, "text": "Keep the revised words"},
+        {"type": "end", "reason": "completed"},
+    ]}
+    anonymous_recording = {**base, "events": [
+        {"type": "caption_remove", "sentence_id": 7, "revision": 2},
+        {"type": "subtitle", "sentence_id": None, "revision": 1, "beg": 0,
+         "is_final": True, "text": "Anonymous stays"},
+        {"type": "end", "reason": "completed"},
+    ]}
+
+    stale_report = run_score_cli(tmp_path, manifest, stale_recording)
+    revised_report = run_score_cli(tmp_path, manifest, revised_recording)
+    anonymous_report = run_score_cli(tmp_path, manifest, anonymous_recording)
+
+    assert stale_report["transcript"] == ""
+    assert stale_report["hypothesis_tokens"] == 0
+    assert revised_report["transcript"] == "Keep the revised words"
+    assert revised_report["error_rate"] == 0
+    assert anonymous_report["transcript"] == "Anonymous stays"
+
+
 def test_scoring_cli_reports_chinese_character_error_rate(tmp_path):
     reference_hash = "c" * 64
     manifest = {"dataset": "fixed-zh", "config": "zh", "sha256": reference_hash, "seconds": 1,
