@@ -1369,11 +1369,11 @@
           }, generation);
           if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
           if (recovery.status === 'exhausted') {
-            showCaptionRecovery('媒体和识别共用的恢复额度已用完：' + msg.message);
+            showRecognitionFailure('媒体和识别共用的恢复额度已用完：' + msg.message);
             return;
           }
           if (msg.retryable === true && holdCaptionForCloudReconnect()) return;
-          showCaptionRecovery('语音识别失败：' + msg.message);
+          showRecognitionFailure('语音识别失败：' + msg.message);
           return;
         }
         if (holdCaptionForCloudReconnect()) return;
@@ -1418,7 +1418,7 @@
             {automaticRecovery:true});
         }, generation);
         if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
-        showCaptionRecovery('识别连接失败，自动恢复额度已用完；可手动重试或仅播放');
+        showRecognitionFailure('识别连接失败，自动恢复额度已用完；可手动重试或仅播放');
         return;
       }
       setStatus('连接失败', true);
@@ -1432,7 +1432,7 @@
             {automaticRecovery:true});
         }, generation);
         if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
-        showCaptionRecovery('识别连接异常关闭，自动恢复额度已用完；可手动重试或仅播放');
+        showRecognitionFailure('识别连接异常关闭，自动恢复额度已用完；可手动重试或仅播放');
         return;
       }
       if (sharedViewerActive) {
@@ -1451,8 +1451,9 @@
   function syncPlaybackToBuffer() {
     if (cloudPlayback && originalCaptionMode) {
       const action = playbackGuard.tick({now:performance.now(), time:player.currentTime,
-        limit:useCaptionBuffer ? playbackLimit : null, ready:playStarted, userPaused:uiPaused});
-      if (action === 'timeout') { showCaptionRecovery('识别 15 秒没有进展，已停止新音频处理。可重试或仅播放。'); return; }
+        limit:(useCaptionBuffer || playbackGuard.live) ? playbackLimit : null,
+        ready:playStarted, userPaused:uiPaused});
+      if (action === 'timeout') { showRecognitionFailure('识别 15 秒没有进展，已停止新音频处理。可重试或仅播放。'); return; }
       if (action === 'hold') {
         holdingForBuffer = true;
         audioEl.pause();
@@ -1460,6 +1461,10 @@
         setStatus('等待当前片段的原文字幕…');
       } else if (action === 'resume' || action === 'degrade') {
         holdingForBuffer = false;
+        // Live HLS can have a healthy media buffer before the first ASR `ready`
+        // event. Once its bounded caption wait releases, allow the player event
+        // handler to start the source instead of blocking it on that same event.
+        if (!playStarted && playbackGuard.live) playStarted = true;
         if (!uiPaused) player.play().catch(() => {});
         setStatus(action === 'degrade' ? '字幕暂不可用，部分缺失；媒体继续播放，完整结果见记录' : captionHasSpeech ? '字幕已就绪，继续播放' : '暂未识别到语音，继续播放');
       } else if (action === 'recovered') setStatus('原文字幕已追上当前播放位置');
@@ -1667,6 +1672,31 @@
     document.getElementById('captionActions').hidden = false;
     document.getElementById('retryCaptions').hidden = false;
     void cancelCaptionProcessing(message);
+  }
+  function showRecognitionFailure(message) {
+    if (!playbackGuard.live || !originalCaptionMode || sharedViewerActive) {
+      showCaptionRecovery(message);
+      return;
+    }
+    document.getElementById('captionActions').hidden = false;
+    document.getElementById('retryCaptions').hidden = false;
+    ++connectionGeneration;
+    recoveryController.cancel();
+    cancelPendingLocalSeek();
+    recognitionOnlyStopped = true;
+    playbackGuard.done = true;
+    cloudResumeRequired = false;
+    pauseStartedAt = null;
+    holdingForSync = false;
+    holdingForBuffer = false;
+    playStarted = true;
+    playbackLimit = null;
+    const token = activeCloudSession;
+    activeCloudSession = null;
+    if (ws) { ws.onmessage = null; ws.onerror = null; ws.onclose = null; ws.close(); ws = null; }
+    setStatus(`原文字幕部分缺失或暂不可用，直播媒体继续播放；${message}`);
+    if (token) void cloudRequest('/api/cloud/sessions/' + encodeURIComponent(token), 'DELETE').catch(() => {});
+    if (!uiPaused && player.paused) player.play().catch(() => {});
   }
   document.getElementById('retryCaptions').onclick = () => connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime);
   document.getElementById('playOnly').onclick = () => cancelCaptionProcessing('仅播放；字幕暂不可用，识别已停止', true);

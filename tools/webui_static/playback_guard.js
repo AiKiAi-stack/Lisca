@@ -104,6 +104,15 @@
         }
         return 'none';
       }
+      if (!ready && this.live && Number.isFinite(limit) && this.holdAt == null) {
+        if (!this.faultActive) {
+          this.faultActive = true;
+          this.heldForFaultMs = 0;
+        }
+        this.holdAt = now;
+        this.recoveryCandidate = null;
+        return 'hold';
+      }
       if (this.holdAt != null) {
         const currentHoldMs = Math.max(0, now - this.holdAt);
         if (this.live && this.heldForFaultMs + currentHoldMs >= 2000) {
@@ -121,7 +130,10 @@
         }
         return 'none';
       }
-      if (!ready || !Number.isFinite(limit)) return 'none';
+      // A healthy live source may have media data before ASR emits `ready`.
+      // Keep the same bounded two-second wait in that startup window; local
+      // files still wait for their explicit recognition-ready signal.
+      if ((!ready && !this.live) || !Number.isFinite(limit)) return 'none';
       if (this.faultActive && this.sustainedCoverage(time, now) && this.bufferedAhead(time, limit)) {
         this.clearFault();
         return 'recovered';

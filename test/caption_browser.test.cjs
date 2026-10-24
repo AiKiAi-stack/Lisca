@@ -123,6 +123,7 @@ test('completed original captions resume locally without opening another billed 
 
 function bufferBrowser(){const b=browser(),c=b.context;const {CaptionPlaybackGuard}=require('../tools/webui_static/playback_guard.js');c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live:true});c.showCaptionRecovery=message=>{c.status=message};Object.assign(c,{useCaptionBuffer:true,originalCaptionMode:true,holdingForBuffer:false,uiPaused:false,playbackLimit:10,urlEl:{value:'https://stream.test/live.m3u8'},setStatus(t){c.status=t},audioEl:{pause(){},play(){return Promise.resolve()}},player:{currentTime:10,paused:false,pause(){this.paused=true},play(){this.paused=false;return Promise.resolve()}}});const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');vm.runInContext(html.slice(html.indexOf('function syncPlaybackToBuffer()'),html.indexOf('// 字幕整句快照')),c);return b;}
 test('live original captions release the playback hold after the two-second failure budget',()=>{const b=bufferBrowser();b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,true);b.context.now=2100;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,false);assert.match(b.context.status,/部分缺失|暂不可用/);b.context.now=2400;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,false);});
+test('a live source starts after the bounded wait even when no first caption or ready event arrives',()=>{const b=bufferBrowser(),c=b.context;c.playStarted=false;c.player.currentTime=0;c.player.paused=true;c.playbackLimit=5;c.playbackGuard.reset({now:0,live:true});c.now=0;c.syncPlaybackToBuffer();assert.equal(c.holdingForBuffer,true);assert.equal(c.player.paused,true);c.now=1999;c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);c.now=2000;c.syncPlaybackToBuffer();assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);assert.match(c.status,/部分缺失|暂不可用/);});
 test('an unfinished local file holds at its caption boundary rather than playing ahead',()=>{const b=bufferBrowser();b.context.urlEl.value='test.mp4';b.context.playbackGuard.live=false;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,true);});
 
 const {CaptionPlaybackGuard}=require('../tools/webui_static/playback_guard.js');
@@ -218,7 +219,8 @@ function recoveryBrowser(){
    RecoveryController,recoveryController:null,performance:{now:()=>now},
    setTimeout(callback,delay){const id=nextId++;timers.set(id,{callback,at:now+delay});return id;},
    clearTimeout(id){timers.delete(id);},logEvent(){},setStatus(message){c.status=message;},
-   showCaptionRecovery(){c.cancellations++;},holdCaptionForCloudReconnect(){return false;},
+   showCaptionRecovery(){c.cancellations++;},showRecognitionFailure(message){c.cancellations++;c.status=message;},
+   holdCaptionForCloudReconnect(){return false;},
    connect(...args){actions.push(['recognition',args]);},
    document:{getElementById:()=>({hidden:false})},
    currentEl:{textContent:'',classList:{contains:()=>false,add(){},remove(){}}},
@@ -268,6 +270,27 @@ test('a paused session shows nonretryable provider errors for user action',()=>{
  b.recognitionFailure(false);
  assert.equal(c.recoveryController.attempts,0);assert.equal(c.recoveryController.pending,null);
  assert.equal(c.holdCalled,undefined);assert.equal(c.cancellations,1);
+});
+test('a nonretryable live recognition error keeps the healthy media player moving',()=>{
+ const b=recoveryBrowser(),c=b.context,els=new Map(),cloudRequests=[];
+ for(const id of ['captionActions','retryCaptions'])els.set(id,{hidden:true});
+ Object.assign(c,{cloudPlayback:true,playStarted:true,originalCaptionMode:true,activeCloudSession:'session-token',
+   activeShareToken:'share-token',connectionGeneration:1,recognitionOnlyStopped:false,playbackLimit:8,
+   playbackGuard:{live:true,done:false},holdingForSync:false,holdingForBuffer:false,
+   pauseStartedAt:null,cloudResumeRequired:false,subs:[],previewSubs:[],captionPresenter:{reset(){}},
+   cancelPendingLocalSeek(){},player:{currentTime:8,paused:false,pause(){this.paused=true;},play(){this.paused=false;return Promise.resolve();}},
+   audioEl:{pause(){}},ws:{readyState:1,close(){}},startBtn:{style:{}},stopBtn:{style:{}},
+   shareCopyBtn:{style:{}},shareAddressEl:{hidden:false},
+   document:{getElementById:id=>els.get(id)},cloudRequest:async(path,method)=>{cloudRequests.push([path,method]);return {};},fetch:async()=>({})});
+ const start=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ vm.runInContext(start.slice(start.indexOf('  async function cancelCaptionProcessing('),
+   start.indexOf('  document.getElementById(\'retryCaptions\').onclick')),c);
+ b.recognitionFailure(false);
+ assert.equal(c.player.paused,false);
+ assert.match(c.status,/部分缺失|暂不可用/);
+ assert.equal(c.activeCloudSession,null);assert.equal(c.activeShareToken,'share-token');
+ assert.deepEqual(cloudRequests,[['/api/cloud/sessions/session-token','DELETE']]);
+ assert.equal(els.get('retryCaptions').hidden,false);
 });
 test('switching content cancels an old generation recovery before it can reconnect',()=>{
  const b=recoveryBrowser(),c=b.context;b.recognitionFailure();
