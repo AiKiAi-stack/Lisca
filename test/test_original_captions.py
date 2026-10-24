@@ -500,6 +500,172 @@ def test_local_audio_is_bounded_ahead_of_the_realtime_recognizer(tmp_path, monke
     assert sent[-1]-sent[0] >= .85, 'three seconds of audio must not be sent in one burst'
 
 
+def test_live_pacing_catches_up_after_segment_read_delays(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    clock = [0.0]
+    sent_at = []
+    audio = b'\x00\x10' * 1600  # 100ms at 16 kHz mono int16.
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            for index in range(30):
+                if index in (10, 20):
+                    clock[0] += 2.0  # A delayed segment read; ten PCM chunks follow it.
+                yield audio
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            sent_at.append(clock[0])
+            return (None, None, '', None)
+
+        def poll(self):
+            return (None, None, '', None)
+
+        def finish(self):
+            return self.poll()
+
+        def close(self):
+            pass
+
+    def advance_clock(stop, seconds):
+        clock[0] += seconds
+        return stop.is_set()
+
+    monkeypatch.setattr(webui, '_session_monotonic', lambda: clock[0])
+    monkeypatch.setattr(webui, '_session_wait', advance_clock)
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+
+    with TestClient(webui.app) as client:
+        client.put('/api/cloud', json={'api_key': 'test-private-key'})
+        ticket = client.post('/api/cloud/sessions', json={
+            'url': 'https://media.test/live.m3u8',
+        }).json()
+        with client.websocket_connect('/ws?session=' + ticket['session']) as socket:
+            while socket.receive_json()['type'] != 'end':
+                pass
+
+    assert len(sent_at) == 30
+    assert sent_at[:10] == pytest.approx([index / 10 for index in range(1, 11)])
+    assert sent_at[10:20] == pytest.approx([3.0] * 10)
+    assert sent_at[20:] == pytest.approx([5.0] * 10)
+
+
+def test_live_pacing_excludes_user_pause_and_stop_drops_unsent_audio(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    clock = [0.0]
+    worker_ident = []
+    pause_command_sent = threading.Event()
+    pause_observed = threading.Event()
+    resume_command_sent = threading.Event()
+    resume_observed = threading.Event()
+    waiting_for_second = threading.Event()
+    release_second = threading.Event()
+    pause_wait_started = threading.Event()
+    release_pause_wait = threading.Event()
+    waiting_for_third = threading.Event()
+    release_third = threading.Event()
+    sent_at = []
+    audio = b'\x00\x10' * 1600
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            worker_ident.append(threading.get_ident())
+
+        def iter_chunks(self):
+            yield audio
+            waiting_for_second.set()
+            release_second.wait(3)
+            yield audio
+            waiting_for_third.set()
+            release_third.wait(3)
+            yield audio
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            sent_at.append(clock[0])
+            return (None, None, '', None)
+
+        def poll(self):
+            return (None, None, '', None)
+
+        def finish(self):
+            return self.poll()
+
+        def close(self):
+            pass
+
+    def session_clock():
+        if worker_ident and threading.get_ident() != worker_ident[0]:
+            if pause_command_sent.is_set():
+                pause_observed.set()
+            if resume_command_sent.is_set():
+                resume_observed.set()
+        return clock[0]
+
+    def advance_clock_or_hold_pause(stop, seconds):
+        if seconds >= 0.19:
+            pause_wait_started.set()
+            release_pause_wait.wait(2)
+            return stop.is_set()
+        clock[0] += seconds
+        return stop.is_set()
+
+    monkeypatch.setattr(webui, '_session_monotonic', session_clock)
+    monkeypatch.setattr(webui, '_session_wait', advance_clock_or_hold_pause)
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+
+    try:
+        with TestClient(webui.app) as client:
+            client.put('/api/cloud', json={'api_key': 'test-private-key'})
+            ticket = client.post('/api/cloud/sessions', json={
+                'url': 'https://media.test/live.m3u8',
+            }).json()
+            with client.websocket_connect('/ws?session=' + ticket['session']) as socket:
+                assert waiting_for_second.wait(2)
+                pause_command_sent.set()
+                socket.send_text('pause')
+                assert pause_observed.wait(2)
+                clock[0] += 10.0
+                release_second.set()
+                assert pause_wait_started.wait(2)
+                resume_command_sent.set()
+                socket.send_text('resume')
+                assert resume_observed.wait(2)
+                release_pause_wait.set()
+                assert waiting_for_third.wait(2)
+
+                clock[0] += 2.0  # The source has more audio than the user will accept.
+                assert client.delete('/api/cloud/sessions/' + ticket['session']).json() == {'ok': True}
+                release_third.set()
+                events = []
+                while True:
+                    event = socket.receive_json()
+                    events.append(event)
+                    if event['type'] == 'end':
+                        break
+    finally:
+        release_second.set()
+        release_pause_wait.set()
+        release_third.set()
+
+    assert len(sent_at) == 2
+    assert sent_at[1] - sent_at[0] == pytest.approx(10.1)
+    assert events[-1] == {'type': 'end', 'reason': 'cancelled'}
+
+
 def test_thirty_minute_local_silence_prepares_incrementally_with_bounded_feed_and_single_chunk_backlog(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
     monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
