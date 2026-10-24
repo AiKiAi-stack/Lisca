@@ -12,6 +12,9 @@ from collections import deque
 
 MAX_VIEWERS = 3
 VIEWER_RESERVATION_SECONDS = 60
+MAX_SHARE_HISTORY_EVENTS = 240
+MAX_VIEWER_EVENT_BACKLOG = 256
+_VIEWER_TERMINAL_RESERVE = 2
 
 
 class LiveShare:
@@ -24,7 +27,9 @@ class LiveShare:
         # A join reservation occupies a viewer slot before the browser requests
         # media. Reservations expire if the client never opens its WebSocket.
         self._viewers: dict[str, tuple[asyncio.Queue | None, float, str]] = {}
-        self._events: deque[dict] = deque(maxlen=240)
+        self._events: deque[dict] = deque()
+        self._history_truncated = False
+        self._overflowed_viewers: set[str] = set()
         self._timeline: dict | None = None
         self._ready: dict | None = None
         self._buffer: dict | None = None
@@ -89,17 +94,30 @@ class LiveShare:
             elif kind == "buffer":
                 self._buffer = event
             elif kind in ("subtitle", "caption_remove", "preview"):
+                if len(self._events) >= MAX_SHARE_HISTORY_EVENTS:
+                    self._events.popleft()
+                    self._history_truncated = True
                 self._events.append(event)
             elif kind in ("error", "end"):
+                if len(self._events) >= MAX_SHARE_HISTORY_EVENTS:
+                    self._events.popleft()
+                    self._history_truncated = True
                 self._events.append(event)
-            for queue, _expires_at, _client_host in tuple(self._viewers.values()):
+            for viewer_id, (queue, _expires_at, _client_host) in tuple(self._viewers.items()):
                 if queue is None:
                     continue
-                if queue.full():
-                    try:
-                        queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        pass
+                if viewer_id in self._overflowed_viewers:
+                    continue
+                if queue.qsize() >= MAX_VIEWER_EVENT_BACKLOG:
+                    self._overflowed_viewers.add(viewer_id)
+                    queue.put_nowait({
+                        "type": "error",
+                        "failure_category": "capacity",
+                        "retryable": False,
+                        "message": "观众字幕事件积压达到安全上限，连接已结束；请重新加入直播",
+                    })
+                    queue.put_nowait({"type": "end", "reason": "error"})
+                    continue
                 try:
                     queue.put_nowait(event)
                 except asyncio.QueueFull:
@@ -113,11 +131,21 @@ class LiveShare:
             if (not self.active or reservation is None or reservation[0] is not None
                     or reservation[2] != client_host):
                 return None
-            queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+            queue: asyncio.Queue = asyncio.Queue(
+                maxsize=MAX_VIEWER_EVENT_BACKLOG + _VIEWER_TERMINAL_RESERVE
+            )
             self._viewers[viewer_id] = (queue, float("inf"), client_host)
             snapshot = []
             if self._timeline:
                 snapshot.append(self._timeline)
+            if self._history_truncated:
+                snapshot.append({
+                    "type": "error",
+                    "failure_category": "share_history_truncated",
+                    "retryable": False,
+                    "message": (f"直播分享仅保留最近 {MAX_SHARE_HISTORY_EVENTS} 条字幕事件，"
+                                "更早的回看记录不完整"),
+                })
             snapshot.extend(self._events)
             if self._ready:
                 # A joining device starts at its own current HLS live edge.
@@ -130,6 +158,7 @@ class LiveShare:
     def unsubscribe(self, viewer_id: str) -> None:
         with self._lock:
             self._viewers.pop(viewer_id, None)
+            self._overflowed_viewers.discard(viewer_id)
 
     def stop(self) -> None:
         self.stop_event.set()

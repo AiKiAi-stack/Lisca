@@ -178,6 +178,175 @@ def test_departed_viewer_releases_capacity_without_interrupting_others(monkeypat
                 assert replacement_socket.receive_json() == {"type": "end", "reason": "cancelled"}
 
 
+def test_slow_viewer_gets_explicit_capacity_end_without_evicted_captions(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(live_share, "MAX_VIEWER_EVENT_BACKLOG", 16, raising=False)
+    monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
+    send_json = webui.WebSocket.send_json
+
+    async def delay_first_viewer_event(socket, data, mode="text"):
+        if socket.scope["path"].endswith("/ws") and socket.scope["path"].startswith("/share/") \
+                and not getattr(socket.state, "delayed_first_share_event", False):
+            socket.state.delayed_first_share_event = True
+            await asyncio.sleep(0.1)
+        await send_json(socket, data, mode)
+
+    monkeypatch.setattr(webui.WebSocket, "send_json", delay_first_viewer_event)
+    emitted = {"count": 0}
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            yield b"\x01" * 3200
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            return (None, None, "", None)
+
+        def poll(self):
+            if emitted["count"] >= 400:
+                return (None, None, "", None)
+            emitted["count"] += 1
+            index = emitted["count"]
+            return (index * 0.1, index * 0.1 + 0.1, f"caption {index}", None,
+                    True, index)
+
+        def finish(self):
+            return (None, None, "", None)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    try:
+        with TestClient(webui.app) as host, TestClient(
+            webui.app, client=("192.168.1.20", 50000)
+        ) as viewer:
+            share = _start_share(host)
+            joined = viewer.post(f"/share/{share['token']}/join")
+            assert joined.status_code == 200, joined.text
+            with viewer.websocket_connect(
+                f"/share/{share['token']}/ws?viewer_id={joined.json()['viewer_id']}"
+            ) as viewer_socket:
+                with host.websocket_connect("/ws?" + urlencode({
+                    "url": SOURCE_URL, "engine": "demo", "share": share["token"],
+                })) as host_socket:
+                    host_events = []
+                    while True:
+                        event = host_socket.receive_json()
+                        host_events.append(event)
+                        if event["type"] == "end":
+                            break
+                viewer_events = []
+                while True:
+                    event = viewer_socket.receive_json()
+                    viewer_events.append(event)
+                    if event["type"] == "end":
+                        break
+
+        subtitles = [event for event in viewer_events if event["type"] == "subtitle"]
+        error = next(event for event in viewer_events if event["type"] == "error")
+        assert subtitles[0]["sentence_id"] == 1
+        assert [event["sentence_id"] for event in subtitles] == list(
+            range(1, len(subtitles) + 1))
+        assert len(subtitles) < emitted["count"]
+        assert error["failure_category"] == "capacity"
+        assert error["retryable"] is False
+        assert viewer_events[-1] == {"type": "end", "reason": "error"}
+        assert host_events[-1] == {"type": "end", "reason": "completed"}
+    finally:
+        webui._SHARES.clear()
+
+
+def test_late_viewer_is_told_when_share_caption_history_was_truncated(monkeypatch):
+    captions_drained = threading.Event()
+    release_source = threading.Event()
+    emitted = {"count": 0}
+    monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            yield b"\x01" * 3200
+            release_source.wait(timeout=3)
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            return (None, None, "", None)
+
+        def poll(self):
+            if emitted["count"] >= 300:
+                captions_drained.set()
+                return (None, None, "", None)
+            emitted["count"] += 1
+            index = emitted["count"]
+            return (index * 0.1, index * 0.1 + 0.1, f"caption {index}", None,
+                    True, index)
+
+        def finish(self):
+            return (None, None, "", None)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    try:
+        with TestClient(webui.app) as host, TestClient(
+            webui.app, client=("192.168.1.20", 50000)
+        ) as viewer:
+            share = _start_share(host)
+            with host.websocket_connect("/ws?" + urlencode({
+                "url": SOURCE_URL, "engine": "demo", "share": share["token"],
+            })) as host_socket:
+                assert captions_drained.wait(timeout=2)
+                joined = viewer.post(f"/share/{share['token']}/join")
+                assert joined.status_code == 200, joined.text
+                with viewer.websocket_connect(
+                    f"/share/{share['token']}/ws?viewer_id={joined.json()['viewer_id']}"
+                ) as viewer_socket:
+                    viewer_events = []
+                    warning_seen = False
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline:
+                        event = viewer_socket.receive_json()
+                        viewer_events.append(event)
+                        warning_seen |= event.get("failure_category") == "share_history_truncated"
+                        captions = [item for item in viewer_events if item["type"] == "subtitle"]
+                        if warning_seen and len(captions) == live_share.MAX_SHARE_HISTORY_EVENTS:
+                            break
+                    release_source.set()
+                    while not any(event["type"] == "end" for event in viewer_events):
+                        viewer_events.append(viewer_socket.receive_json())
+                while True:
+                    event = host_socket.receive_json()
+                    if event["type"] == "end":
+                        break
+
+        warning = next(event for event in viewer_events
+                       if event.get("failure_category") == "share_history_truncated")
+        captions = [event for event in viewer_events if event["type"] == "subtitle"]
+        assert "更早的回看记录不完整" in warning["message"]
+        assert len(captions) == live_share.MAX_SHARE_HISTORY_EVENTS
+        assert captions[0]["sentence_id"] == 61
+        assert captions[-1]["sentence_id"] == 300
+    finally:
+        release_source.set()
+        webui._SHARES.clear()
+
+
 def test_fourth_viewer_is_rejected_before_receiving_media_access(monkeypatch):
     monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
     with TestClient(webui.app) as host, TestClient(

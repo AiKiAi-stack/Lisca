@@ -11,6 +11,7 @@
 """
 import argparse
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
@@ -61,12 +62,21 @@ UA = DEFAULT_UA
 _SERVER_LOGS: deque = deque(maxlen=500)
 _LOG_SINKS: list = []  # 每连接的 put() 回调，实时推送新日志行
 _MAX_WS_EVENT_BACKLOG = 2048
+_MAX_SESSION_CAPTIONS = 20_000
+_MAX_SESSION_CAPTION_VARIANTS = 8
+_MAX_PENDING_CAPTIONS = 2_048
+_MAX_ACTIVE_RECOGNITION_WORKERS = 8
 logger = logging.getLogger("webui")  # 会话生命周期 INFO 日志（用户可见）
 _SHARES: dict[str, LiveShare] = {}
 _SHARE_LOCK = threading.RLock()
 _CLOUD = CloudConfigStore(os.path.join(os.path.dirname(UPLOAD_DIR), ".data", "cloud.bin"))
 _CLOUD_JOBS: dict = {}
 _CLOUD_LOCK = threading.RLock()
+_ACTIVE_RECOGNITION_WORKERS = threading.BoundedSemaphore(_MAX_ACTIVE_RECOGNITION_WORKERS)
+
+
+class SessionCapacityError(RuntimeError):
+    """Recognition exceeded a bounded per-session caption index."""
 
 
 def _session_monotonic() -> float:
@@ -873,6 +883,11 @@ async def ws_endpoint(ws: WebSocket):
                 last_progress_through = through
                 last_progress_at = active_session_time()
 
+        def fail_capacity() -> None:
+            nonlocal phase
+            phase = "capacity"
+            raise SessionCapacityError("caption storage capacity exceeded")
+
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
             nonlocal caption_seen
@@ -882,7 +897,17 @@ async def ws_endpoint(ws: WebSocket):
             revision = None
             if original_mode and sentence_id is not None:
                 revision_key = str(sentence_id)
-                fingerprint = " ".join(str(text or "").split())
+                normalized = " ".join(str(text or "").split())
+                fingerprint = (hashlib.sha256(normalized.encode("utf-8")).digest()
+                               if normalized else None)
+                if (revision_key not in caption_revisions
+                        and len(caption_revisions) >= _MAX_SESSION_CAPTIONS):
+                    fail_capacity()
+                known_variants = (caption_texts.get(revision_key, set())
+                                  | withdrawn_caption_texts.get(revision_key, set()))
+                if (fingerprint and fingerprint not in known_variants
+                        and len(known_variants) >= _MAX_SESSION_CAPTION_VARIANTS):
+                    fail_capacity()
                 # ASR callbacks do not carry provider revisions. After an explicit
                 # withdrawal, do not turn a retransmitted copy of that exact body
                 # into a newer client revision; genuinely changed text can recover.
@@ -895,6 +920,9 @@ async def ws_endpoint(ws: WebSocket):
             if text or ((translation or original_mode) and is_final and sentence_id is not None):
                 if translation:
                     key = sentence_id if sentence_id is not None else round(beg, 1)
+                    if (key not in translation_clauses
+                            and len(translation_clauses) >= _MAX_SESSION_CAPTIONS):
+                        fail_capacity()
                     collector = translation_clauses.setdefault(key, TranslationClauses(beg))
                     for clause_beg, clause_end, clause_text, sequence in collector.observe(
                             text, words, is_final, end):
@@ -929,6 +957,8 @@ async def ws_endpoint(ws: WebSocket):
                     if match is not None:
                         pending_sentences.pop(match)
                 elif match is None:
+                    if len(pending_sentences) >= _MAX_PENDING_CAPTIONS:
+                        fail_capacity()
                     preview = StableCaptionPreview(beg)
                     preview.observe(text, words)
                     pending_sentences.append({"id": sentence_id, "beg": beg,
@@ -1193,6 +1223,8 @@ async def ws_endpoint(ws: WebSocket):
                 message = "媒体拉流或音频解码失败，已停止后续识别"
             elif phase == "no_progress":
                 message = "识别连续 15 秒没有字幕或静音处理进展，已停止新音频处理；可重试、仅播放或停止"
+            elif phase == "capacity":
+                message = "字幕记录达到安全容量上限，结果不完整；已停止识别，请停止或重新开始"
             elif provider_details is not None:
                 message = provider_details.pop("message")
                 logger.warning("provider failure category=%s status=%s code=%s",
@@ -1209,29 +1241,56 @@ async def ws_endpoint(ws: WebSocket):
                 error_event.update(provider_details)
             if phase == "no_progress":
                 error_event.update(failure_category="no_progress", retryable=False)
+            elif phase == "capacity":
+                error_event.update(failure_category="capacity", retryable=False)
             put(error_event)
         finally:
-            if translation:
-                translation.close()
-            if engine is not None and callable(getattr(engine, "close", None)):
-                try:
-                    engine.close()
-                except Exception as exc:  # noqa: BLE001 - 断开连接时仍需结束会话
-                    logger.warning("引擎关闭失败: %s", exc)
+            try:
+                if translation:
+                    try:
+                        translation.close()
+                    except Exception:  # noqa: BLE001 - release worker slot after cleanup failure
+                        logger.warning("翻译器关闭失败")
+                if engine is not None and callable(getattr(engine, "close", None)):
+                    try:
+                        engine.close()
+                    except Exception:  # noqa: BLE001 - 断开连接时仍需结束会话
+                        logger.warning("引擎关闭失败")
+                if put in _LOG_SINKS:
+                    _LOG_SINKS.remove(put)
+                logger.info("会话结束")
+                if worker_failed:
+                    terminal_reason = "error"
+                elif overflowed.is_set():
+                    terminal_reason = "error"
+                elif stop.is_set():
+                    terminal_reason = "cancelled"
+                elif normal_completion:
+                    terminal_reason = "completed"
+                put({"type": "end", "reason": terminal_reason})
+            finally:
+                # Keep the slot until the actual worker has released its source,
+                # ASR and event sink, even if the owner WebSocket already closed.
+                _ACTIVE_RECOGNITION_WORKERS.release()
+
+    if not _ACTIVE_RECOGNITION_WORKERS.acquire(blocking=False):
+        message = "后台识别任务达到安全上限，已有任务仍在关闭；请稍后重试"
+        logger.warning("后台识别任务达到安全上限，拒绝新任务")
+        if put in _LOG_SINKS:
+            _LOG_SINKS.remove(put)
+        put({"type": "error", "failure_category": "capacity", "retryable": False,
+             "message": message})
+        put({"type": "end", "reason": "error"})
+    else:
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except RuntimeError:
+            _ACTIVE_RECOGNITION_WORKERS.release()
             if put in _LOG_SINKS:
                 _LOG_SINKS.remove(put)
-            logger.info("会话结束")
-            if worker_failed:
-                terminal_reason = "error"
-            elif overflowed.is_set():
-                terminal_reason = "error"
-            elif stop.is_set():
-                terminal_reason = "cancelled"
-            elif normal_completion:
-                terminal_reason = "completed"
-            put({"type": "end", "reason": terminal_reason})
-
-    threading.Thread(target=worker, daemon=True).start()
+            put({"type": "error", "failure_category": "capacity", "retryable": False,
+                 "message": "无法创建后台识别任务，请稍后重试"})
+            put({"type": "end", "reason": "error"})
 
     try:
         while True:
@@ -1311,7 +1370,13 @@ async def share_ws_endpoint(ws: WebSocket, token: str):
             if event.get("type") in ("subtitle", "caption_remove", "preview", "timeline", "ready",
                                       "buffer", "error", "end"):
                 if event.get("type") == "error":
-                    await ws.send_json({"type": "error", "message": "主播端直播处理发生错误"})
+                    category = event.get("failure_category")
+                    if category in ("capacity", "share_history_truncated"):
+                        await ws.send_json({"type": "error", "failure_category": category,
+                                            "retryable": False,
+                                            "message": event.get("message", "分享记录不完整")})
+                    else:
+                        await ws.send_json({"type": "error", "message": "主播端直播处理发生错误"})
                 else:
                     await ws.send_json(event)
             if event.get("type") == "end":

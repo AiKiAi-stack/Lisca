@@ -5,7 +5,7 @@ function browser({playerWidth=260,fontSize=30}={}){
  const element=()=>({textContent:'',hidden:true,dataset:{},classList:{contains:()=>false},style:{},remove(){}});
  const current=element(), late=element();
  current.style.fontSize=`${fontSize}px`;const playerWrap={clientWidth:playerWidth};
- const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preserveLiveMedia:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontSize:element.style.fontSize||'30px',paddingLeft:'10px',paddingRight:'10px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
+ const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preserveLiveMedia:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:20000,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontSize:element.style.fontSize||'30px',paddingLeft:'10px',paddingRight:'10px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
  const moduleFile=path.join(__dirname,'../tools/webui_static/caption_presenter.js');
  if(fs.existsSync(moduleFile)){context.CaptionPresenter=require(moduleFile).CaptionPresenter;context.lines=()=>[];context.captionPresenter=new context.CaptionPresenter();}
  vm.createContext(context);
@@ -78,6 +78,24 @@ function terminalCloseSession(reason,{awaitingTimeline=false}={}){
  if(awaitingTimeline)c.ws.onclose({code:1005});
  return {context:c,recoveries};
 }
+function closeDuringPendingRecovery(){
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const {RecoveryController}=require('../tools/webui_static/recovery_controller.js');
+ let timerCallback;const recoveryController=new RecoveryController({setTimeout(fn){timerCallback=fn;return 1;},clearTimeout(){}});
+ recoveryController.begin();recoveryController.schedule('recognition',true,()=>{});
+ const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:true}]]);
+ const c={terminalReceived:true,originalCaptionMode:true,sharedViewerActive:false,
+   recognitionOnlyStopped:false,recoveryController,originalCaptionsComplete:false,processingComplete:false,
+   currentEl:{classList:{contains:()=>false}},logEvent(){},setStatus(){},
+   startBtn:{style:{display:'none'}},stopBtn:{style:{display:'inline-block'}},
+   shareCopyBtn:{style:{display:'inline-block'}},shareAddressEl:{hidden:false},activeShareToken:'share',
+   document:{getElementById:id=>elements.get(id)},ws:{}};
+ const closeStart=html.indexOf('    ws.onclose = (event) => {');
+ const closeEnd=html.indexOf('\n    };',closeStart)+'\n    };'.length;
+ vm.runInNewContext(html.slice(closeStart,closeEnd),c);
+ c.ws.onclose({code:1000});
+ return {context:c,elements,timerCallback};
+}
 function playBrowser({position=2,pauseStartedAt=0,now=3000,readyState=1}={}){
  const b=browser(),c=b.context,listeners={};
  Object.assign(c,{pauseStartedAt,uiPaused:true,cloudResumeRequired:false,connectionGeneration:1,recognitionOnlyStopped:false,
@@ -98,6 +116,50 @@ function playBrowser({position=2,pauseStartedAt=0,now=3000,readyState=1}={}){
  return {context:c,play(){listeners.play();}};
 }
 test('late complete translations appear on the video rather than disappearing',()=>{const b=browser();b.push({});b.tick(0);assert.match(b.current.textContent,/这句译文/);assert.equal(b.late.hidden,true);});
+test('caption identity capacity stops recognition while preserving existing transcript rows',()=>{
+ const b=browser(),c=b.context,calls=[];
+ c.MAX_RETAINED_CAPTIONS=1;
+ c.captionRevisions=new Map([['existing',0]]);
+ c.subs=[{sentenceId:'existing',text:'已保留终稿。'}];
+ c.cancelCaptionProcessing=(...args)=>{calls.push(args);return Promise.resolve();};
+ const accepted=c.onSubtitle({sentence_id:'new',revision:0,beg:12,end:13,text:'新终稿。',is_final:true});
+ assert.equal(accepted,false);
+ assert.equal(c.captionRevisions.size,1);
+ assert.equal(c.subs[0].text,'已保留终稿。');
+ assert.deepEqual(calls,[['字幕记录达到安全容量上限，识别已停止；现有字幕已保留',true,true]]);
+});
+test('server caption capacity errors retain existing captions and continue in only-play mode',async()=>{
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const row={sentenceId:'old',text:'已有终稿。'},preview={sentenceId:'draft',text:'已有预览。'};
+ const actions={hidden:false};let resets=0;
+ const c={generation:1,connectionGeneration:1,preserveLiveMedia:false,recognitionOnlyStopped:false,sharedViewerActive:false,
+   originalCaptionMode:true,audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,
+   recoveredRevisionOffsets:null,
+   recoveryController:{cancel(){}},cancelPendingLocalSeek(){},pendingSeekOrigin:null,restoringSeek:null,
+   skipReconnectOnNextPlay:false,playbackGuard:{done:false},cloudResumeRequired:false,pauseStartedAt:1,
+   cloudPlayback:true,originalCaptionsComplete:false,holdingForSync:true,holdingForBuffer:true,
+   playStarted:false,playbackLimit:5,activeCloudSession:null,activeShareToken:null,
+   subs:[row],previewSubs:[preview],captionPresenter:{reset(){resets++;}},currentEl:{textContent:'保留当前字幕',classList:{remove(){}}},
+   ws:{onmessage(){},onclose(){},close(){this.closed=true;}},player:{paused:true,pause(){this.paused=true;},
+     play(){this.paused=false;return Promise.resolve();}},audioEl:{pause(){}},
+   startBtn:{style:{}},stopBtn:{style:{}},shareCopyBtn:{style:{}},shareAddressEl:{hidden:false},
+   document:{getElementById:id=>id==='captionActions'?actions:null},
+   scheduleSessionRecovery(){return {status:'manual'};},showCaptionRecovery(message){c.status=message;},
+   holdCaptionForCloudReconnect(){return false;},setStatus(message){c.status=message;}};
+ vm.createContext(c);
+ const cancelStart=html.indexOf('  async function cancelCaptionProcessing(');
+ const cancelEnd=html.indexOf('  function showCaptionRecovery(',cancelStart);
+ vm.runInContext(html.slice(cancelStart,cancelEnd),c);
+ const receiveStart=html.indexOf('    function receiveMessage(input) {');
+ const receiveEnd=html.indexOf('    ws.onmessage = ',receiveStart);
+ vm.runInContext(html.slice(receiveStart,receiveEnd),c);
+ c.receiveMessage({type:'error',failure_category:'capacity',retryable:false,message:'容量已满'});
+ await Promise.resolve();
+ assert.equal(c.subs[0],row);assert.equal(c.previewSubs[0],preview);
+ assert.equal(resets,0);assert.equal(c.player.paused,false);
+ assert.equal(c.recognitionOnlyStopped,true);assert.equal(c.cloudPlayback,false);
+ assert.match(c.status,/容量已满/);assert.equal(actions.hidden,true);
+});
 test('provider token drafts never become visible subtitles or a second reading frame',()=>{const b=browser();b.push({is_final:false,end:null,text:'这'});b.tick(0);assert.equal(b.current.textContent,'');assert.equal(b.late.hidden,true);});
 test('a completed cue remains readable after its source interval has expired',()=>{const b=browser();b.context.player.currentTime=1.9;b.push({});b.tick(0);b.context.player.currentTime=2.1;b.tick(100);assert.match(b.current.textContent,/这句译文/);});
 
@@ -133,6 +195,13 @@ test('a terminal end waiting for its media timeline still suppresses close recov
  assert.equal(recoveries.length,0);
  assert.deepEqual(context.queuedMediaMessages.map(message=>message.type),['end']);
  assert.equal(context.terminalReceived,true);
+});
+test('a terminal close keeps stop and only-play visible while recovery backoff is pending',()=>{
+ const {context,elements}=closeDuringPendingRecovery();
+ assert.equal(context.recoveryController.pending.attempt,1);
+ assert.equal(context.stopBtn.style.display,'inline-block');
+ assert.equal(context.startBtn.style.display,'none');
+ assert.equal(elements.get('captionActions').hidden,false);
 });
 test('long English captions wrap to two lines on a narrow player',()=>{const b=browser({playerWidth:260,fontSize:30});const sentence='This complete English caption should keep its words and remain easy to read on a narrow player.';const text=[sentence,sentence].join(' ');const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=25),segments);assert.equal(segments.map(s=>s.text).join(' ').replace(/\s+/g,' '),text.replace(/\s+/g,' '));});
 
