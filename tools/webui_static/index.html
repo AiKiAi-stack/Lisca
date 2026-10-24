@@ -94,6 +94,7 @@
   let cloudResumeRequired = false;
   let pauseStartedAt = null;
   let connectionGeneration = 0;
+  let hlsVideoClockPts = null;
   let pendingStartAt = null;
   let activeInput = '';
   const recoveryController = new RecoveryController();
@@ -1003,24 +1004,46 @@
     return msg;
   }
 
+  function shouldPreserveLiveMedia({automaticRecovery, live, originalCaptionMode,
+                                   sharedViewerActive, hlsPlayer}) {
+    return automaticRecovery === true && live === true && originalCaptionMode === true
+      && sharedViewerActive !== true && !!hlsPlayer;
+  }
+
+  function rebaseRecoveredCaptionRevision(msg, offsets, latestRevisions) {
+    if (!msg || !['subtitle', 'caption_remove'].includes(msg.type)
+        || msg.sentence_id == null || !Number.isFinite(msg.revision)) return msg;
+    const id = String(msg.sentence_id);
+    if (!offsets.has(id)) {
+      const latest = latestRevisions.get(id);
+      offsets.set(id, latest == null ? 0 : Math.max(0, latest + 1 - msg.revision));
+    }
+    const revision = msg.revision + offsets.get(id);
+    return revision === msg.revision ? msg : {...msg, revision};
+  }
+
   async function connect(forceUrl, shareToken = null, startAt = 0, options = {}) {
     const automaticRecovery = options.automaticRecovery === true;
+    const preserveLiveMedia = shouldPreserveLiveMedia({automaticRecovery, live:playbackGuard.live,
+      originalCaptionMode, sharedViewerActive, hlsPlayer});
     recoveryController.begin({preserveAttempts: automaticRecovery});
     const generation = ++connectionGeneration;
-    setSourceBuffering(false, 'session_change');
+    if (!preserveLiveMedia) setSourceBuffering(false, 'session_change');
     cancelPendingLocalSeek();
     pendingSeekOrigin = null;
     restoringSeek = null;
-    lastStableMediaPosition = Number.isFinite(startAt) ? startAt : 0;
+    lastStableMediaPosition = preserveLiveMedia ? player.currentTime
+      : Number.isFinite(startAt) ? startAt : 0;
     skipReconnectOnNextPlay = false;
-    if (hlsPlayer) { const previous = hlsPlayer; hlsPlayer = null; previous.destroy(); }
+    if (hlsPlayer && !preserveLiveMedia) { const previous = hlsPlayer; hlsPlayer = null; previous.destroy(); }
+    if (!preserveLiveMedia) hlsVideoClockPts = null;
     cloudResumeRequired = false;
     pauseStartedAt = null;
     originalCaptionsComplete = false;
-    originalCaptionMode = false;
-    useCaptionBuffer = false;
+    if (!preserveLiveMedia) originalCaptionMode = false;
+    if (!preserveLiveMedia) useCaptionBuffer = false;
     recognitionOnlyStopped = false;
-    captionHasSpeech = false;
+    if (!preserveLiveMedia) captionHasSpeech = false;
     document.getElementById('captionActions').hidden = true;
     document.getElementById('playOnly').hidden = false;
     const previousCloud = activeCloudSession;
@@ -1056,7 +1079,8 @@
     activeInput = url;
     cloudPlayback = !sharedViewerActive && engineEl.value === 'aliyun-funasr';
     originalCaptionMode = cloudPlayback;
-    playbackGuard.reset({now:performance.now(),live:/\.m3u8/i.test(url) && /^https?:/i.test(url)});
+    if (!preserveLiveMedia)
+      playbackGuard.reset({now:performance.now(),live:/\.m3u8/i.test(url) && /^https?:/i.test(url)});
     pendingStartAt = startAt > 0 ? startAt : null;
     if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
     // m3u 频道列表（ticket-19）：识别为列表则加载频道面板，不直接拉流
@@ -1077,30 +1101,37 @@
     // 旧会话清理：不关旧 WS 则旧 worker 继续推流串字幕；
     // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
     if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); }
-    captionPresenter.reset();
-    captionRevisions = new Map();
+    if (!preserveLiveMedia) captionRevisions = new Map();
     translatedSession = false;
-    currentEl.dataset.caption = 'empty';
-    subs = [];
-    previewSubs = [];
-    historyItems = [];
-    historyEl.innerHTML = '';
-    document.getElementById('lateCaption').hidden = true;
-    document.getElementById('captionLag').hidden = true;
-    playStarted = false;
-    holdingForSync = false;
-    holdingForBuffer = false;
-    playbackLimit = null;
-    uiPaused = false;
+    if (!preserveLiveMedia) {
+      captionPresenter.reset();
+      currentEl.dataset.caption = 'empty';
+      subs = [];
+      previewSubs = [];
+      historyItems = [];
+      historyEl.innerHTML = '';
+      document.getElementById('lateCaption').hidden = true;
+      document.getElementById('captionLag').hidden = true;
+      playStarted = false;
+      uiPaused = false;
+      currentEl.textContent = '正在准备字幕…';
+      lastBlockEnd = -1;
+    } else {
+      playStarted = true;
+    }
+    if (!preserveLiveMedia) {
+      holdingForSync = false;
+      holdingForBuffer = false;
+      playbackLimit = null;
+    }
     seekPending = false;
     currentEl.classList.remove('err');
-    currentEl.textContent = '正在准备字幕…';
-    lastBlockEnd = -1;
     const isHls = /\.m3u8/i.test(url);
     captionPresenter.live = isHls && (sharedViewerActive || /^https?:/i.test(url));
-    let audioClockPts = null, videoClockPts = null;
+    let audioClockPts = null, videoClockPts = preserveLiveMedia ? hlsVideoClockPts : null;
     let timelineMapped = false;
     let mediaOffset = 0;
+    const recoveredRevisionOffsets = preserveLiveMedia ? new Map() : null;
     const queuedMediaMessages = [];
     function flushMediaClock() {
       if (audioClockPts == null || videoClockPts == null) return;
@@ -1180,7 +1211,7 @@
     startBtn.style.display = 'none';
     stopBtn.style.display = sharedViewerActive ? 'none' : 'inline-block';
     currentEl.classList.remove('err');
-    setStatus(cloudPlayback ? '正在识别音频，原文字幕就绪后播放…' : '连接中…');
+    if (!preserveLiveMedia) setStatus(cloudPlayback ? '正在识别音频，原文字幕就绪后播放…' : '连接中…');
     document.getElementById('captionActions').hidden = !cloudPlayback;
     document.getElementById('retryCaptions').hidden = true;
     // 画面走 video，声音按源类型分流（ticket-19）：HLS 音视频混在 TS 流里，
@@ -1195,6 +1226,7 @@
       // HLS（ticket-19）：hls.js 播放——Chrome 原生 HLS 只支持 fMP4 分片，
       // IPTV 直播源几乎全是 MPEG-TS，需 hls.js 转封装成 fMP4 供 MSE 播放；
       // 播放列表/分片均走本地代理（同源，无 CORS/防盗链问题）。
+      if (!preserveLiveMedia) {
       player.removeAttribute('src');
       player.load();
       // Retain downloaded A/V while ASR finalizes; a ten-second forward buffer
@@ -1220,6 +1252,7 @@
         if (data.id !== 'main' || videoClockPts != null || !Number.isFinite(data.initPTS)
             || !Number.isFinite(data.timescale) || data.timescale <= 0) return;
         videoClockPts = data.initPTS / data.timescale;
+        hlsVideoClockPts = videoClockPts;
         flushMediaClock();
       });
       hlsPlayer.on(Hls.Events.ERROR, (_evt, data) => {
@@ -1232,7 +1265,7 @@
           if (hlsPlayer !== currentHls) return;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) currentHls.startLoad();
           else currentHls.recoverMediaError();
-        }, generation);
+        }, connectionGeneration);
         if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
         if (sharedViewerActive) {
           setStatus(recovery.status === 'exhausted'
@@ -1253,6 +1286,7 @@
           currentEl.classList.add('err');
         }
       });
+      }
       player.muted = false;  // HLS 直播：视频元素自带音轨
     } else {
       player.src = sharedViewerActive ? viewerInfo.video
@@ -1267,7 +1301,10 @@
       }
     }
 
-    ws.onopen = () => { logEvent('ws_open', ''); setStatus('已连接，引擎加载中…'); };
+    ws.onopen = () => {
+      logEvent('ws_open', '');
+      if (!preserveLiveMedia) setStatus('已连接，引擎加载中…');
+    };
     function receiveMessage(input) {
       if (generation !== connectionGeneration || recognitionOnlyStopped) return;
       if (input.type === 'timeline') {
@@ -1280,7 +1317,9 @@
         queuedMediaMessages.push(input);
         return;
       }
-      const msg = timelineMapped ? offsetMediaMessage(input, mediaOffset) : input;
+      let msg = timelineMapped ? offsetMediaMessage(input, mediaOffset) : input;
+      if (recoveredRevisionOffsets)
+        msg = rebaseRecoveredCaptionRevision(msg, recoveredRevisionOffsets, captionRevisions);
       if (msg.type === 'caption_remove') {
         if (msg.sentence_id != null && Number.isFinite(msg.revision)) {
           const id = String(msg.sentence_id);
@@ -1335,7 +1374,7 @@
           setStatus('播放已开始，正在识别并翻译；当前句可能修订');
         }
         // 音视频一起从输入进度前方 delay 秒启动；后续 buffer 消息持续控制播放上限。
-        if (!sharedViewerActive && isHls && Number.isFinite(msg.start_at)) {
+        if (!preserveLiveMedia && !sharedViewerActive && isHls && Number.isFinite(msg.start_at)) {
           aligningInitialPlayback = true;
           try { player.currentTime = Math.max(0, msg.start_at); }
           catch (e) { logEvent('sync_seek_error', String(e)); }
@@ -1345,9 +1384,9 @@
         playStarted = true;
         holdingForSync = false;
         if (currentEl.textContent.includes('准备字幕')) currentEl.textContent = '';
-        setStatus(msg.silent ? '暂未识别到语音，继续播放' : msg.original ? '原文字幕已就绪，开始播放' : msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
+        if (!preserveLiveMedia) setStatus(msg.silent ? '暂未识别到语音，继续播放' : msg.original ? '原文字幕已就绪，开始播放' : msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
         logEvent('ready', `附加播放缓冲=${msg.delay}s，开始播放`);
-        player.play().catch(() => {});
+        if (!uiPaused && !holdingForBuffer) player.play().catch(() => {});
         // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 时间轴损坏时，
         // 视频可能长时间 waiting/不前进却无 error 事件（无声卡死）——2s 轮询，
         // 就绪后 15s 内 t 从未前进（>0.5s）则判定源不可播，明确提示换源
@@ -1367,7 +1406,10 @@
             connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
               {automaticRecovery:true});
           }, generation);
-          if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
+          if (recovery.status === 'scheduled' || recovery.status === 'waiting') {
+            if (playbackGuard.live) setStatus('识别连接暂时中断，直播画面继续播放…');
+            return;
+          }
           if (recovery.status === 'exhausted') {
             showRecognitionFailure('媒体和识别共用的恢复额度已用完：' + msg.message);
             return;
@@ -1417,7 +1459,10 @@
           connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
             {automaticRecovery:true});
         }, generation);
-        if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
+        if (recovery.status === 'scheduled' || recovery.status === 'waiting') {
+          if (playbackGuard.live) setStatus('识别连接暂时中断，直播画面继续播放…');
+          return;
+        }
         showRecognitionFailure('识别连接失败，自动恢复额度已用完；可手动重试或仅播放');
         return;
       }
@@ -1431,7 +1476,10 @@
           connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
             {automaticRecovery:true});
         }, generation);
-        if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
+        if (recovery.status === 'scheduled' || recovery.status === 'waiting') {
+          if (playbackGuard.live) setStatus('识别连接暂时中断，直播画面继续播放…');
+          return;
+        }
         showRecognitionFailure('识别连接异常关闭，自动恢复额度已用完；可手动重试或仅播放');
         return;
       }
