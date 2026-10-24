@@ -30,7 +30,7 @@ function shareHistoryViewer(){
  const syncEnd=html.indexOf('\n\n  // 历史原地修订 partial',syncStart);
  vm.runInContext(html.slice(syncStart,syncEnd),c);
  const noticeStart=html.indexOf('  function showShareHistoryNotice() {');
- const noticeEnd=html.indexOf('\n  }',noticeStart)+'\n  }'.length;
+ const noticeEnd=html.indexOf('  function appendHistory(',noticeStart);
  vm.runInContext(html.slice(noticeStart,noticeEnd),c);
  const receiveStart=html.indexOf('    function receiveMessage(input) {');
  const receiveEnd=html.indexOf('    ws.onmessage = ',receiveStart);
@@ -203,6 +203,18 @@ test('a truncated share history notice stays nonterminal and later captions stil
  assert.equal(c.document.getElementById('shareHistoryNotice').textContent,'较早字幕记录未保留，当前直播继续');
  assert.match(current.textContent,/历史截断后仍继续的字幕/);
  assert.match(c.status,/原文字幕已就绪/);
+});
+test('legacy share-history error messages use the same nonterminal notice',()=>{
+ const {context:c,current}=shareHistoryViewer();
+ c.receiveMessage({type:'error',failure_category:'share_history_truncated',retryable:false,
+   message:'历史字幕记录不完整'});
+ c.receiveMessage({type:'ready',original:true,buffered:false,delay:0});
+ c.receiveMessage({type:'subtitle',sentence_id:302,revision:1,beg:0,end:2,
+   is_final:true,translated:false,text:'兼容旧提示后的字幕'});
+ assert.equal(c.currentEl.classList.contains('err'),false);
+ assert.equal(c.document.getElementById('shareHistoryNotice').hidden,false);
+ assert.equal(c.document.getElementById('shareHistoryNotice').textContent,'较早字幕记录未保留，当前直播继续');
+ assert.match(current.textContent,/兼容旧提示后的字幕/);
 });
 test('websocket error and abnormal close use the same recovery action and preserve their messages',()=>{
  for(const eventName of ['error','close']){
