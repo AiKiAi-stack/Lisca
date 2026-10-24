@@ -268,6 +268,7 @@ def test_slow_viewer_gets_explicit_capacity_end_without_evicted_captions(monkeyp
 def test_late_viewer_is_told_when_share_caption_history_was_truncated(monkeypatch):
     captions_drained = threading.Event()
     release_source = threading.Event()
+    emit_future_caption = threading.Event()
     emitted = {"count": 0}
     monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
 
@@ -287,9 +288,15 @@ def test_late_viewer_is_told_when_share_caption_history_was_truncated(monkeypatc
             return (None, None, "", None)
 
         def poll(self):
+            if emitted["count"] >= 300 and emitted.get("future_emitted"):
+                return (None, None, "", None)
             if emitted["count"] >= 300:
                 captions_drained.set()
-                return (None, None, "", None)
+                if not emit_future_caption.wait(timeout=3):
+                    return (None, None, "", None)
+                emitted["future_emitted"] = True
+                emitted["count"] += 1
+                return (30.0, 30.1, "caption after history snapshot", None, True, 301)
             emitted["count"] += 1
             index = emitted["count"]
             return (index * 0.1, index * 0.1 + 0.1, f"caption {index}", None,
@@ -327,6 +334,9 @@ def test_late_viewer_is_told_when_share_caption_history_was_truncated(monkeypatc
                         captions = [item for item in viewer_events if item["type"] == "subtitle"]
                         if warning_seen and len(captions) == live_share.MAX_SHARE_HISTORY_EVENTS:
                             break
+                    emit_future_caption.set()
+                    while not any(event.get("sentence_id") == 301 for event in viewer_events):
+                        viewer_events.append(viewer_socket.receive_json())
                     release_source.set()
                     while not any(event["type"] == "end" for event in viewer_events):
                         viewer_events.append(viewer_socket.receive_json())
@@ -338,10 +348,13 @@ def test_late_viewer_is_told_when_share_caption_history_was_truncated(monkeypatc
         warning = next(event for event in viewer_events
                        if event.get("failure_category") == "share_history_truncated")
         captions = [event for event in viewer_events if event["type"] == "subtitle"]
-        assert "更早的回看记录不完整" in warning["message"]
-        assert len(captions) == live_share.MAX_SHARE_HISTORY_EVENTS
+        future_caption = next(event for event in captions if event.get("sentence_id") == 301)
+        assert warning["message"] == "较早字幕记录未保留，当前直播继续"
+        assert warning["type"] == "status"
+        assert len(captions) == live_share.MAX_SHARE_HISTORY_EVENTS + 1
         assert captions[0]["sentence_id"] == 61
-        assert captions[-1]["sentence_id"] == 300
+        assert captions[-2]["sentence_id"] == 300
+        assert future_caption["text"] == "caption after history snapshot"
     finally:
         release_source.set()
         webui._SHARES.clear()

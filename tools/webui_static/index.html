@@ -14,7 +14,7 @@
 </header>
 <main>
  <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开内容，生成原文字幕</h2><p>中文语音出中文字幕，英文语音出英文字幕</p></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
- <div class="player-footer"><div><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div id="sourceBufferStatus" role="status" hidden></div></div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关原文字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
+ <div class="player-footer"><div><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div id="shareHistoryNotice" role="status" hidden></div><div id="sourceBufferStatus" role="status" hidden></div></div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关原文字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
  <div id="captionActions" hidden><button id="retryCaptions">重试字幕</button><button id="playOnly">仅播放（停止识别）</button></div>
  <div id="lateCaption" hidden></div>
 </main>
@@ -99,6 +99,16 @@
   let pendingStartAt = null;
   let activeInput = '';
   const recoveryController = new RecoveryController();
+  let activeMediaClockFlush = null;
+  let stoppedHlsLoaderForRecovery = null;
+
+  function resumeStoppedHlsLoaderForRecovery() {
+    const stoppedLoader = stoppedHlsLoaderForRecovery;
+    if (!stoppedLoader || hlsPlayer !== stoppedLoader) return false;
+    stoppedHlsLoaderForRecovery = null;
+    stoppedLoader.startLoad();
+    return true;
+  }
 
   function scheduleSessionRecovery(kind, retryable, recover, generation = connectionGeneration) {
     const result = recoveryController.schedule(kind, retryable, info => {
@@ -507,6 +517,13 @@
     statusEl.textContent = msg;
     statusEl.classList.toggle('err', !!isErr);
     logEvent(isErr ? 'error' : 'status', msg);
+  }
+
+  function showShareHistoryNotice() {
+    const notice = document.getElementById('shareHistoryNotice');
+    if (!notice) return;
+    notice.textContent = '较早字幕记录未保留，当前直播继续';
+    notice.hidden = false;
   }
 
   function appendHistory(beg, end, text, sourceText = '') {
@@ -1048,6 +1065,10 @@
       originalCaptionMode, sharedViewerActive, hlsPlayer});
     recoveryController.begin({preserveAttempts: automaticRecovery});
     const generation = ++connectionGeneration;
+    activeMediaClockFlush = null;
+    const historyNotice = document.getElementById('shareHistoryNotice');
+    if (historyNotice) { historyNotice.hidden = true; historyNotice.textContent = ''; }
+    if (!preserveLiveMedia) stoppedHlsLoaderForRecovery = null;
     if (!preserveLiveMedia) setSourceBuffering(false, 'session_change');
     cancelPendingLocalSeek();
     pendingSeekOrigin = null;
@@ -1165,6 +1186,7 @@
       logEvent('media_clock', `offset=${mediaOffset.toFixed(3)}s`);
       for (const msg of queuedMediaMessages.splice(0)) receiveMessage(msg);
     }
+    activeMediaClockFlush = flushMediaClock;
     delayEl.disabled = !isHls;
     delayEl.title = isHls
       ? 'HLS 画面和声音相对直播源的整体延迟；延迟期间音频持续送给 ASR'
@@ -1282,7 +1304,9 @@
             || !Number.isFinite(data.timescale) || data.timescale <= 0) return;
         videoClockPts = data.initPTS / data.timescale;
         hlsVideoClockPts = videoClockPts;
-        flushMediaClock();
+        // A live recovery may keep this HLS instance while replacing the
+        // recognition closure; route late INIT_PTS to the active WS queue.
+        if (typeof activeMediaClockFlush === 'function') activeMediaClockFlush();
       });
       hlsPlayer.on(Hls.Events.ERROR, (_evt, data) => {
         if (hlsPlayer !== currentHls) return;
@@ -1291,12 +1315,16 @@
         if (!data.fatal && !networkLoadFailure) return;
         const responseCode = Number.isInteger(data.response?.code) ? ` HTTP ${data.response.code}` : '';
         logEvent('hls_error', `${data.type}/${data.details}${responseCode}`);
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) currentHls.stopLoad();
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          currentHls.stopLoad();
+          stoppedHlsLoaderForRecovery = currentHls;
+        }
         const retryable = data.type === Hls.ErrorTypes.NETWORK_ERROR
           || data.type === Hls.ErrorTypes.MEDIA_ERROR;
-        const recovery = scheduleSessionRecovery('media', retryable, () => {
+        const recovery = scheduleSessionRecovery('media', retryable, info => {
           if (hlsPlayer !== currentHls) return;
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) currentHls.startLoad();
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR)
+            resumeStoppedHlsLoaderForRecovery();
           else currentHls.recoverMediaError();
         }, connectionGeneration);
         if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
@@ -1304,7 +1332,11 @@
           setStatus(recovery.status === 'exhausted'
             ? '直播源恢复失败（已重试 2 次），请重新加入或联系主机'
             : '直播源发生无法自动恢复的错误，请重新加入或联系主机', true);
-          if (hlsPlayer === currentHls) { currentHls.destroy(); hlsPlayer = null; }
+          if (hlsPlayer === currentHls) {
+            currentHls.destroy();
+            hlsPlayer = null;
+            stoppedHlsLoaderForRecovery = null;
+          }
           return;
         }
         if (!recognitionOnlyStopped) {
@@ -1312,7 +1344,11 @@
             ? '媒体和识别共用的恢复额度已用完；可重试字幕或仅播放'
             : '直播源发生无法自动恢复的错误；可重试字幕或仅播放');
         }
-        if (hlsPlayer === currentHls) { currentHls.destroy(); hlsPlayer = null; }
+        if (hlsPlayer === currentHls) {
+          currentHls.destroy();
+          hlsPlayer = null;
+          stoppedHlsLoaderForRecovery = null;
+        }
         document.getElementById('playOnly').hidden = true;
         if (!retryable) {
           currentEl.textContent = '⚠ 直播流播放失败（源可能失效，换个频道）';
@@ -1341,6 +1377,11 @@
     };
     function receiveMessage(input) {
       if (generation !== connectionGeneration || recognitionOnlyStopped) return;
+      // The preserved HLS instance can publish INIT_PTS after this ASR
+      // generation's timeline arrives. Its old connect closure cannot flush
+      // this generation's queue, so let the next message adopt that clock.
+      if (preserveLiveMedia && videoClockPts == null && Number.isFinite(hlsVideoClockPts))
+        flushMediaClock();
       if (input.type === 'end') terminalReceived = true;
       if (input.type === 'timeline') {
         audioClockPts = input.audio_pts;
@@ -1427,10 +1468,18 @@
         // 就绪后 15s 内 t 从未前进（>0.5s）则判定源不可播，明确提示换源
         stallWatchdog();
       } else if (msg.type === 'status') {
-        setStatus(msg.message);
+        if (msg.failure_category === 'share_history_truncated') {
+          showShareHistoryNotice();
+          setStatus('较早字幕记录未保留，当前直播继续');
+        } else setStatus(msg.message);
       } else if (msg.type === 'log') {
         logEvent('server', msg.line);  // 服务端后台日志（ticket-14）
       } else if (msg.type === 'error') {
+        if (msg.failure_category === 'share_history_truncated') {
+          showShareHistoryNotice();
+          setStatus('较早字幕记录未保留，当前直播继续');
+          return;
+        }
         if (msg.failure_category === 'capacity') {
           void cancelCaptionProcessing(msg.message || '字幕记录达到安全容量上限，识别已停止',
             true, true);
@@ -1492,19 +1541,27 @@
       }
     }
     ws.onmessage = (e) => receiveMessage(JSON.parse(e.data));
+    function scheduleRecognitionSocketRecovery(exhaustedMessage) {
+      const recovery = scheduleSessionRecovery('recognition', true, () => {
+        connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
+          {automaticRecovery:true});
+      }, generation);
+      if (recovery.status === 'scheduled' || recovery.status === 'waiting') {
+        if (playbackGuard.live) setStatus('识别连接暂时中断，直播画面继续播放…');
+      } else if (recovery.status === 'exhausted') {
+        showRecognitionFailure(exhaustedMessage);
+      }
+      return recovery;
+    }
     ws.onerror = () => {
       if (terminalReceived) return;
       logEvent('ws_error', '连接失败');
       if (originalCaptionMode && !sharedViewerActive) {
-        const recovery = scheduleSessionRecovery('recognition', true, () => {
-          connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
-            {automaticRecovery:true});
-        }, generation);
-        if (recovery.status === 'scheduled' || recovery.status === 'waiting') {
-          if (playbackGuard.live) setStatus('识别连接暂时中断，直播画面继续播放…');
-          return;
-        }
-        showRecognitionFailure('识别连接失败，自动恢复额度已用完；可手动重试或仅播放');
+        const recovery = scheduleRecognitionSocketRecovery(
+          '识别连接失败，自动恢复额度已用完；可手动重试或仅播放');
+        if (recovery.status === 'scheduled' || recovery.status === 'waiting'
+            || recovery.status === 'exhausted') return;
+        setStatus('连接失败', true);
         return;
       }
       setStatus('连接失败', true);
@@ -1513,16 +1570,10 @@
       logEvent('ws_close', '');
       if (!terminalReceived && event.code !== 1000 && originalCaptionMode && !sharedViewerActive
           && !recognitionOnlyStopped && !recoveryController.cancelled) {
-        const recovery = scheduleSessionRecovery('recognition', true, () => {
-          connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
-            {automaticRecovery:true});
-        }, generation);
-        if (recovery.status === 'scheduled' || recovery.status === 'waiting') {
-          if (playbackGuard.live) setStatus('识别连接暂时中断，直播画面继续播放…');
-          return;
-        }
-        showRecognitionFailure('识别连接异常关闭，自动恢复额度已用完；可手动重试或仅播放');
-        return;
+        const recovery = scheduleRecognitionSocketRecovery(
+          '识别连接异常关闭，自动恢复额度已用完；可手动重试或仅播放');
+        if (recovery.status === 'scheduled' || recovery.status === 'waiting'
+            || recovery.status === 'exhausted') return;
       }
       // A terminal worker event can close the socket while its already-scheduled
       // recovery is still waiting. Keep Stop and Only-play available so the user
@@ -1845,7 +1896,9 @@
     shareAddressEl.hidden = true;
     setStatus('正在停止云端处理…');
     if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
+    activeMediaClockFlush = null;
     if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+    stoppedHlsLoaderForRecovery = null;
     player.removeAttribute('src');
     player.load();
     audioEl.removeAttribute('src');

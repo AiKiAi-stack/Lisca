@@ -67,14 +67,14 @@ test('default retry timers keep the browser global receiver',()=>{
   assert.deepEqual(browserGlobal.cancelled,[73]);
 });
 
-test('coincident media and recognition failures resolve to one full-session recovery',()=>{
+test('coincident media and recognition failures share one attempt and execute both repairs',()=>{
   const timers=clock(),actions=[];
   const controller=new RecoveryController({setTimeout:timers.setTimeout,clearTimeout:timers.clearTimeout});
   controller.begin();
   controller.schedule('media',true,info=>actions.push(['media',info.kinds]));
   controller.schedule('recognition',true,info=>actions.push(['recognition',info.kinds]));
   timers.advance(1000);
-  assert.deepEqual(actions,[['recognition',['media','recognition']]]);
+  assert.deepEqual(actions,[['media',['media','recognition']],['recognition',['media','recognition']]]);
 });
 
 test('automatic reconnect preserves attempts until ten seconds of real progress',()=>{

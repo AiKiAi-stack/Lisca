@@ -16,3 +16,5 @@ dialog{color:var(--fg);background:#192330;border:1px solid #45566c;border-radius
 #cloudPanel h3{font-size:15px;margin:0 0 16px;font-weight:600}
 
 .mode-badge{font-size:12px;color:var(--muted);white-space:nowrap;padding:0 6px}@media(max-width:720px){.mode-badge{order:2;flex:1;padding:8px 0}}
+
+#shareHistoryNotice{font-size:12px;color:#f0d99a;overflow-wrap:anywhere}
