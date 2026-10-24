@@ -64,6 +64,9 @@ _LOG_SINKS: list = []  # 每连接的 put() 回调，实时推送新日志行
 _MAX_WS_EVENT_BACKLOG = 2048
 _MAX_SESSION_CAPTIONS = 20_000
 _MAX_SESSION_CAPTION_VARIANTS = 8
+# Independent session-wide budget for retained transcript fingerprints used by
+# withdrawal replay suppression; it is not a draft-revision count and never evicts.
+_MAX_SESSION_CAPTION_RETENTION_FINGERPRINTS = 20_000
 _MAX_PENDING_CAPTIONS = 2_048
 _MAX_ACTIVE_RECOGNITION_WORKERS = 8
 logger = logging.getLogger("webui")  # 会话生命周期 INFO 日志（用户可见）
@@ -842,8 +845,12 @@ async def ws_endpoint(ws: WebSocket):
         playback_ceiling = None
         pending_sentences = []
         caption_revisions = {}
-        caption_texts = {}
+        caption_final_texts = {}
+        caption_final_variant_counts = {}
+        caption_retained_texts = {}
+        caption_draft_texts = {}
         withdrawn_caption_texts = {}
+        retained_caption_fingerprint_count = 0
         translation = None
         translation_clauses = {}
         caption_seen = False
@@ -878,6 +885,32 @@ async def ws_endpoint(ws: WebSocket):
             phase = "capacity"
             raise SessionCapacityError("caption storage capacity exceeded")
 
+        def retain_caption_variant(revision_key, fingerprint) -> None:
+            nonlocal retained_caption_fingerprint_count
+            if not fingerprint:
+                return
+            retained = (caption_retained_texts.get(revision_key, set())
+                        | withdrawn_caption_texts.get(revision_key, set()))
+            if fingerprint in retained:
+                return
+            if (retained_caption_fingerprint_count
+                    >= _MAX_SESSION_CAPTION_RETENTION_FINGERPRINTS):
+                fail_capacity()
+            caption_retained_texts.setdefault(revision_key, set()).add(fingerprint)
+            retained_caption_fingerprint_count += 1
+
+        def retain_final_caption_variant(revision_key, fingerprint) -> None:
+            if not fingerprint:
+                return
+            final_texts = caption_final_texts.setdefault(revision_key, set())
+            if fingerprint not in final_texts:
+                final_count = caption_final_variant_counts.get(revision_key, 0)
+                if final_count >= _MAX_SESSION_CAPTION_VARIANTS:
+                    fail_capacity()
+                caption_final_variant_counts[revision_key] = final_count + 1
+                final_texts.add(fingerprint)
+            retain_caption_variant(revision_key, fingerprint)
+
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
             nonlocal caption_seen
@@ -885,28 +918,37 @@ async def ws_endpoint(ws: WebSocket):
             is_final = bool(o[4]) if len(o) > 4 else True
             sentence_id = o[5] if len(o) > 5 else None
             revision = None
-            if original_mode and sentence_id is not None:
+            fingerprint = None
+            if original_mode:
                 revision_key = str(sentence_id)
                 normalized = " ".join(str(text or "").split())
                 fingerprint = (hashlib.sha256(normalized.encode("utf-8")).digest()
                                if normalized else None)
-                if (revision_key not in caption_revisions
-                        and len(caption_revisions) >= _MAX_SESSION_CAPTIONS):
-                    fail_capacity()
-                known_variants = (caption_texts.get(revision_key, set())
-                                  | withdrawn_caption_texts.get(revision_key, set()))
-                if (fingerprint and fingerprint not in known_variants
-                        and len(known_variants) >= _MAX_SESSION_CAPTION_VARIANTS):
-                    fail_capacity()
                 # ASR callbacks do not carry provider revisions. After an explicit
                 # withdrawal, do not turn a retransmitted copy of that exact body
                 # into a newer client revision; genuinely changed text can recover.
                 if fingerprint and fingerprint in withdrawn_caption_texts.get(revision_key, set()):
                     return
-                revision = caption_revisions.get(revision_key, -1) + 1
-                caption_revisions[revision_key] = revision
-                if fingerprint:
-                    caption_texts.setdefault(revision_key, set()).add(fingerprint)
+                current_draft = None
+                if sentence_id is not None:
+                    if (revision_key not in caption_revisions
+                            and len(caption_revisions) >= _MAX_SESSION_CAPTIONS):
+                        fail_capacity()
+                    current_draft = caption_draft_texts.get(revision_key)
+                if is_final:
+                    if current_draft:
+                        retain_caption_variant(revision_key, current_draft)
+                    if fingerprint:
+                        retain_final_caption_variant(revision_key, fingerprint)
+                if sentence_id is not None:
+                    revision = caption_revisions.get(revision_key, -1) + 1
+                    caption_revisions[revision_key] = revision
+                    if is_final:
+                        caption_draft_texts.pop(revision_key, None)
+                    elif fingerprint:
+                        # Coalesce uncommitted drafts; displayed stable previews and
+                        # final bodies have their own retained-fingerprint paths.
+                        caption_draft_texts[revision_key] = fingerprint
             if text or ((translation or original_mode) and is_final and sentence_id is not None):
                 if translation:
                     key = sentence_id if sentence_id is not None else round(beg, 1)
@@ -927,11 +969,16 @@ async def ws_endpoint(ws: WebSocket):
                         translation_clauses.pop(key, None)
                     return
                 if original_mode and not text and is_final:
-                    previous_texts = caption_texts.pop(str(sentence_id), set())
+                    revision_key = str(sentence_id)
+                    previous_texts = caption_retained_texts.pop(revision_key, set())
+                    caption_final_texts.pop(revision_key, None)
                     if previous_texts:
-                        withdrawn_caption_texts.setdefault(str(sentence_id), set()).update(previous_texts)
-                    pending_sentences[:] = [item for item in pending_sentences if item["id"] != sentence_id]
-                    put({"type": "caption_remove", "sentence_id": sentence_id, "revision": revision})
+                        withdrawn_caption_texts.setdefault(
+                            revision_key, set()).update(previous_texts)
+                    pending_sentences[:] = [
+                        item for item in pending_sentences if item["id"] != sentence_id]
+                    put({"type": "caption_remove", "sentence_id": sentence_id,
+                         "revision": revision})
                     return
                 # Use the API sentence id when available. Nearby sentence starts
                 # can be less than a second apart and must not share one hold.
@@ -957,6 +1004,19 @@ async def ws_endpoint(ws: WebSocket):
                     item = pending_sentences[match]
                     item["beg"] = min(item["beg"], beg)
                     for clause_beg, clause_end, clause_text in item["preview"].observe(text, words):
+                        clause_normalized = " ".join(str(clause_text or "").split())
+                        clause_fingerprint = (
+                            hashlib.sha256(clause_normalized.encode("utf-8")).digest()
+                            if clause_normalized else None)
+                        if original_mode and clause_fingerprint:
+                            revision_key = str(sentence_id)
+                            if clause_fingerprint in withdrawn_caption_texts.get(
+                                    revision_key, set()):
+                                continue
+                            # Retain the source body and displayed clause for the
+                            # session-wide withdrawal budget, independent of drafts.
+                            retain_caption_variant(revision_key, fingerprint)
+                            retain_caption_variant(revision_key, clause_fingerprint)
                         caption_seen = True
                         put({"type": "preview", "beg": clause_beg + timeline_offset,
                              "end": clause_end + timeline_offset, "text": clause_text,
