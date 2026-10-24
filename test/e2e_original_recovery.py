@@ -82,6 +82,7 @@ def main():
             # ASR network failure may consume only the remaining second attempt.
             failed_fragments = []
             fragment_requests = []
+            fragment_control = {"successful_body_delay_ms": 0}
 
             def fail_one_fragment(route):
                 fragment_requests.append(time.monotonic())
@@ -89,6 +90,8 @@ def main():
                     failed_fragments.append(time.monotonic())
                     route.fulfill(status=503, body="offline fixture source unavailable")
                 else:
+                    if fragment_control["successful_body_delay_ms"]:
+                        page.wait_for_timeout(fragment_control["successful_body_delay_ms"])
                     route.continue_()
 
             pattern = re.compile(r"/video\?url=.*seg00\.ts(?:&|$)")
@@ -122,6 +125,7 @@ def main():
             # recovery must also wake the HLS loader stopped by the media fault.
             failed_fragments.clear()
             fragment_requests.clear()
+            fragment_control["successful_body_delay_ms"] = 1200
             page.route(pattern, fail_one_fragment)
             before = request("/__fixture/state")["started"]
             open_scenario(page, "recovery-coincident-live", fixture["live_url"])
@@ -133,11 +137,13 @@ def main():
             coincident = request("/__fixture/state")
             assert coincident["started"] == before + 2 and coincident["active"] == 1
             assert following["time"] - first["time"] >= 2.5, (first, following)
+            assert "Live sentence" in following["history"], following
             assert len(failed_fragments) == 1 and len(fragment_requests) == 2, fragment_requests
             assert fragment_requests[1] - fragment_requests[0] >= .85, fragment_requests
             results.append({"case": "coincident-media-and-asr-resume-the-loader", "passed": True,
                             "recognizers_started": 2, "injected_media_failures": 1,
                             "observed_media_backoff_seconds": fragment_requests[1] - fragment_requests[0],
+                            "successful_fragment_body_delay_seconds": 1.2,
                             "snapshots": [first, following]})
             page.unroute(pattern, fail_one_fragment)
             assert not errors, errors
