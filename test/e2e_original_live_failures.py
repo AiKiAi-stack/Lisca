@@ -11,7 +11,7 @@ from e2e_original_release import ROOT, launch_browser, open_scenario, request, s
 def main(recovery_only=False):
     fixture = request("/__fixture/state")
     assert fixture.get("simulated_recognition") is True
-    results, errors = [], []
+    results, errors, observations = [], [], []
     with sync_playwright() as playwright:
         browser = launch_browser(playwright)
         page = browser.new_page()
@@ -39,20 +39,26 @@ def main(recovery_only=False):
                 before = request("/__fixture/state")["started"]
                 open_scenario(page, mode, fixture["live_url"])
                 samples = []
+                observation = {"mode": mode, "samples": samples}
+                observations.append(observation)
                 deadline = time.monotonic() + 25
                 begun = time.monotonic()
-                while not page.locator("#retryCaptions").is_visible() and time.monotonic() < deadline:
+                def terminal():
+                    return (page.locator("#retryCaptions").is_visible()
+                            and (mode != "recovery-live" or "已用完" in snapshot(page)["status"]))
+                while not terminal() and time.monotonic() < deadline:
                     item = snapshot(page)
                     item.update(page.locator("video").evaluate("video=>({ready_state:video.readyState})"))
                     item["wall_seconds"] = time.monotonic() - begun
                     samples.append(item)
                     page.wait_for_timeout(50)
-                assert page.locator("#retryCaptions").is_visible(), samples[-1:]
+                assert terminal(), samples[-1:]
                 page.wait_for_function("document.querySelector('video').readyState>=3", timeout=15000)
                 page.wait_for_timeout(500)
                 first = snapshot(page)
                 page.wait_for_timeout(3000)
                 following = snapshot(page)
+                observation["after_failure"] = [first, following]
                 state = request("/__fixture/state")
                 expected = 1 if mode == "live-auth" else 3
                 assert state["started"] - before == expected, (mode, state["started"] - before)
@@ -79,7 +85,8 @@ def main(recovery_only=False):
         finally:
             stop_if_active(page)
             report = {"simulated_recognition": True, "real_accuracy_tested": False,
-                      "at_unix_seconds": time.time(), "results": results, "page_errors": errors}
+                      "at_unix_seconds": time.time(), "results": results, "page_errors": errors,
+                      "observations": observations}
             directory = ROOT / "logs" / "original-release-browser"
             directory.mkdir(parents=True, exist_ok=True)
             (directory / "live-failures-report.json").write_text(
