@@ -5,7 +5,7 @@ import time
 
 from playwright.sync_api import Error, sync_playwright
 
-from e2e_original_release import launch_browser, ROOT, configure, request, snapshot, stop_if_active
+from e2e_original_release import launch_browser, ROOT, configure, open_scenario, request, snapshot, stop_if_active
 
 
 def main():
@@ -48,6 +48,34 @@ def main():
             assert not errors, errors
             result.update({"passed": True, "new_recognition_requests": 0,
                            "resumed_snapshot": snapshot(page)})
+            stop_if_active(page)
+            open_scenario(page, "live-normal", fixture["live_url"])
+            deadline = time.monotonic() + 12
+            while not pending and time.monotonic() < deadline:
+                page.wait_for_timeout(50)
+            assert len(pending) == 1
+            old_media = pending.pop()
+            before_switch = request("/__fixture/state")["started"]
+            request("/__fixture/scenario", {"mode": "controls"})
+            page.locator("#file").set_input_files(fixture["media"]["normal"])
+            page.wait_for_function("""() => document.querySelector('video').currentTime>.3 &&
+                document.querySelector('#current').innerText.includes('Prepared sentence')""", timeout=15000)
+            old_cancelled = False
+            try:
+                old_media.continue_()
+            except Error:
+                old_cancelled = True
+            page.wait_for_timeout(1000)
+            switched = snapshot(page)
+            state = request("/__fixture/state")
+            assert state["started"] == before_switch + 1 and state["active"] == 1
+            assert "Prepared sentence" in switched["text"] and "Live sentence" not in switched["history"], switched
+            assert page.locator("video").evaluate("video=>video.duration") < 8.2
+            assert not page.locator("#current").evaluate("element=>element.classList.contains('err')")
+            result.update({"stale_hls_response_does_not_replace_new_file": True,
+                           "old_media_request_cancelled": old_cancelled,
+                           "switch_recognizers_started": 1, "switched_snapshot": switched})
+            assert not errors, errors
         finally:
             for route in pending:
                 try:
