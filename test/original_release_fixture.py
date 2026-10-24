@@ -116,8 +116,12 @@ class RecognitionFixture:
             return [(1.0, (0., 5., "This sentence was withdrawn.", None, True, 1)),
                     (1.2, (0., 5., "", None, True, 1)),
                     (1.4, (0., 5., "This sentence was withdrawn.", None, True, 1))]
-        if self.mode == "long-en":
-            text = "Clear original captions follow the speaker. Old lines never cover the next sentence."
+        if self.mode in ("long-en", "fast-en"):
+            text = ("Clear original captions follow the speaker. Old lines never cover the next sentence."
+                    if self.mode == "long-en" else
+                    "During this rapid explanation the speaker keeps moving through several related ideas "
+                    "without leaving a long pause between them. Each original caption should stay near its "
+                    "spoken words and remain readable, while older lines finish before the next idea appears on the screen.")
             tokens = re.findall(r"\S+\s*", text)
             width = 10.8 / len(tokens)
             words = [(index * width, (index + 1) * width, token.strip())
@@ -203,7 +207,7 @@ def main():
         @webui.app.post("/__fixture/scenario")
         async def fixture_scenario(request: Request):
             mode = (await request.json())["mode"]
-            if mode not in (*media, "withdrawn", "long-en", "live-normal", "live-gap",
+            if mode not in (*media, "withdrawn", "long-en", "fast-en", "live-normal", "live-gap",
                             "recovery-network", "recovery-auth", "recovery-live",
                             "live-no-caption", "live-auth"):
                 raise ValueError("Unknown offline scenario")

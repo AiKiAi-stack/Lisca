@@ -198,6 +198,23 @@ def main():
             page.wait_for_timeout(200)
             assert snapshot(page)["text"], snapshot(page)
             page.screenshot(path=str(directory / "english-narrow-caption.png"))
+            stop_if_active(page)
+            page.set_viewport_size({"width": 1280, "height": 800})
+            page.locator("#settingsBtn").click()
+            page.get_by_role("tab", name="字幕", exact=True).click()
+            page.locator("#styleReset").click()
+            page.get_by_role("button", name="关闭设置", exact=True).click()
+            open_scenario(page, "fast-en", fixture["media"]["long"])
+            wait_complete(page, 25000)
+            page.locator("video").evaluate("video=>{video.currentTime=0;video.play()}")
+            fast = observe_caption_pages(page)
+            expected_fast = ("During this rapid explanation the speaker keeps moving through several related ideas "
+                             "without leaving a long pause between them. Each original caption should stay near its "
+                             "spoken words and remain readable, while older lines finish before the next idea appears on the screen.")
+            assert normalize(" ".join(item["text"] for item in fast)) == normalize(expected_fast), fast
+            results.append({"case": "fast-english-timed-pages-without-backlog", "passed": True,
+                            "prescribed_words_per_second": len(expected_fast.split()) / 10.8,
+                            "visible_changes": fast, "sampling_tolerance_seconds": .05})
             assert not errors, errors
         finally:
             stop_if_active(page)
