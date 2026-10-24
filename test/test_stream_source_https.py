@@ -6,6 +6,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 import urllib.request
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,7 +19,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from tools.stream_source import StreamSource
+from tools.stream_source import MAX_REDIRECTED_HLS_BYTES, StreamSource, _rewrite_hls_playlist
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import webui
@@ -98,6 +99,79 @@ def https_hls(local_tls_material):
     try:
         address, port = server.server_address
         yield f"https://{address}:{port}/master.m3u8", requested
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+@pytest.fixture
+def rolling_redirect_https_hls(local_tls_material):
+    certificate, private_key = local_tls_material["trusted"]
+    segment = _make_mpegts_segment()
+    state = {"requests": [], "rolling_sequences": []}
+
+    class Handler(BaseHTTPRequestHandler):
+        def _respond(self, status, content_type, body, headers=()):
+            self.send_response(status)
+            if content_type:
+                self.send_header("Content-Type", content_type)
+            for name, value in headers:
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            state["requests"].append(self.path)
+            if self.path == "/master.m3u8":
+                self._respond(302, None, b"", (("Location", "/cdn/a/master.m3u8"),))
+            elif self.path == "/cdn/a/master.m3u8":
+                body = (
+                    "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=128000\n"
+                    "variant/live.m3u8\n"
+                ).encode()
+                self._respond(200, "application/vnd.apple.mpegurl", body)
+            elif self.path == "/cdn/a/variant/live.m3u8":
+                self._respond(302, None, b"", (("Location", "/actual/dir/live.m3u8"),))
+            elif self.path == "/actual/dir/live.m3u8":
+                body = (
+                    "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:0.13,\n"
+                    "seg0.ts\n#EXT-X-ENDLIST\n"
+                ).encode()
+                self._respond(200, "application/vnd.apple.mpegurl", body)
+            elif self.path == "/actual/dir/seg0.ts" or self.path.startswith("/rolling/seg"):
+                self._respond(200, "video/mp2t", segment)
+            elif self.path == "/live.m3u8":
+                sequence = len(state["rolling_sequences"])
+                state["rolling_sequences"].append(sequence)
+                body = (
+                    "#EXTM3U\n#EXT-X-TARGETDURATION:1\n"
+                    f"#EXT-X-MEDIA-SEQUENCE:{sequence}\n"
+                    + "".join(
+                        f"#EXTINF:0.13,\n/rolling/seg{item}.ts\n"
+                        for item in range(sequence, sequence + 3)
+                    )
+                ).encode()
+                self._respond(
+                    200, "application/vnd.apple.mpegurl", body,
+                    (("Cache-Control", "no-cache"),),
+                )
+            else:
+                self._respond(404, "text/plain", b"not found")
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(str(certificate), str(private_key))
+    server.socket = tls.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        address, port = server.server_address
+        yield f"https://{address}:{port}", state
     finally:
         server.shutdown()
         server.server_close()
@@ -219,6 +293,151 @@ def test_hls_manifest_response_is_closed_when_open_fails(monkeypatch):
         StreamSource("https://asr.test/live/index.m3u8")
 
     assert response.closed
+
+
+def test_redirected_nested_playlist_uses_effective_url_for_relative_segment(
+    rolling_redirect_https_hls, local_tls_material, monkeypatch
+):
+    base_url, state = rolling_redirect_https_hls
+    trusted_certificate, _ = local_tls_material["trusted"]
+    monkeypatch.setenv("SSL_CERT_FILE", str(trusted_certificate))
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
+
+    source = StreamSource(f"{base_url}/master.m3u8", chunk_sec=0.05)
+    try:
+        pcm = b"".join(source.iter_chunks())
+    finally:
+        source.close()
+
+    assert len(pcm) >= 3200
+    assert "/actual/dir/live.m3u8" in state["requests"]
+    assert "/actual/dir/seg0.ts" in state["requests"]
+    assert "/cdn/a/variant/seg0.ts" not in state["requests"]
+
+
+def test_redirected_playlist_rewrites_uri_attributes_and_relative_lines():
+    playlist = (
+        '\ufeff#EXTM3U\r\n'
+        '#EXT-X-KEY:METHOD=AES-128,URI="keys/key.bin?part=a,b"\r\n'
+        "#EXT-X-MAP:URI=init.mp4\r\n"
+        "../segments/seg0.ts\r\n"
+        "https://cdn.example.test/absolute.ts\r\n"
+    ).encode("utf-8")
+
+    rewritten = _rewrite_hls_playlist(
+        playlist, "https://origin.example.test/actual/dir/live.m3u8"
+    )
+
+    assert rewritten.decode("utf-8") == (
+        '\ufeff#EXTM3U\r\n'
+        '#EXT-X-KEY:METHOD=AES-128,URI="https://origin.example.test/actual/dir/keys/key.bin?part=a,b"\r\n'
+        "#EXT-X-MAP:URI=https://origin.example.test/actual/dir/init.mp4\r\n"
+        "https://origin.example.test/actual/segments/seg0.ts\r\n"
+        "https://cdn.example.test/absolute.ts\r\n"
+    )
+
+
+def test_redirected_binary_resource_is_not_buffered_or_rewritten(monkeypatch):
+    class Headers(dict):
+        def get_content_type(self):
+            return self["Content-Type"]
+
+    class Response:
+        headers = Headers({"Content-Type": "video/mp2t"})
+        read_calls = 0
+        closed = False
+
+        def geturl(self):
+            return "https://cdn.example.test/storage/segment.ts"
+
+        def read(self, _size=-1):
+            self.read_calls += 1
+            return b"segment bytes"
+
+        def close(self):
+            self.closed = True
+
+    response = Response()
+    source = object.__new__(StreamSource)
+    source._http_headers = {"User-Agent": "test"}
+    source._tls_context = object()
+    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
+
+    opened = source._open_nested_http("https://origin.example.test/segment.ts", 0, {})
+
+    assert opened is response
+    assert response.read_calls == 0
+    assert not response.closed
+
+
+def test_redirected_manifest_read_is_bounded_and_response_closed(monkeypatch):
+    class Headers(dict):
+        def get_content_type(self):
+            return self["Content-Type"]
+
+    class Response:
+        headers = Headers({
+            "Content-Type": "application/vnd.apple.mpegurl",
+            "Content-Length": str(MAX_REDIRECTED_HLS_BYTES + 8),
+        })
+        read_bytes = 0
+        closed = False
+
+        def geturl(self):
+            return "https://cdn.example.test/live.m3u8"
+
+        def read(self, size=-1):
+            self.read_bytes += size
+            return b"#EXTM3U\n"[:size]
+
+        def close(self):
+            self.closed = True
+
+    response = Response()
+    source = object.__new__(StreamSource)
+    source._http_headers = {"User-Agent": "test"}
+    source._tls_context = object()
+    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
+
+    with pytest.raises(ValueError, match="exceeds the size limit"):
+        source._open_nested_http("https://origin.example.test/live.m3u8", 0, {})
+
+    assert response.read_bytes == 16
+    assert response.closed
+
+
+def test_https_live_playlist_refreshes_and_reads_new_segments(
+    rolling_redirect_https_hls, local_tls_material, monkeypatch
+):
+    base_url, state = rolling_redirect_https_hls
+    trusted_certificate, _ = local_tls_material["trusted"]
+    monkeypatch.setenv("SSL_CERT_FILE", str(trusted_certificate))
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
+    monkeypatch.setattr("tools.stream_source.OPEN_TIMEOUT_SEC", 1.0)
+    monkeypatch.setattr("tools.stream_source.READ_TIMEOUT_SEC", 1.0)
+
+    source = StreamSource(f"{base_url}/live.m3u8", chunk_sec=0.05)
+    iterator = source.iter_chunks()
+    pcm = bytearray()
+    deadline = time.monotonic() + 3.0
+    try:
+        while time.monotonic() < deadline:
+            try:
+                pcm.extend(next(iterator))
+            except StopIteration:
+                break
+    finally:
+        iterator.close()
+        source.close()
+
+    assert len(state["rolling_sequences"]) >= 2
+    assert state["rolling_sequences"][-1] > state["rolling_sequences"][0]
+    assert "/rolling/seg3.ts" in state["requests"]
+    assert len(pcm) >= 3200
 
 
 @pytest.mark.parametrize("failure_stage", ["seek", "resampler"])
