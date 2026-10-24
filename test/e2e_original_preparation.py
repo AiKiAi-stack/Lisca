@@ -4,7 +4,7 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-from e2e_original_release import ROOT, open_scenario, request, snapshot, stop_if_active
+from e2e_original_release import launch_browser, ROOT, open_scenario, request, snapshot, stop_if_active
 
 
 def main():
@@ -14,8 +14,7 @@ def main():
     directory.mkdir(parents=True, exist_ok=True)
     results = []
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(executable_path="/usr/bin/google-chrome",
-            headless=True, args=["--autoplay-policy=no-user-gesture-required"])
+        browser = launch_browser(playwright)
         page = browser.new_page()
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
@@ -36,6 +35,7 @@ def main():
               document.querySelector('#current').innerText.includes('静音后')""", timeout=12000)
             speech = snapshot(page)
             assert speech["time"] < 5.8, speech
+            assert "暂未识别到语音" not in speech["status"], speech
             results.append({"case": "silence-to-speech", "passed": True, "snapshot": speech})
             stop_if_active(page)
 
