@@ -83,6 +83,11 @@ def main(mode, seconds):
                 assert result["media_advance_seconds"] >= seconds - 3, dict(result)
                 for sample in samples:
                     assert not (sample["time"] > 6 and "Late sentence" in sample["text"]), sample
+                gap_samples = [sample for sample in samples if 6 <= sample["time"] <= 10]
+                assert gap_samples and all("部分缺失" in sample["status"] for sample in gap_samples), dict(result)
+                recovered = [sample for sample in samples if sample["time"] >= 13
+                             and sample["text"].startswith("Recovered sentence")]
+                assert recovered and any("追上" in sample["status"] for sample in recovered), dict(result)
             else:
                 visible = [sample for sample in samples if sample["text"].startswith("Live sentence")]
                 assert len(visible) >= 20, dict(result)
