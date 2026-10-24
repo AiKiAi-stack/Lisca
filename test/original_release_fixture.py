@@ -6,6 +6,7 @@ never a speech-accuracy or public-source acceptance result.
 """
 import json
 import math
+import os
 from collections import deque
 from fractions import Fraction
 from pathlib import Path
@@ -67,6 +68,11 @@ class RecognitionFixture:
             self.mode = state["mode"]
             state["started"] += 1
             state["active"] += 1
+            self.observation = {"id": state["started"], "mode": self.mode,
+                                "created_at": time.monotonic(), "closed": False,
+                                "feed_observations": []}
+            state["engines"].append(self.observation)
+            state["engines"] = state["engines"][-32:]
         self.elapsed = 0.0
         self.closed = False
         self.pending = deque()
@@ -116,6 +122,9 @@ class RecognitionFixture:
         self.elapsed += len(audio) / 16000
         with self.state["lock"]:
             self.state["audio_seconds"] += len(audio) / 16000
+            observations = self.observation["feed_observations"]
+            observations.append({"at": time.monotonic(), "through": self.elapsed})
+            del observations[:-256]
         while self.steps and self.steps[0][0] <= self.elapsed:
             self.pending.append(self.steps.popleft()[1])
         return self.poll()
@@ -131,6 +140,7 @@ class RecognitionFixture:
             self.closed = True
             with self.state["lock"]:
                 self.state["active"] -= 1
+                self.observation["closed"] = True
 
 
 def main():
@@ -144,7 +154,7 @@ def main():
         generate_media(directory / (name + ".mp4"), *arguments)
     (directory / "invalid.bin").write_bytes(b"This is not decodable media.")
     state = {"mode": "normal", "started": 0, "active": 0, "audio_seconds": 0.,
-             "lock": threading.Lock(), "live_started": time.monotonic()}
+             "lock": threading.Lock(), "live_started": time.monotonic(), "engines": []}
     hls_directory = directory / "hls"
     hls_directory.mkdir(exist_ok=True)
     generate_hls(hls_directory)
@@ -160,8 +170,9 @@ def main():
         @webui.app.get("/__fixture/state")
         def fixture_state():
             with state["lock"]:
-                snapshot = {key: value for key, value in state.items() if key != "lock"}
+                snapshot = json.loads(json.dumps({key: value for key, value in state.items() if key != "lock"}))
             return {**snapshot, "simulated_recognition": True,
+                    "process_id": os.getpid(),
                     "live_url": f"http://127.0.0.1:{source.server_port}/live.m3u8",
                     "media": {**{name: str(directory / (name + ".mp4")) for name in media},
                               "invalid": str(directory / "invalid.bin")}}
