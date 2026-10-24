@@ -60,6 +60,7 @@ UA = DEFAULT_UA
 # 服务端后台日志（ticket-14）：环形缓冲，经 WS 推给前端日志面板
 _SERVER_LOGS: deque = deque(maxlen=500)
 _LOG_SINKS: list = []  # 每连接的 put() 回调，实时推送新日志行
+_MAX_WS_EVENT_BACKLOG = 2048
 logger = logging.getLogger("webui")  # 会话生命周期 INFO 日志（用户可见）
 _SHARES: dict[str, LiveShare] = {}
 _SHARE_LOCK = threading.RLock()
@@ -738,7 +739,12 @@ async def ws_endpoint(ws: WebSocket):
         await ws.close()
         return
 
-    queue: asyncio.Queue = asyncio.Queue()
+    # Two reserved slots ensure overflow can be reported and followed by a
+    # terminal event without evicting an already queued final caption.
+    queue: asyncio.Queue = asyncio.Queue(maxsize=_MAX_WS_EVENT_BACKLOG + 2)
+    overflowed = threading.Event()
+    backlog_lock = threading.Lock()
+    pending_event_count = 0
     loop = asyncio.get_running_loop()
     stop = share.stop_event if share else threading.Event()
     if cloud:
@@ -760,10 +766,11 @@ async def ws_endpoint(ws: WebSocket):
         return now - excluded
 
     def put(item: dict) -> None:
-        def dispatch() -> None:
-            queue.put_nowait(item)
+        nonlocal pending_event_count
+        def dispatch(queued_item: dict) -> None:
+            queue.put_nowait(queued_item)
             if share:
-                share.publish(item)
+                share.publish(queued_item)
         for name in ("message", "line"):
             if isinstance(item.get(name), str):
                 item[name] = _redact_urls_in_text(item[name])
@@ -773,9 +780,33 @@ async def ws_endpoint(ws: WebSocket):
                     for secret in (cloud["config"].api_key, cloud["config"].translation_key):
                         if secret:
                             item[name] = item[name].replace(secret, "[已隐藏]")
+        with backlog_lock:
+            if item.get("type") == "end":
+                if overflowed.is_set():
+                    item["reason"] = "error"
+                pending_event_count += 1
+                queued_item = item
+            elif overflowed.is_set():
+                return
+            elif pending_event_count >= _MAX_WS_EVENT_BACKLOG:
+                overflowed.set()
+                stop.set()
+                pending_event_count += 1
+                queued_item = {
+                    "type": "error",
+                    "failure_category": "capacity",
+                    "retryable": False,
+                    "message": "字幕事件积压达到安全上限，结果不完整；请停止或重新开始识别",
+                }
+                logger.warning("会话事件队列达到安全上限，已停止识别")
+            else:
+                pending_event_count += 1
+                queued_item = item
         try:
-            loop.call_soon_threadsafe(dispatch)
+            loop.call_soon_threadsafe(dispatch, queued_item)
         except RuntimeError:
+            with backlog_lock:
+                pending_event_count -= 1
             stop.set()
 
     async def receive_loop() -> None:
@@ -1192,6 +1223,8 @@ async def ws_endpoint(ws: WebSocket):
             logger.info("会话结束")
             if worker_failed:
                 terminal_reason = "error"
+            elif overflowed.is_set():
+                terminal_reason = "error"
             elif stop.is_set():
                 terminal_reason = "cancelled"
             elif normal_completion:
@@ -1203,6 +1236,8 @@ async def ws_endpoint(ws: WebSocket):
     try:
         while True:
             item = await queue.get()
+            with backlog_lock:
+                pending_event_count -= 1
             if item["type"] == "end" and share:
                 # Invalidate media access before acknowledging the end to the host.
                 share.active = False
