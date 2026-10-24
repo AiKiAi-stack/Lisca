@@ -36,7 +36,16 @@ def main():
             for mode in ("live-auth", "recovery-live"):
                 before = request("/__fixture/state")["started"]
                 open_scenario(page, mode, fixture["live_url"])
-                page.locator("#retryCaptions").wait_for(state="visible", timeout=25000)
+                samples = []
+                deadline = time.monotonic() + 25
+                begun = time.monotonic()
+                while not page.locator("#retryCaptions").is_visible() and time.monotonic() < deadline:
+                    item = snapshot(page)
+                    item.update(page.locator("video").evaluate("video=>({ready_state:video.readyState})"))
+                    item["wall_seconds"] = time.monotonic() - begun
+                    samples.append(item)
+                    page.wait_for_timeout(50)
+                assert page.locator("#retryCaptions").is_visible(), samples[-1:]
                 page.wait_for_function("document.querySelector('video').readyState>=3", timeout=15000)
                 page.wait_for_timeout(500)
                 first = snapshot(page)
@@ -48,8 +57,19 @@ def main():
                 assert state["active"] == 0
                 assert following["time"] - first["time"] >= 2.5, (mode, first, following)
                 assert not following["paused"] and "部分缺失" in following["status"], following
+                if mode == "recovery-live":
+                    advancing = [item for item in samples if item["time"] > .3]
+                    assert len(advancing) >= 20, samples
+                    backwards = sum(right["time"] < left["time"] - .15
+                                    for left, right in zip(advancing, advancing[1:]))
+                    assert backwards == 0, advancing
+                    held = sum(right["wall_seconds"] - left["wall_seconds"]
+                               for left, right in zip(samples, samples[1:])
+                               if left["paused"] and left["ready_state"] >= 3)
+                    assert held <= 2.15, (held, samples)
                 results.append({"case": mode + "-media-continues", "passed": True,
-                                "recognizers_started": expected, "snapshots": [first, following]})
+                                "recognizers_started": expected, "snapshots": [first, following],
+                                "recovery_samples": samples})
                 stop_if_active(page)
             assert not errors, errors
         finally:

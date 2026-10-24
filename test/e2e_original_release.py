@@ -68,6 +68,8 @@ def wait_complete(page, timeout=20000):
 
 
 def stop_if_active(page):
+    for close in page.locator("dialog[open] [data-close]").all():
+        close.click()
     if page.locator("#stop").is_visible():
         page.locator("#stop").click()
 

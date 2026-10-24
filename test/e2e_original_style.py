@@ -4,7 +4,7 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-from e2e_original_release import ROOT, launch_browser, open_scenario, request, snapshot, stop_if_active, wait_complete
+from e2e_original_release import ROOT, launch_browser, open_scenario, request, snapshot, stop_if_active
 
 
 def colors(page):
@@ -24,9 +24,8 @@ def main():
         page.on("pageerror", lambda error: errors.append(error.stack))
         try:
             open_scenario(page, "normal", fixture["media"]["normal"])
-            wait_complete(page)
-            page.locator("video").evaluate("video=>{video.pause();video.currentTime=2.4}")
-            page.wait_for_function("document.querySelector('#current').innerText.includes('Second')")
+            page.wait_for_function("document.querySelector('#current').innerText.includes('第一句')")
+            page.locator("video").evaluate("video=>video.pause()")
             original = colors(page)
             page.locator("#settingsBtn").click()
             page.get_by_role("tab", name="字幕", exact=True).click()
@@ -42,7 +41,7 @@ def main():
             assert page.locator("#subToggle").get_attribute("aria-pressed") == "false"
             assert not snapshot(page)["text"]
             page.locator("#subToggle").click()
-            assert "Second" in snapshot(page)["text"]
+            assert "第一句" in snapshot(page)["text"]
             results.append({"case": "contrast-position-and-subtitle-toggle", "passed": True,
                             "original": original, "high": high})
             stop_if_active(page)
