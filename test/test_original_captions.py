@@ -234,7 +234,7 @@ def test_original_caption_revisions_increase_across_withdrawal_and_correction(tm
     class Source:
         def __init__(self, *_args, **_kwargs): pass
         def iter_chunks(self):
-            for _ in range(6):
+            for _ in range(8):
                 yield b"\x00" * 3200
         def close(self): pass
 
@@ -243,9 +243,11 @@ def test_original_caption_revisions_increase_across_withdrawal_and_correction(tm
             self.events = iter([
                 (0.0, 1.0, "先前原文。", None, True, 7),
                 (0.0, 1.0, "撤回前修订。", None, True, 7),
+                (0.0, 1.0, "当前草稿也要撤回。", None, False, 7),
                 (0.0, 1.0, "", None, True, 7),
                 (0.0, 1.0, "先前原文。", None, True, 7),
                 (0.0, 1.0, "撤回前修订。", None, True, 7),
+                (0.0, 1.0, "当前草稿也要撤回。", None, False, 7),
                 (0.0, 1.0, "修订后的原文。", None, True, 7),
             ])
         def transcribe_chunk(self, _audio):
@@ -274,11 +276,15 @@ def test_original_caption_revisions_increase_across_withdrawal_and_correction(tm
     removed = next(event for event in events if event["type"] == "caption_remove")
     corrected = next(event for event in events
                      if event["type"] == "subtitle" and event["text"] == "修订后的原文。")
+    withdrawn_draft = next(event for event in events
+                           if event["type"] == "subtitle" and event["text"] == "当前草稿也要撤回。")
     captions = [event for event in events if event["type"] == "subtitle"]
     assert [event["text"] for event in captions] == [
-        "先前原文。", "撤回前修订。", "修订后的原文。"]
+        "先前原文。", "撤回前修订。", "当前草稿也要撤回。", "修订后的原文。"]
     assert old["sentence_id"] == removed["sentence_id"] == corrected["sentence_id"] == 7
     assert old["revision"] < removed["revision"] < corrected["revision"]
+    assert withdrawn_draft["revision"] < removed["revision"]
+    assert corrected["revision"] == removed["revision"] + 1
 
 
 def test_original_language_selection_is_validated_before_any_cloud_request(tmp_path, monkeypatch):
