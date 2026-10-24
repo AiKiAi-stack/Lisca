@@ -41,3 +41,46 @@ def test_capped_recording_keeps_cancelled_truth_and_redacts_transport_secrets(tm
     assert secret not in artifact_text
     assert "Bearer " not in artifact_text
     assert "session_url" not in artifact_text
+
+
+def test_optional_share_http_failure_is_diagnostic_but_session_start_is_fatal():
+    share_diagnostic, share_failure = acceptance.classify_http_response(
+        "POST", "/share/start", 500)
+    session_diagnostic, session_failure = acceptance.classify_http_response(
+        "POST", "/api/cloud/sessions", 500)
+    stop_path = "/api/cloud/sessions/private-capability"
+    stop_diagnostic, stop_failure = acceptance.classify_http_response(
+        "DELETE", stop_path, 500)
+
+    assert share_diagnostic == {
+        "type": "http_response_error", "endpoint_category": "share_start", "status": 500}
+    assert share_failure is None
+    assert session_diagnostic == {
+        "type": "http_response_error", "endpoint_category": "session_start", "status": 500}
+    assert session_failure == {"type": "session_start_http_error", "status": 500}
+    assert stop_diagnostic == {
+        "type": "http_response_error", "endpoint_category": "session_stop", "status": 500}
+    assert stop_failure is None
+    assert "private-capability" not in str((session_diagnostic, session_failure,
+                                            stop_diagnostic, stop_failure))
+
+
+def test_player_failure_classification_is_separate_from_console_diagnostics():
+    console_kind, console = acceptance.classify_runtime_error(
+        "console", "Failed to load resource: HTTP 500 https://host.invalid/private?token=secret")
+    page_kind, _page_error = acceptance.classify_runtime_error("page", "uncaught callback")
+    websocket_kind, websocket_error = acceptance.classify_runtime_error("websocket")
+
+    assert console_kind == "diagnostic"
+    assert console["type"] == "console_error"
+    assert "secret" not in console["message"]
+    assert page_kind == "failure"
+    assert websocket_kind == "failure"
+    assert websocket_error == {"type": "websocket_transport_error"}
+    assert acceptance.fatal_player_sample({"status_is_error": False,
+                                            "media_error_code": 0}) is None
+    assert acceptance.fatal_player_sample({"status_is_error": True,
+                                            "media_error_code": 0}) == {"type": "ui_fatal"}
+    assert acceptance.fatal_player_sample({"status_is_error": False,
+                                            "media_error_code": 4}) == {
+        "type": "media_error", "code": 4}
