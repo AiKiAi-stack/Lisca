@@ -150,6 +150,25 @@ def main():
             assert abs(large["fontSize"]-64) < .1, large
             assert large["text"] and large["lines"] <= 2.1 and not large["clipped"], large
             results.append({"case": "narrow-selected-large-font", "passed": True, "snapshot": large})
+            page.locator("video").evaluate("video=>{video.currentTime=0;video.play()}")
+            changes = []
+            deadline = time.monotonic() + 16
+            while time.monotonic() < deadline:
+                item = snapshot(page)
+                if not changes or item["text"] != changes[-1]["text"]:
+                    changes.append({"time": item["time"], "text": item["text"]})
+                assert item["lines"] <= 2.1 and not item["clipped"], item
+                if item["time"] >= 11.3:
+                    break
+                page.wait_for_timeout(40)
+            assert changes and item["time"] >= 11.3, changes
+            artificial_flashes = [left for left, right in zip(changes, changes[1:])
+                                  if left["text"] and right["time"] - left["time"] < .55]
+            assert not artificial_flashes, artificial_flashes
+            results.append({"case": "long-caption-pages-without-artificial-flashing", "passed": True,
+                            "visible_changes": changes, "sampling_tolerance_seconds": .05})
+            page.locator("video").evaluate("video=>{video.pause();video.currentTime=3}")
+            page.wait_for_timeout(200)
             page.locator("#fullscreenBtn").click()
             page.wait_for_function("document.fullscreenElement !== null")
             full = snapshot(page)
