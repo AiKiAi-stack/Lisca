@@ -525,33 +525,23 @@ async def _proxy_stream(request: Request, stream_url: str,
 @app.get("/video")
 async def video_proxy(url: str, request: Request):
     """代理视频流（纯画面）；本地文件直接返回；m3u8 等直链不经 yt-dlp"""
-    if os.path.exists(url):
-        return FileResponse(url)
-    kind, _ = classify(url)
-    if kind == "page":
-        try:
-            url = await _resolve_video_url(url)
-        except Exception as exc:  # noqa: BLE001 - expose the failed stage, not resolver output
-            logger.warning("平台页面解析失败: %s", _redact_urls_in_text(str(exc)))
-            raise HTTPException(status_code=502, detail="平台页面解析失败：请检查链接、访问权限和解析器支持情况") from None
-    try:
-        return await _proxy_stream(request, url)
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 - proxy failures are distinct from parsing failures
-        logger.warning("媒体拉流失败: %s", _redact_urls_in_text(str(exc)))
-        raise HTTPException(status_code=502, detail="媒体拉流失败：请检查来源、网络和访问权限") from None
+    return await _proxy_media_route(url, request, _resolve_video_url)
 
 
 @app.get("/audio")
 async def audio_proxy(url: str, request: Request):
     """代理音频流（声音）；本地文件直接返回；m3u8 等直链不经 yt-dlp"""
+    return await _proxy_media_route(url, request, _resolve_audio_url)
+
+
+async def _proxy_media_route(url: str, request: Request, resolver):
+    """Share page-resolution and upstream-error mapping for video/audio routes."""
     if os.path.exists(url):
         return FileResponse(url)
     kind, _ = classify(url)
     if kind == "page":
         try:
-            url = await _resolve_audio_url(url)
+            url = await resolver(url)
         except Exception as exc:  # noqa: BLE001 - expose the failed stage, not resolver output
             logger.warning("平台页面解析失败: %s", _redact_urls_in_text(str(exc)))
             raise HTTPException(status_code=502, detail="平台页面解析失败：请检查链接、访问权限和解析器支持情况") from None

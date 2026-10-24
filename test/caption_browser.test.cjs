@@ -12,6 +12,80 @@ function browser({playerWidth=260,fontSize=30}={}){
  vm.runInContext(html.slice(html.indexOf('function captionSegments('),html.indexOf('function onPreview(')),context);
  return {context,current,late,push:cue=>context.onSubtitle({type:'subtitle',translated:true,sentence_id:1,beg:0,end:2,is_final:true,text:'这句译文必须出现在视频内。',...cue}),tick(ms){context.now=ms;context.syncSubtitle();}};
 }
+function shareHistoryViewer(){
+ const b=browser(),c=b.context,html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const classes=new Set(),elements=new Map([['captionActions',{hidden:true}],['retryCaptions',{hidden:true}],
+   ['shareHistoryNotice',{hidden:true,textContent:''}]]);
+ c.generation=4;c.connectionGeneration=4;c.terminalReceived=false;c.recognitionOnlyStopped=false;
+ c.audioClockPts=null;c.timelineMapped=false;c.queuedMediaMessages=[];c.mediaOffset=0;
+ c.sharedViewerActive=true;c.preserveLiveMedia=false;c.originalCaptionMode=false;c.uiPaused=false;
+ c.holdingForBuffer=false;c.holdingForSync=false;c.playStarted=false;c.captionHasSpeech=false;
+ c.activeInput='';c.currentEl.classList={contains:name=>classes.has(name),add:name=>classes.add(name),remove:name=>classes.delete(name)};
+ c.player={currentTime:1,paused:false,ended:false,playCalls:0,play(){this.playCalls++;return Promise.resolve();}};
+ c.document={getElementById:id=>elements.get(id)||null};
+ c.playbackGuard={done:false,degraded:false,captionProgress(){},removeCaption(){}};
+ c.performance={now:()=>100};c.setStatus=(message,isError=false)=>{c.status=message;if(isError)classes.add('status-error');};
+ c.logEvent=()=>{};c.markSessionRecoveryProgress=()=>{};c.stallWatchdog=()=>{};
+ const syncStart=html.indexOf('  function syncSubtitle() {');
+ const syncEnd=html.indexOf('\n\n  // 历史原地修订 partial',syncStart);
+ vm.runInContext(html.slice(syncStart,syncEnd),c);
+ const noticeStart=html.indexOf('  function showShareHistoryNotice() {');
+ const noticeEnd=html.indexOf('\n  }',noticeStart)+'\n  }'.length;
+ vm.runInContext(html.slice(noticeStart,noticeEnd),c);
+ const receiveStart=html.indexOf('    function receiveMessage(input) {');
+ const receiveEnd=html.indexOf('    ws.onmessage = ',receiveStart);
+ vm.runInContext(html.slice(receiveStart,receiveEnd),c);
+ return {context:c,current:b.current};
+}
+function lateHlsClockViewer(){
+ const b=shareHistoryViewer(),c=b.context,html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const {RecoveryController}=require('../tools/webui_static/recovery_controller.js');
+ Object.assign(c,{generation:9,connectionGeneration:9,terminalReceived:false,recognitionOnlyStopped:false,
+   preserveLiveMedia:true,originalCaptionMode:true,sharedViewerActive:false,isHls:true,
+   audioClockPts:null,videoClockPts:null,hlsVideoClockPts:null,timelineMapped:false,mediaOffset:0,
+   queuedMediaMessages:[],captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:1000,
+   captionHasSpeech:false,originalCaptionsComplete:false,playbackLimit:null,
+   playbackGuard:{live:true,degraded:false,done:false,captionProgress(){},removeCaption(){}},
+   recoveryController:new RecoveryController(),stallWatchdog(){},markSessionRecoveryProgress(){},
+   syncPlaybackToBuffer(){},useCaptionBuffer:true,aligningInitialPlayback:false,
+   currentEl:{textContent:'',classList:{contains:()=>false,add(){},remove(){}}},
+   appendHistory(){return {remove(){}};},updateHistory(){},fitCaptionWidth(){},
+   performance:{now:()=>100},setTimeout(){return 1;},logEvent(){}});
+ c.player.currentTime=3;c.player.paused=true;
+ const flushStart=html.indexOf('    function flushMediaClock() {');
+ const flushEnd=html.indexOf('\n    delayEl.disabled',flushStart);
+ vm.runInContext(html.slice(flushStart,flushEnd),c);
+ c.flushCurrentMediaClock=c.flushMediaClock;
+ c.activeMediaClockFlush=c.flushCurrentMediaClock;
+ const offsetStart=html.indexOf('  function offsetMediaMessage(msg, offset) {');
+ const offsetEnd=html.indexOf('\n\n  function shouldPreserveLiveMedia',offsetStart);
+ vm.runInContext(html.slice(offsetStart,offsetEnd),c);
+ const identityStart=html.indexOf('  function scopeSessionCaptionIdentity(');
+ const identityEnd=html.indexOf('\n\n  async function connect(',identityStart);
+ vm.runInContext(html.slice(identityStart,identityEnd),c);
+ const receiveStart=html.indexOf('    function receiveMessage(input) {');
+ const receiveEnd=html.indexOf('    ws.onmessage = ',receiveStart);
+ vm.runInContext(html.slice(receiveStart,receiveEnd),c);
+ return {context:c,current:b.current};
+}
+function socketRecoveryBrowser(eventName,status='scheduled'){
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const calls=[],failures=[],statuses=[];
+ const c={terminalReceived:false,originalCaptionMode:true,sharedViewerActive:false,recognitionOnlyStopped:false,
+   generation:7,recoveryController:{cancelled:false,pending:null},playbackGuard:{live:true},
+   activeInput:'local.mp4',player:{currentTime:5},calls,failures,statuses,
+   scheduleSessionRecovery(...args){calls.push(args);return {status};},
+   connect(...args){c.connected=args;},setStatus(message){statuses.push(message);},
+   showRecognitionFailure(message){failures.push(message);},logEvent(){},
+   startBtn:{style:{}},stopBtn:{style:{}},shareCopyBtn:{style:{}},shareAddressEl:{hidden:false},
+   currentEl:{classList:{contains:()=>false}},ws:{}};
+ const start=html.indexOf('    function scheduleRecognitionSocketRecovery(');
+ const closeStart=html.indexOf('    ws.onclose = (event) => {',start);
+ const end=html.indexOf('\n    };',closeStart)+'\n    };'.length;
+ vm.runInNewContext(html.slice(start,end),c);
+ if(eventName==='error')c.ws.onerror();else c.ws.onclose({code:1006});
+ return c;
+}
 function seekBrowser({position=0,playbackLimit=0,paused=true,confirmResult=true}={}){
  const b=browser(),c=b.context,listeners={},confirmMessages=[],timers=new Map();let nextTimer=1;
  Object.assign(c,{aligningInitialPlayback:false,recognitionOnlyStopped:false,originalCaptionsComplete:false,
@@ -116,6 +190,36 @@ function playBrowser({position=2,pauseStartedAt=0,now=3000,readyState=1}={}){
  return {context:c,play(){listeners.play();}};
 }
 test('late complete translations appear on the video rather than disappearing',()=>{const b=browser();b.push({});b.tick(0);assert.match(b.current.textContent,/这句译文/);assert.equal(b.late.hidden,true);});
+test('a truncated share history notice stays nonterminal and later captions still render',()=>{
+ const {context:c,current}=shareHistoryViewer();
+ c.receiveMessage({type:'status',failure_category:'share_history_truncated',retryable:false,
+   message:'较早字幕记录未保留，当前直播继续'});
+ c.receiveMessage({type:'ready',original:true,buffered:false,delay:0});
+ c.receiveMessage({type:'subtitle',sentence_id:301,revision:1,beg:0,end:2,
+   is_final:true,translated:false,text:'历史截断后仍继续的字幕'});
+ assert.equal(c.currentEl.classList.contains('err'),false);
+ assert.equal(c.player.playCalls,1);
+ assert.equal(c.document.getElementById('shareHistoryNotice').hidden,false);
+ assert.equal(c.document.getElementById('shareHistoryNotice').textContent,'较早字幕记录未保留，当前直播继续');
+ assert.match(current.textContent,/历史截断后仍继续的字幕/);
+ assert.match(c.status,/原文字幕已就绪/);
+});
+test('websocket error and abnormal close use the same recovery action and preserve their messages',()=>{
+ for(const eventName of ['error','close']){
+  const c=socketRecoveryBrowser(eventName);
+  assert.equal(c.calls.length,1,eventName);
+  assert.equal(c.calls[0][0],'recognition');
+  assert.equal(c.calls[0][1],true);
+  assert.match(c.statuses.at(-1),/直播画面继续播放/);
+  c.calls[0][2]({});
+  assert.deepEqual(Array.from(c.connected).slice(0,3),['local.mp4',null,5]);
+  assert.equal(c.connected[3].automaticRecovery,true);
+ }
+ const error=socketRecoveryBrowser('error','exhausted');
+ const close=socketRecoveryBrowser('close','exhausted');
+ assert.match(error.failures[0],/连接失败/);
+ assert.match(close.failures[0],/异常关闭/);
+});
 test('caption identity capacity stops recognition while preserving existing transcript rows',()=>{
  const b=browser(),c=b.context,calls=[];
  c.MAX_RETAINED_CAPTIONS=1;
@@ -226,7 +330,7 @@ test('cloud failures during normal playback remain visible errors rather than si
 test('a recovered ASR session reusing a sentence ID preserves both generations of transcript history',()=>{
  const b=browser(),c=b.context,html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
  Object.assign(c,{generation:2,connectionGeneration:2,preserveLiveMedia:true,recognitionOnlyStopped:false,
-   audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,
+   audioClockPts:null,videoClockPts:null,hlsVideoClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,
    originalCaptionMode:true,captionHasSpeech:true,playStarted:true,holdingForBuffer:false,
    syncSubtitle(){},markSessionRecoveryProgress(){},
    playbackGuard:{captionProgress(){},removeCaption(){}}});
@@ -251,6 +355,49 @@ test('a recovered ASR session reusing a sentence ID preserves both generations o
  c.receiveMessage({type:'caption_remove',sentence_id:'sentence-1',revision:1});
  assert.deepEqual(Array.from(c.subs,s=>s.text),['上一会话的句子。']);
  assert.deepEqual(Array.from(c.previewSubs,s=>s.text),['上一会话草稿']);
+});
+
+test('a recovered live session drains queued subtitles when the preserved HLS clock arrives late',()=>{
+ const {context:c}=lateHlsClockViewer();
+ c.receiveMessage({type:'timeline',audio_pts:10});
+ c.receiveMessage({type:'ready',original:true,buffered:true});
+ c.receiveMessage({type:'subtitle',sentence_id:'live-sentence',revision:1,beg:1,end:2,
+   is_final:true,translated:false,text:'Live sentence'});
+ assert.deepEqual(Array.from(c.queuedMediaMessages,message=>message.type),['ready','subtitle']);
+ c.hlsVideoClockPts=8; // the existing HLS instance delivers INIT_PTS after the new ASR timeline
+ c.receiveMessage({type:'status',message:'still connected'});
+ assert.equal(c.timelineMapped,true);
+ assert.deepEqual(Array.from(c.queuedMediaMessages),[]);
+ assert.equal(c.subs.length,1);
+ assert.equal(c.subs[0].text,'Live sentence');
+ assert.equal(c.subs[0].beg,3);
+ assert.equal(c.subs[0].end,4);
+ assert.equal(c.player.playCalls,1);
+ assert.equal(c.terminalReceived,false);
+});
+
+test('the preserved HLS INIT_PTS callback drains a queued terminal end without another WS message',()=>{
+ const {context:c}=lateHlsClockViewer(),html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ c.ws={close(){c.closed=true;}};
+ c.receiveMessage({type:'timeline',audio_pts:10});
+ c.receiveMessage({type:'ready',original:true,buffered:true});
+ c.receiveMessage({type:'subtitle',sentence_id:'live-sentence',revision:1,beg:1,end:2,
+   is_final:true,translated:false,text:'Live sentence'});
+ c.receiveMessage({type:'end',reason:'completed'});
+ assert.deepEqual(Array.from(c.queuedMediaMessages,message=>message.type),['ready','subtitle','end']);
+ const ptsStart=html.indexOf('      hlsPlayer.on(Hls.Events.INIT_PTS_FOUND, (_evt, data) => {');
+ const ptsEnd=html.indexOf('\n      hlsPlayer.on(Hls.Events.ERROR',ptsStart);
+ c.hlsPlayer={on(_event,callback){c.onInitPts=callback;}};
+ c.Hls={Events:{INIT_PTS_FOUND:'init_pts_found'}};
+ c.flushMediaClock=()=>{c.oldGenerationFlushes=(c.oldGenerationFlushes||0)+1;};
+ vm.runInContext(`let videoClockPts=null; const currentHls=hlsPlayer;\n${html.slice(ptsStart,ptsEnd)}`,c);
+ c.onInitPts('init_pts_found',{id:'main',initPTS:720000,timescale:90000});
+ assert.equal(c.timelineMapped,true);
+ assert.deepEqual(Array.from(c.queuedMediaMessages),[]);
+ assert.equal(c.subs.length,1);
+ assert.equal(c.closed,true);
+ assert.equal(c.playbackGuard.done,true);
+ assert.equal(c.terminalReceived,true);
 });
 
 test('only automatic original-caption recovery on an active live HLS source preserves the media player',()=>{
@@ -377,7 +524,7 @@ function recoveryBrowser(){
    clearTimeout(id){timers.delete(id);},logEvent(){},setStatus(message){c.status=message;},
    showCaptionRecovery(){c.cancellations++;},showRecognitionFailure(message){c.cancellations++;c.status=message;},
    holdCaptionForCloudReconnect(){return false;},
-   connect(...args){actions.push(['recognition',args]);},
+   connect(...args){actions.push(['recognition',args]);c.connectionGeneration++;},
    document:{getElementById:()=>({hidden:false})},
    currentEl:{textContent:'',classList:{contains:()=>false,add(){},remove(){}}},Hls};
  c.recoveryController=new RecoveryController({setTimeout:c.setTimeout,clearTimeout:c.clearTimeout});
@@ -389,7 +536,7 @@ function recoveryBrowser(){
    recoverMediaError(){c.recoveries++;actions.push(['media']);},destroy(){c.destroyed=true;}};
  c.hlsPlayer=source;c.currentHls=source;
  vm.createContext(c);
- const helperStart=html.indexOf('  function scheduleSessionRecovery(');
+ const helperStart=html.indexOf('  let stoppedHlsLoaderForRecovery = null;');
  const helperEnd=html.indexOf('  async function cloudRequest(',helperStart);
  vm.runInContext(html.slice(helperStart,helperEnd),c);
  const mediaStart=html.indexOf('      const hlsNetworkLoadErrors = new Set([');
@@ -400,6 +547,7 @@ function recoveryBrowser(){
  vm.runInContext(html.slice(wsStart,wsEnd),c);
  return {context:c,actions,recoveryOrder,
    mediaFailure(){c.callback(null,{fatal:true,type:c.Hls.ErrorTypes.NETWORK_ERROR});},
+   mediaDecodeFailure(){c.callback(null,{fatal:true,type:c.Hls.ErrorTypes.MEDIA_ERROR});},
    mediaLoaderFailure(details,code=503){c.callback(null,{fatal:false,type:c.Hls.ErrorTypes.NETWORK_ERROR,
      details,response:{code}});},
    recognitionFailure(retryable=true){c.receiveMessage({type:'error',message:'连接中断',retryable});},
@@ -452,18 +600,29 @@ test('media and recognition failures share the same visible two-attempt budget',
  b.recognitionFailure();assert.equal(c.recoveryController.pending.attempt,2);
  assert.equal(c.recoveryController.pending.delayMs,2000);
  b.mediaFailure();assert.equal(c.recoveryController.attempts,2);
- b.advance(2000);assert.equal(c.recoveries,1);assert.deepEqual(b.actions.map(a=>a[0]),['media','recognition']);
+ b.advance(2000);assert.equal(c.recoveries,2);assert.deepEqual(b.actions.map(a=>a[0]),['media','media','recognition']);
  b.recognitionFailure();assert.equal(c.recoveryController.attempts,2);
  assert.match(c.status,/字幕|恢复|重试|识别/);
 });
-test('simultaneous media and recognition faults perform one full-session recovery action',()=>{
+test('simultaneous media and recognition faults resume HLS and ASR in one shared attempt',()=>{
  const b=recoveryBrowser(),c=b.context;
  b.mediaFailure();
  b.recognitionFailure();
  assert.equal(c.recoveryController.attempts,1);
  assert.equal(c.recoveryController.pending.delayMs,1000);
  b.advance(1000);
- assert.deepEqual(b.actions.map(action=>action[0]),['recognition']);
+ assert.deepEqual(b.actions.map(action=>action[0]),['media','recognition']);
+ assert.equal(c.recoveries,1);
+ assert.equal(b.actions.filter(action=>action[0]==='recognition').length,1);
+});
+test('simultaneous HLS decode and recognition faults execute both recovery actions',()=>{
+ const b=recoveryBrowser(),c=b.context;
+ b.recognitionFailure();
+ b.mediaDecodeFailure();
+ assert.equal(c.recoveryController.attempts,1);
+ b.advance(1000);
+ assert.deepEqual(b.actions.map(action=>action[0]),['media','recognition']);
+ assert.equal(c.recoveries,1);
 });
 test('a paused session shows nonretryable provider errors for user action',()=>{
  const b=recoveryBrowser(),c=b.context;c.uiPaused=true;c.holdCaptionForCloudReconnect=()=>{c.holdCalled=true;return true;};

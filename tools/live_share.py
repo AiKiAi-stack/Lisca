@@ -140,11 +140,10 @@ class LiveShare:
                 snapshot.append(self._timeline)
             if self._history_truncated:
                 snapshot.append({
-                    "type": "error",
+                    "type": "status",
                     "failure_category": "share_history_truncated",
                     "retryable": False,
-                    "message": (f"直播分享仅保留最近 {MAX_SHARE_HISTORY_EVENTS} 条字幕事件，"
-                                "更早的回看记录不完整"),
+                    "message": "较早字幕记录未保留，当前直播继续",
                 })
             snapshot.extend(self._events)
             if self._ready:

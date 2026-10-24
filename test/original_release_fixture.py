@@ -90,6 +90,12 @@ class RecognitionFixture:
     def script(self):
         if self.mode in ("silent", "no-progress", "live-no-caption"):
             return []
+        if self.mode == "share-history":
+            historical = [(0.2, (index * 0.01, index * 0.01 + 0.005,
+                                  f"Historical caption {index + 1}", None, True, index + 1))
+                          for index in range(300)]
+            return [*historical,
+                    (0.2, (0., 60., "Caption after history snapshot", None, True, 301))]
         if self.mode == "controls":
             return [(beg + 1.8, (float(beg), beg + 1.8, f"Prepared sentence {beg // 2 + 1}.",
                       [(float(beg), beg + 1.8, f"Prepared sentence {beg // 2 + 1}.")],
@@ -156,7 +162,18 @@ class RecognitionFixture:
         return self.poll()
 
     def poll(self):
-        return self.pending.popleft() if self.pending else (None, None, "", None)
+        if not self.pending:
+            return (None, None, "", None)
+        item = self.pending[0]
+        sentence_id = item[5] if len(item) > 5 else None
+        if (self.mode == "share-history" and sentence_id == 301
+                and not self.state["share_history_future_gate"].is_set()):
+            return (None, None, "", None)
+        item = self.pending.popleft()
+        if self.mode == "share-history" and sentence_id != 301:
+            with self.state["lock"]:
+                self.state["share_history_captions"] += 1
+        return item
 
     def finish(self):
         return self.poll()
@@ -183,13 +200,17 @@ def main():
     (directory / "invalid.bin").write_bytes(b"This is not decodable media.")
     state = {"mode": "normal", "started": 0, "active": 0, "audio_seconds": 0.,
              "lock": threading.Lock(), "live_started": time.monotonic(), "engines": [],
-             "scenario_started": 0}
+             "scenario_started": 0, "share_history_captions": 0,
+             "share_history_future_gate": threading.Event()}
     hls_directory = directory / "hls"
     hls_directory.mkdir(exist_ok=True)
     generate_hls(hls_directory)
     source = serve_hls(hls_directory, state)
     with tempfile.TemporaryDirectory(prefix="original-release-config-") as config:
         webui._CLOUD = CloudConfigStore(Path(config) / "cloud.bin")
+        # Capability links in this same-host simulated browser check use the
+        # local fixture origin; this is not a second-device LAN acceptance.
+        webui._lan_ipv4_candidates = lambda: ["127.0.0.1"]
 
         def create_recognizer(_name, **_kwargs):
             return RecognitionFixture(state)
@@ -199,24 +220,33 @@ def main():
         @webui.app.get("/__fixture/state")
         def fixture_state():
             with state["lock"]:
-                snapshot = json.loads(json.dumps({key: value for key, value in state.items() if key != "lock"}))
+                snapshot = json.loads(json.dumps({key: value for key, value in state.items()
+                                                  if key not in ("lock", "share_history_future_gate")}))
             return {**snapshot, "simulated_recognition": True,
                     "process_id": os.getpid(),
                     "live_url": f"http://127.0.0.1:{source.server_port}/live.m3u8",
                     "media": {**{name: str(directory / (name + ".mp4")) for name in media},
                               "invalid": str(directory / "invalid.bin")}}
 
+        @webui.app.post("/__fixture/release-share-history-future")
+        async def release_share_history_future():
+            state["share_history_future_gate"].set()
+            return {"released": True}
+
         @webui.app.post("/__fixture/scenario")
         async def fixture_scenario(request: Request):
             mode = (await request.json())["mode"]
             if mode not in (*media, "withdrawn", "long-en", "fast-en", "live-normal", "live-gap",
                             "recovery-network", "recovery-auth", "recovery-live", "recovery-coincident-live",
-                            "live-no-caption", "live-auth"):
+                            "live-no-caption", "live-auth", "share-history"):
                 raise ValueError("Unknown offline scenario")
             with state["lock"]:
                 state["mode"] = mode
                 state["scenario_started"] = 0
-                if mode.startswith("live-") or mode in ("recovery-live", "recovery-coincident-live"):
+                state["share_history_captions"] = 0
+                state["share_history_future_gate"].clear()
+                if (mode.startswith("live-") or mode in
+                        ("recovery-live", "recovery-coincident-live", "share-history")):
                     state["live_started"] = time.monotonic()
             return {"mode": mode, "simulated_recognition": True}
 

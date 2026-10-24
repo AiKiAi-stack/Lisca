@@ -57,16 +57,19 @@
         if (this.pending !== pending) return;
         this.pending = null;
         if (this.cancelled) return;
-        // One retry attempt must cause one source/session recovery, even if
-        // media and ASR report the same outage before the backoff expires.
-        // Rebuilding the recognition session also recreates its media source;
-        // when only media failed, use its lighter in-place recovery callback.
-        const actionKind = pending.actions.has('recognition')
-          ? 'recognition' : pending.actions.keys().next().value;
-        const action = pending.actions.get(actionKind);
-        if (typeof action === 'function') action({kind: actionKind,
-          kinds: [...pending.actions.keys()], attempt, delayMs,
-          attempts: this.attempts, maxAttempts: this.maxAttempts});
+        // One budgeted attempt may need both independent repairs: a recognition
+        // reconnect can preserve a live HLS instance whose loader was stopped.
+        // The map coalesces duplicate reports by kind, so each affected axis
+        // still receives at most one action during this attempt. Repair media
+        // before reconnecting recognition because connect advances generation.
+        const kinds = [...pending.actions.keys()];
+        const actionOrder = kinds.sort((left, right) =>
+          (left === 'media' ? 0 : 1) - (right === 'media' ? 0 : 1));
+        for (const kind of actionOrder) {
+          const action = pending.actions.get(kind);
+          if (typeof action === 'function') action({kind, kinds, attempt, delayMs,
+            attempts: this.attempts, maxAttempts: this.maxAttempts});
+        }
       }, delayMs);
       return {status: 'scheduled', attempt, delayMs, attempts: this.attempts,
               maxAttempts: this.maxAttempts};

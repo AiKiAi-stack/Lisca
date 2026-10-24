@@ -324,7 +324,8 @@ def test_media_routes_identify_platform_resolution_failures(monkeypatch, route):
     assert "private-source-token" not in response.text
 
 
-def test_media_pull_failure_has_its_own_http_error(monkeypatch):
+@pytest.mark.parametrize("route", ["video", "audio"])
+def test_media_pull_failure_has_its_own_http_error(monkeypatch, route):
     async def fail_to_pull(_request, url, **_kwargs):
         raise httpx.ConnectError(f"fixture stream failure: {url}")
 
@@ -334,7 +335,7 @@ def test_media_pull_failure_has_its_own_http_error(monkeypatch):
     async def exercise():
         transport = httpx.ASGITransport(app=webui.app, raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            return await client.get("/video", params={"url": source})
+            return await client.get(f"/{route}", params={"url": source})
 
     response = asyncio.run(exercise())
 
