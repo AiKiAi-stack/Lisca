@@ -178,3 +178,51 @@ def test_owner_disconnect_or_cloud_config_delete_allows_only_inflight_recognitio
         assert source_closed.wait(2), "worker did not release the media source"
 
     assert calls == {"transcribe": 1, "poll": 0, "finish": 0}
+
+
+def test_no_progress_watchdog_is_nonretryable_through_public_websocket(monkeypatch):
+    clock = {"now": 0.0}
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            yield b"\x01" * 3200
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            clock["now"] = 16.0
+            return (None, None, "", None)
+
+        def poll(self):
+            return (None, None, "", None)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(webui, "_session_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "mode": "transcribe", "url": "https://media.test/live.mp4",
+            "source": "auto",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    error = next(event for event in events if event["type"] == "error")
+    assert error["failure_category"] == "no_progress"
+    assert error["retryable"] is False
+    assert error["message"].startswith("识别连续 15 秒没有字幕或静音处理进展")
+    assert events[-1] == {"type": "end", "reason": "error"}

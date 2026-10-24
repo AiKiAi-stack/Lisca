@@ -22,3 +22,7 @@
 - [ ] 至少 30 分钟媒体检查准备、取消和容量边界；加速时钟逻辑测试与持续运行资源实测分别记账。
 
 **External prerequisites:** 自动化不需要真实识别；真实长文件体验纳入 09 的环境验收。
+
+**Implementation evidence (2026-10-24):** Public `POST /api/cloud/sessions` + WebSocket tests now cover server-side 15-second no-progress termination, pause-excluded budget including a pause while source iteration is blocked, forward subtitle range versus repeated range, pacing cancellation, and an accelerated 30-minute silent input. The accelerated run observed ready before EOF, a 2-second maximum audio lead, and at most one unprocessed chunk. After merging integration tip `7d7c4a4`, focused Python tests passed 21/21 and the caption-browser plus playback-guard Node suites passed 61/61. Details and commands: `/home/wbb/.local/share/stream-with-asr/notes/preparation.md`.
+
+**Still pending:** The 30-minute run is accelerated and synthetic; no continuous 30-minute wall-clock/resource measurement is claimed. The real 8002 browser recheck, including silence-to-speech status with the accepted-subtitle callback, remains with the coordinator. Checkboxes remain open until those acceptance observations are recorded.

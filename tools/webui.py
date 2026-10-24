@@ -68,6 +68,16 @@ _CLOUD_JOBS: dict = {}
 _CLOUD_LOCK = threading.RLock()
 
 
+def _session_monotonic() -> float:
+    """Clock seam for bounded feed pacing and recognition-progress budgets."""
+    return time.monotonic()
+
+
+def _session_wait(stop: threading.Event, seconds: float) -> bool:
+    """Wait interruptibly while keeping session pacing replaceable in tests."""
+    return stop.wait(seconds)
+
+
 def _redact_url(value: str) -> str:
     """Keep source identity useful in diagnostics while hiding credentials."""
     try:
@@ -736,6 +746,18 @@ async def ws_endpoint(ws: WebSocket):
             share.stop_event = cloud["stop"]
         stop = cloud["stop"]
     paused = threading.Event()  # 客户端暂停 → 后端停止推流解析，字幕冻结
+    pause_lock = threading.Lock()
+    pause_started_at = None
+    paused_duration = 0.0
+
+    def active_session_time() -> float:
+        """Monotonic session time with the full user-pause interval excluded."""
+        now = _session_monotonic()
+        with pause_lock:
+            excluded = paused_duration
+            if pause_started_at is not None:
+                excluded += max(0.0, now - pause_started_at)
+        return now - excluded
 
     def put(item: dict) -> None:
         def dispatch() -> None:
@@ -758,13 +780,22 @@ async def ws_endpoint(ws: WebSocket):
 
     async def receive_loop() -> None:
         """接收客户端控制消息（pause/resume）"""
+        nonlocal pause_started_at, paused_duration
         try:
             while True:
                 msg = await ws.receive_text()
                 if msg == "pause":
-                    paused.set()
+                    with pause_lock:
+                        if pause_started_at is None:
+                            pause_started_at = _session_monotonic()
+                            paused.set()
                 elif msg == "resume":
-                    paused.clear()
+                    with pause_lock:
+                        if pause_started_at is not None:
+                            paused_duration += max(
+                                0.0, _session_monotonic() - pause_started_at)
+                            pause_started_at = None
+                            paused.clear()
         except Exception:  # noqa: BLE001 - 连接关闭即结束
             pass
         finally:
@@ -798,6 +829,18 @@ async def ws_endpoint(ws: WebSocket):
                 if cloud:
                     provider_exception = exc
                 raise
+        last_progress_at = active_session_time()
+        last_progress_through = timeline_offset
+
+        def advance_progress(through) -> None:
+            nonlocal last_progress_at, last_progress_through
+            try:
+                through = float(through)
+            except (TypeError, ValueError):
+                return
+            if math.isfinite(through) and through > last_progress_through + 1e-6:
+                last_progress_through = through
+                last_progress_at = active_session_time()
 
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
@@ -882,6 +925,14 @@ async def ws_endpoint(ws: WebSocket):
                 if revision is not None:
                     message["revision"] = revision
                 put(message)
+                if original_mode and str(text or "").strip():
+                    progress_end = end
+                    if progress_end is None and words:
+                        progress_end = max((word[1] for word in words
+                                            if len(word) > 1 and word[1] is not None),
+                                           default=None)
+                    if progress_end is not None:
+                        advance_progress(float(progress_end) + timeline_offset)
 
         # 服务端日志（ticket-14）：连接即推环形缓冲快照，之后实时推送
         for line in list(_SERVER_LOGS)[-200:]:
@@ -892,6 +943,13 @@ async def ws_endpoint(ws: WebSocket):
 
         engine = None
         phase = "input_validation"
+
+        def check_no_progress() -> None:
+            nonlocal phase
+            if original_mode and active_session_time() - last_progress_at >= 15.0:
+                phase = "no_progress"
+                raise TimeoutError("recognition made no progress for 15 seconds")
+
         try:
             kind, target = classify(url)
             phase = "platform_resolution" if kind == "page" else "media_open"
@@ -957,6 +1015,8 @@ async def ws_endpoint(ws: WebSocket):
                     return
                 phase = "recognition"
                 engine = call_provider(create_engine, engine_name, **engine_kwargs)
+                last_progress_at = active_session_time()
+                last_progress_through = timeline_offset
                 if cloud and not original_mode:
                     translation = TranslationSession(QwenTranslator(cloud["config"],
                         cloud["source"], cloud["target"]), put, stop)
@@ -975,27 +1035,27 @@ async def ws_endpoint(ws: WebSocket):
                     ready_sent = True
                 clock_sent = False
                 silence_run = 0.0
-                last = time.monotonic()
+                last = active_session_time()
                 feed_clock = last
                 playback_ceiling = timeline_offset
                 for chunk in chain((first_chunk,), chunks):
                     phase = "recognition"
                     if stop.is_set():
                         break
+                    check_no_progress()
                     if not clock_sent and urlparse(real_url).path.lower().endswith('.m3u8'):
                         first_pts = getattr(src, 'first_pts_sec', None)
                         if first_pts is not None:
                             timeline_offset = 0.0
+                            last_progress_through = timeline_offset
                             playback_ceiling = 0.0
                             put({'type': 'timeline', 'audio_pts': first_pts})
                         clock_sent = True
                     # 客户端暂停：停止推流解析（字幕冻结，省 API 调用）
-                    pause_begin = time.monotonic()
                     while paused.is_set():
                         if stop.is_set():
                             break
-                        time.sleep(0.2)
-                    feed_clock += time.monotonic() - pause_begin
+                        _session_wait(stop, 0.2)
                     if stop.is_set():
                         break
                     # Pace by the actual PCM duration (including a short tail).
@@ -1004,14 +1064,15 @@ async def ws_endpoint(ws: WebSocket):
                         # A realtime recognizer cannot consume a whole long file
                         # in one burst. Keep only two seconds ahead of its clock;
                         # playback can start from stable phrases before file EOF.
-                        wait = (fed_sec + chunk_sec - 2.0 - (time.monotonic() - feed_clock)
-                                if prefetch_local else chunk_sec - (time.monotonic() - last))
+                        wait = (fed_sec + chunk_sec - 2.0 - (active_session_time() - feed_clock)
+                                if prefetch_local else chunk_sec - (active_session_time() - last))
                         if wait > 0:
-                            if cloud and stop.wait(wait):
+                            if cloud and _session_wait(stop, wait):
                                 break
                             if not cloud:
                                 time.sleep(wait)
-                        last = time.monotonic()
+                        last = active_session_time()
+                    check_no_progress()
                     audio = s16_to_f32(chunk)
                     silence_run = silence_run + chunk_sec if len(audio) and max(abs(audio)) < 0.005 else 0.0
                     o = call_provider(engine.transcribe_chunk, audio)
@@ -1025,6 +1086,9 @@ async def ws_endpoint(ws: WebSocket):
                         if o2[0] is None:
                             break
                         emit(o2)
+                    if original_mode and silence_run >= 1.5:
+                        advance_progress(timeline_offset + fed_sec)
+                    check_no_progress()
                     if not batch_mode and (not cloud or original_mode):
                         # Keep the configured live delay as a floor. If ASR has an
                         # unfinished sentence, hold before it; when final arrives,
@@ -1037,6 +1101,8 @@ async def ws_endpoint(ws: WebSocket):
                         )
                         playback_ceiling = max(playback_ceiling, min(feed_target, pending_target))
                         put({"type": "buffer", "play_at": playback_ceiling,
+                             "local_silence_from": timeline_offset + fed_sec - silence_run
+                             if original_mode and silence_run >= 1.5 else None,
                              "local_silence_through": timeline_offset + fed_sec
                              if original_mode and silence_run >= 1.5 else None})
                         if not ready_sent and (not original_mode or caption_seen or silence_run >= 1.5) and fed_sec >= delay_sec \
@@ -1094,6 +1160,8 @@ async def ws_endpoint(ws: WebSocket):
                 message = "输入没有可解码的音频内容，未启动识别"
             elif phase == "media_decode":
                 message = "媒体拉流或音频解码失败，已停止后续识别"
+            elif phase == "no_progress":
+                message = "识别连续 15 秒没有字幕或静音处理进展，已停止新音频处理；可重试、仅播放或停止"
             elif provider_details is not None:
                 message = provider_details.pop("message")
                 logger.warning("provider failure category=%s status=%s code=%s",
@@ -1108,6 +1176,8 @@ async def ws_endpoint(ws: WebSocket):
             error_event = {"type": "error", "message": message}
             if provider_details is not None:
                 error_event.update(provider_details)
+            if phase == "no_progress":
+                error_event.update(failure_category="no_progress", retryable=False)
             put(error_event)
         finally:
             if translation:

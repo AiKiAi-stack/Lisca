@@ -103,6 +103,30 @@ def main():
             assert sessions[-1]["start_at"] == 20, sessions
             results.append({"case": "unfinished-outside-seek-accept", "passed": True,
                             "restart_position": sessions[-1]["start_at"], "active_recognizers": 1})
+
+            long_pause = hold(page, 30)
+            before_resume = request("/__fixture/state")["started"]
+            page.locator("video").evaluate("video=>video.play()")
+            page.wait_for_function("time=>document.querySelector('video').currentTime>time+.25",
+                                   arg=long_pause["time"], timeout=15000)
+            resumed = request("/__fixture/state")
+            assert resumed["started"] == before_resume + 1, resumed
+            assert abs(sessions[-1]["start_at"] - long_pause["time"]) < .2, sessions
+            assert resumed["active"] == 1, resumed
+            results.append({"case": "unfinished-long-pause-resume-position", "passed": True,
+                            "pause_seconds": 30, "restart_position": sessions[-1]["start_at"]})
+
+            request("/__fixture/scenario", {"mode": "normal"})
+            before_switch = request("/__fixture/state")["started"]
+            page.locator("#file").set_input_files(fixture["media"]["normal"])
+            page.wait_for_function("""() => document.querySelector('video').currentTime>.3 &&
+                document.querySelector('#current').innerText.includes('第一句')""", timeout=15000)
+            switched = snapshot(page)
+            assert "Prepared sentence" not in switched["history"], switched
+            assert request("/__fixture/state")["started"] == before_switch + 1
+            assert request("/__fixture/state")["active"] == 1
+            results.append({"case": "upload-switch-isolates-previous-session", "passed": True,
+                            "snapshot": switched})
             assert not errors, errors
         finally:
             stop_if_active(page)
