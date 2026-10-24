@@ -52,6 +52,7 @@ def main(mode, seconds):
             while time.monotonic() - begun < seconds:
                 sample = snapshot(page)
                 sample.update(page.locator("video").evaluate("video=>({ready_state:video.readyState,ended:video.ended})"))
+                sample["source_buffer_status"] = page.locator("#sourceBufferStatus").inner_text() if page.locator("#sourceBufferStatus").count() else None
                 sample["wall_seconds"] = time.monotonic() - begun
                 samples.append(sample)
                 page.wait_for_timeout(50)
@@ -61,8 +62,14 @@ def main(mode, seconds):
                 for current, following in zip(samples, samples[1:])
                 if current["paused"] and current["ready_state"] >= 3
                 and "等待" in current["status"] and "字幕" in current["status"])
+            source_wait = sum(
+                following["wall_seconds"] - current["wall_seconds"]
+                for current, following in zip(samples, samples[1:])
+                if current["ready_state"] < 3 and not current["paused"])
             frames = observed["frames"]
             result.update({"application_wait_seconds": round(application_wait, 3),
+                           "source_wait_seconds": round(source_wait, 3),
+                           "observed_wall_seconds": round(samples[-1]["wall_seconds"], 3),
                            "media_advance_seconds": round(samples[-1]["time"]-samples[0]["time"], 3),
                            "source_wait_events": len(observed["waiting"]),
                            "pause_events": observed["pauses"],
@@ -76,6 +83,11 @@ def main(mode, seconds):
                 assert result["media_advance_seconds"] >= seconds - 3, dict(result)
                 for sample in samples:
                     assert not (sample["time"] > 6 and "Late sentence" in sample["text"]), sample
+                gap_samples = [sample for sample in samples if 6 <= sample["time"] <= 10]
+                assert gap_samples and all("部分缺失" in sample["status"] for sample in gap_samples), dict(result)
+                recovered = [sample for sample in samples if sample["time"] >= 13
+                             and sample["text"].startswith("Recovered sentence")]
+                assert recovered and any("追上" in sample["status"] for sample in recovered), dict(result)
             else:
                 visible = [sample for sample in samples if sample["text"].startswith("Live sentence")]
                 assert len(visible) >= 20, dict(result)
