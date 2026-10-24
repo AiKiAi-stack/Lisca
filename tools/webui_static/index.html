@@ -192,6 +192,7 @@
   let hlsPlayer = null;  // hls.js 实例（HLS 直播，ticket-19）
   const captionPresenter = new CaptionPresenter();
   let captionRevisions = new Map();
+  const MAX_RETAINED_CAPTIONS = 20000;
   let translatedSession = false;
   let subs = [];        // [{beg, end, text, words}] 句子列表（partial 累计，同句原地更新）
   let previewSubs = []; // 连续两个 partial 均未改动的完整短句，等待整句 final 时也能播放
@@ -913,9 +914,23 @@
     return false;
   }
 
+  function stopAtCaptionCapacity() {
+    void cancelCaptionProcessing(
+      '字幕记录达到安全容量上限，识别已停止；现有字幕已保留', true, true);
+  }
+
+  function reserveCaptionIdentity(id) {
+    if (!captionRevisions.has(id) && captionRevisions.size >= MAX_RETAINED_CAPTIONS) {
+      stopAtCaptionCapacity();
+      return false;
+    }
+    return true;
+  }
+
   function onSubtitle(msg) {
     if (msg.sentence_id != null && Number.isFinite(msg.revision)) {
       const id = String(msg.sentence_id);
+      if (!reserveCaptionIdentity(id)) return false;
       const revision = msg.revision;
       const latestRevision = captionRevisions.get(id);
       if (latestRevision != null && revision <= latestRevision) return false;
@@ -962,6 +977,10 @@
       }
     } else {
       // 新句：加入列表与历史
+      if (subs.length >= MAX_RETAINED_CAPTIONS) {
+        stopAtCaptionCapacity();
+        return false;
+      }
       const historyItem = appendHistory(msg.beg, msg.end, msg.text, msg.source_text);
       subs.push({ beg: msg.beg, end: msg.end, text: msg.text, words: msg.words || null,
         sourceText:msg.source_text, translated:msg.translated, revision:msg.revision,
@@ -1298,6 +1317,7 @@
       if (msg.type === 'caption_remove') {
         if (msg.sentence_id != null && Number.isFinite(msg.revision)) {
           const id = String(msg.sentence_id);
+          if (!reserveCaptionIdentity(id)) return;
           const revision = msg.revision;
           const latestRevision = captionRevisions.get(id) ?? -1;
           if (revision < latestRevision) return;
@@ -1371,6 +1391,11 @@
       } else if (msg.type === 'log') {
         logEvent('server', msg.line);  // 服务端后台日志（ticket-14）
       } else if (msg.type === 'error') {
+        if (msg.failure_category === 'capacity') {
+          void cancelCaptionProcessing(msg.message || '字幕记录达到安全容量上限，识别已停止',
+            true, true);
+          return;
+        }
         if (originalCaptionMode && !sharedViewerActive) {
           const recovery = scheduleSessionRecovery('recognition', msg.retryable === true, () => {
             if (uiPaused && !/^https?:/i.test(activeInput)) {
@@ -1646,7 +1671,7 @@
     logEvent('seek', `t=${destination.toFixed(1)}`);
   });
 
-  async function cancelCaptionProcessing(message, onlyPlay = false) {
+  async function cancelCaptionProcessing(message, onlyPlay = false, preserveCaptions = false) {
     const generation = ++connectionGeneration;
     recoveryController.cancel();
     cancelPendingLocalSeek();
@@ -1668,8 +1693,10 @@
     activeShareToken = null;
     if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); ws = null; }
     player.pause(); audioEl.pause();
-    subs = []; previewSubs = []; captionPresenter.reset();
-    currentEl.textContent = ''; currentEl.classList.remove('err');
+    if (!preserveCaptions) {
+      subs = []; previewSubs = []; captionPresenter.reset();
+      currentEl.textContent = ''; currentEl.classList.remove('err');
+    }
     if (token) await cloudRequest('/api/cloud/sessions/' + encodeURIComponent(token), 'DELETE').catch(() => {});
     if (share) await fetch('/share/stop/' + encodeURIComponent(share), {method:'POST'}).catch(() => {});
     if (generation !== connectionGeneration) return;

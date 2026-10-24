@@ -297,3 +297,182 @@ def test_ws_event_backlog_overflow_is_visible_and_not_normal_completion(monkeypa
     assert events[-1] == {"type": "end", "reason": "error"}
     assert emitted["count"] < 100
     assert "TEST_ONLY_KEY" not in str(events)
+
+
+def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch):
+    started = 0
+    closed = 0
+    counts_lock = threading.Lock()
+    all_sources_started = threading.Condition(counts_lock)
+    all_sources_closed = threading.Condition(counts_lock)
+    release_sources = threading.Event()
+
+    class BlockingSource:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            nonlocal started
+            with counts_lock:
+                started += 1
+                all_sources_started.notify_all()
+            release_sources.wait(timeout=10)
+            return
+            yield b"\x01" * 3200
+
+        def close(self):
+            nonlocal closed
+            with counts_lock:
+                closed += 1
+                all_sources_closed.notify_all()
+
+    monkeypatch.setattr(webui, "StreamSource", BlockingSource)
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
+        for _ in range(8):
+            ticket = client.post("/api/cloud/sessions", json={
+                "mode": "transcribe", "url": "https://media.test/live.mp4",
+                "source": "auto",
+            }).json()
+            with client.websocket_connect("/ws?session=" + ticket["session"]):
+                with all_sources_started:
+                    assert all_sources_started.wait_for(lambda: started > closed, timeout=2)
+
+        ticket = client.post("/api/cloud/sessions", json={
+            "mode": "transcribe", "url": "https://media.test/live.mp4",
+            "source": "auto",
+        }).json()
+        try:
+            with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+                rejected = [ws.receive_json(), ws.receive_json()]
+            assert rejected == [
+                {"type": "error", "failure_category": "capacity", "retryable": False,
+                 "message": "后台识别任务达到安全上限，已有任务仍在关闭；请稍后重试"},
+                {"type": "end", "reason": "error"},
+            ]
+            with counts_lock:
+                assert started == 8
+        finally:
+            release_sources.set()
+            with all_sources_closed:
+                assert all_sources_closed.wait_for(lambda: closed == started, timeout=3)
+
+
+def test_ws_caption_identity_capacity_keeps_existing_finals_and_reports_incomplete(monkeypatch):
+    monkeypatch.setattr(webui, "_MAX_SESSION_CAPTIONS", 3, raising=False)
+    emitted = {"count": 0}
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            yield b"\x01" * 3200
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            return (None, None, "", None)
+
+        def poll(self):
+            if emitted["count"] >= 100:
+                return (None, None, "", None)
+            emitted["count"] += 1
+            index = emitted["count"]
+            return (index * 0.1, index * 0.1 + 0.1, f"caption {index}", None,
+                    True, index)
+
+        def finish(self):
+            return (None, None, "", None)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "mode": "transcribe", "url": "https://media.test/live.mp4",
+            "source": "auto",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    error = next(event for event in events if event["type"] == "error")
+    captions = [event for event in events if event["type"] == "subtitle"]
+    assert error["failure_category"] == "capacity"
+    assert error["retryable"] is False
+    assert events[-1] == {"type": "end", "reason": "error"}
+    assert [event["sentence_id"] for event in captions] == [1, 2, 3]
+    assert emitted["count"] == 4
+
+
+@pytest.mark.parametrize(("limit_name", "same_id", "is_final"), [
+    ("_MAX_SESSION_CAPTION_VARIANTS", True, True),
+    ("_MAX_PENDING_CAPTIONS", False, False),
+])
+def test_ws_caption_variant_and_pending_limits_are_reported(
+        monkeypatch, limit_name, same_id, is_final):
+    monkeypatch.setattr(webui, limit_name, 2, raising=False)
+    emitted = {"count": 0}
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            yield b"\x01" * 3200
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            return (None, None, "", None)
+
+        def poll(self):
+            if emitted["count"] >= 10:
+                return (None, None, "", None)
+            emitted["count"] += 1
+            index = emitted["count"]
+            sentence_id = 1 if same_id else index
+            return (index * 0.1, index * 0.1 + 0.1, f"caption {index}", None,
+                    is_final, sentence_id)
+
+        def finish(self):
+            return (None, None, "", None)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "mode": "transcribe", "url": "https://media.test/live.mp4",
+            "source": "auto",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    error = next(event for event in events if event["type"] == "error")
+    captions = [event for event in events if event["type"] == "subtitle"]
+    assert error["failure_category"] == "capacity"
+    assert error["retryable"] is False
+    assert events[-1] == {"type": "end", "reason": "error"}
+    assert len(captions) == 2
+    assert emitted["count"] == 3
