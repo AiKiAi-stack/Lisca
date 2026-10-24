@@ -31,7 +31,9 @@ operator cancellation after the UI Stop action and successful DELETE response;
 the collector does not fabricate a WebSocket `end` event. A missing stop
 confirmation fails the run. Local completion requires both video EOF and the
 normal recognition end event. Sampling gaps over 100 ms are reported as
-`measurement_invalid` independently of recognition errors.
+`measurement_invalid` independently of recognition errors. Browser console and
+optional share-endpoint failures are kept as sanitized diagnostics; page errors,
+WebSocket errors, player/UI failures, and session-start failures remain fatal.
 
 The artifact explicitly leaves acoustic synchronization and whether a human
 heard the source unassessed. Accuracy is marked tested only when a completed

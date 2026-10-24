@@ -119,6 +119,43 @@ def sanitize_ws_event(event, observed_after_ms):
     return safe
 
 
+def _endpoint_category(method, path):
+    method = str(method).upper()
+    if path == "/share/start" and method == "POST":
+        return "share_start"
+    elif path == "/api/cloud/sessions" and method == "POST":
+        return "session_start"
+    elif re.fullmatch(r"/api/cloud/sessions/[^/]+", path) and method == "DELETE":
+        return "session_stop"
+    return "other"
+
+
+def classify_http_response(method, path, status):
+    category = _endpoint_category(method, path)
+    diagnostic = ({"type": "http_response_error", "endpoint_category": category,
+                   "status": int(status)} if int(status) >= 400 else None)
+    failure = ({"type": "session_start_http_error", "status": int(status)}
+               if category == "session_start" and not 200 <= int(status) < 300 else None)
+    return diagnostic, failure
+
+
+def classify_runtime_error(source, message=""):
+    if source == "console":
+        return "diagnostic", {"type": "console_error", "message": sanitize_text(message)}
+    if source == "page":
+        return "failure", {"type": "page_error", "message": sanitize_text(message)}
+    return "failure", {"type": "websocket_transport_error"}
+
+
+def fatal_player_sample(sample):
+    code = sample.get("media_error_code") or 0
+    if code:
+        return {"type": "media_error", "code": int(code)}
+    if sample.get("status_is_error"):
+        return {"type": "ui_fatal"}
+    return None
+
+
 SAMPLER_START = r"""() => {
   if (window.__realAcceptanceSampler) return;
   const state = {samples: [], started: performance.now(), timer: null};
@@ -147,6 +184,7 @@ SAMPLER_START = r"""() => {
       seeking: video.seeking,
       ready_state: video.readyState,
       network_state: video.networkState,
+      media_error_code: video.error ? video.error.code : 0,
       buffering: !video.paused && !video.ended && video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA,
       buffered_ahead_seconds: bufferedAhead,
       visible_text: text,
@@ -266,6 +304,7 @@ def collect(args):
     started_at = None
     started = None
     events, errors, samples, checkpoints, page_errors = [], [], [], [], []
+    diagnostics, websocket_errors, session_post_failures = [], [], []
     posts = {"count": 0, "started": None}
     session_post_statuses = []
     delete_responses = []
@@ -315,12 +354,37 @@ def collect(args):
     def observe_response(response):
         request = response.request
         path = urlsplit(response.url).path
+        diagnostic, failure = classify_http_response(request.method, path, response.status)
+        if diagnostic:
+            diagnostics.append(diagnostic)
+        if failure:
+            session_post_failures.append(failure)
         if request.method.upper() == "POST" and path == "/api/cloud/sessions":
             session_post_statuses.append(response.status)
         elif request.method.upper() == "DELETE" and re.fullmatch(
                 r"/api/cloud/sessions/[^/]+", path):
             # Record only the status; the request URL contains the opaque capability.
             delete_responses.append(response.status)
+
+    def on_request_failed(request):
+        path = urlsplit(request.url).path
+        category = _endpoint_category(request.method, path)
+        if category != "other":
+            diagnostics.append({"type": "request_failed", "endpoint_category": category})
+        if request.method.upper() == "POST" and path == "/api/cloud/sessions":
+            session_post_failures.append({"type": "session_start_request_failed"})
+
+    def on_websocket(socket):
+        socket.on("framereceived", on_frame)
+        socket.on("socketerror", lambda message: websocket_errors.append(
+            classify_runtime_error("websocket", message)[1]))
+
+    def on_console(message):
+        if message.type == "error":
+            diagnostics.append(classify_runtime_error("console", message.text)[1])
+
+    def on_page_error(error):
+        page_errors.append(classify_runtime_error("page", str(error))[1])
 
     def stop_active(trigger):
         if page is None:
@@ -371,12 +435,10 @@ def collect(args):
                     page.set_default_timeout(10_000)
                     page.route("**/api/cloud/sessions", count_session_post)
                     page.on("response", observe_response)
-                    page.on("pageerror", lambda exc: page_errors.append(
-                        {"type": "page_error", "message": sanitize_text(str(exc))}))
-                    page.on("console", lambda msg: page_errors.append(
-                        {"type": "console_error", "message": sanitize_text(msg.text)})
-                        if msg.type == "error" else None)
-                    page.on("websocket", lambda socket: socket.on("framereceived", on_frame))
+                    page.on("requestfailed", on_request_failed)
+                    page.on("pageerror", on_page_error)
+                    page.on("console", on_console)
+                    page.on("websocket", on_websocket)
                     page.goto(BASE, wait_until="domcontentloaded", timeout=20_000)
                     page.locator("#url").fill(args.media)
                     started_at = datetime.now(timezone.utc).isoformat()
@@ -389,7 +451,15 @@ def collect(args):
                     while True:
                         drain()
                         end = next((e for e in reversed(events) if e["type"] == "end"), None)
-                        if page_errors or any(e["type"] == "error" for e in events):
+                        player_failure = next((fatal_player_sample(sample)
+                                               for sample in reversed(samples[-5:])
+                                               if fatal_player_sample(sample)), None)
+                        if player_failure:
+                            errors.append(player_failure)
+                        if (page_errors or websocket_errors or player_failure
+                                or session_post_failures
+                                or any(e["type"] == "error" for e in events)):
+                            errors.extend(session_post_failures)
                             break
                         if not posts["count"]:
                             if time.monotonic() >= no_start_deadline or any(
@@ -445,6 +515,7 @@ def collect(args):
     if started is None:
         started_at, started = datetime.now(timezone.utc).isoformat(), time.monotonic()
     errors.extend(page_errors)
+    errors.extend(websocket_errors)
     terminal_reasons = [e.get("reason") for e in events if e.get("type") == "end"]
     last_reason = terminal_reasons[-1] if terminal_reasons else None
     terminal_error = last_reason in ("error", "failed")
@@ -527,7 +598,8 @@ def collect(args):
                                        "text": first_caption["visible_text"]} if first_caption else None),
         },
         "timeline_samples": samples, "visible_caption_overflow_samples": overflow,
-        "checkpoints": checkpoints, "errors": errors, "recording_path": str(recording_path),
+        "checkpoints": checkpoints, "errors": errors, "diagnostics": diagnostics,
+        "recording_path": str(recording_path),
     }
     _write_json(report_path, report)
     success = (recording["recording_status"] == "completed"
