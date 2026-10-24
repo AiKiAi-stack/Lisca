@@ -182,10 +182,8 @@ def test_owner_disconnect_or_cloud_config_delete_allows_only_inflight_recognitio
     assert calls == {"transcribe": 1, "poll": 0, "finish": 0}
 
 
-def test_local_no_progress_watchdog_is_nonretryable_through_public_websocket(tmp_path, monkeypatch):
+def test_non_hls_http_no_progress_watchdog_is_nonretryable_through_public_websocket(monkeypatch):
     clock = {"now": 0.0}
-    media = tmp_path / "local.wav"
-    media.touch()
 
     class Source:
         def __init__(self, *_args, **_kwargs):
@@ -205,16 +203,20 @@ def test_local_no_progress_watchdog_is_nonretryable_through_public_websocket(tmp
         def poll(self):
             return (None, None, "", None)
 
+        def finish(self):
+            return self.poll()
+
         def close(self):
             pass
 
     monkeypatch.setattr(webui, "_session_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(webui, "_session_wait", lambda stop, _seconds: stop.is_set())
     monkeypatch.setattr(webui, "StreamSource", Source)
     monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
     with TestClient(webui.app) as client:
         client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
         ticket = client.post("/api/cloud/sessions", json={
-            "mode": "transcribe", "url": str(media),
+            "mode": "transcribe", "url": "https://media.test/recording.mp4",
             "source": "auto",
         }).json()
         with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
@@ -225,7 +227,8 @@ def test_local_no_progress_watchdog_is_nonretryable_through_public_websocket(tmp
                 if event["type"] == "end":
                     break
 
-    error = next(event for event in events if event["type"] == "error")
+    error = next((event for event in events if event["type"] == "error"), None)
+    assert error is not None, events[-5:]
     assert error["failure_category"] == "no_progress"
     assert error["retryable"] is False
     assert error["message"].startswith("识别连续 15 秒没有字幕或静音处理进展")

@@ -1058,10 +1058,10 @@ async def ws_endpoint(ws: WebSocket):
 
         def check_no_progress() -> None:
             nonlocal phase
-            # The 15s recognition-progress budget belongs to local preparation.
-            # Live playback has its own 2s client-side degrade path and must keep
-            # accepting audio so a late caption can recover coverage.
-            if (original_mode and prefetch_local
+            # Live HTTP HLS has a 2s client-side degrade path and must keep
+            # accepting audio so a late caption can recover coverage. Keep the
+            # 15s preparation budget for local files and non-live media URLs.
+            if (original_mode and (prefetch_local or not is_live_hls)
                     and active_session_time() - last_progress_at >= 15.0):
                 phase = "no_progress"
                 raise TimeoutError("recognition made no progress for 15 seconds")
@@ -1095,7 +1095,10 @@ async def ws_endpoint(ws: WebSocket):
             src = StreamSource(real_url, **source_kwargs)
             timeline_offset = getattr(src, "timeline_offset_sec", 0.0)
             try:
-                is_hls = urlparse(real_url).path.lower().endswith(".m3u8")
+                parsed_real_url = urlparse(real_url)
+                is_hls = parsed_real_url.path.lower().endswith(".m3u8")
+                is_live_hls = (parsed_real_url.scheme.lower() in {"http", "https"}
+                               and is_hls)
                 if hasattr(src, "container"):
                     video_streams = src.container.streams.video
                     if is_hls and not video_streams:
