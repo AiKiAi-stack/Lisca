@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "dataset": "openslr/librispeech_asr@71cacbfb7e2354c4226d01e70d77d5fca3d04ba1#test.clean",
+  "config": "language=en; role=fast-speech-listening-candidate; speaker_id=61; ordered_source_utterance_sha256=5c15908fbfd87018dac4c3d229fe286c95391d6517861ceaffde3a0618115ea9",
+  "sha256": "4ed3d5949fe19567f04e3adfa80a991e73de5db6698845fe23500b99875fdbbe",
+  "seconds": 65.035,
+  "items": [
+    {
+      "reference": "SURELY WE CAN SUBMIT WITH GOOD GRACE",
+      "source_id": "61-70968-0021",
+      "source_sha256": "b3f397ef340a70245a7328ec5ccde7e5c4fbe84f05d37ef1c4ba5394f1610615",
+      "source_path": "test-clean/61/70968/0021.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.69,
+      "asset_start_seconds": 0.0,
+      "asset_end_seconds": 2.69
+    },
+    {
+      "reference": "TIS FINE FOR YOU TO TALK OLD MAN ANSWERED THE LEAN SULLEN APPRENTICE",
+      "source_id": "61-70968-0022",
+      "source_sha256": "dea1dd525d16410bac43b958586f7389545ce042f6fee01e298a80ac44bd46ff",
+      "source_path": "test-clean/61/70968/0022.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.67,
+      "asset_start_seconds": 2.94,
+      "asset_end_seconds": 7.61
+    },
+    {
+      "reference": "BUT I WRESTLED WITH THIS FELLOW AND DO KNOW THAT HE PLAYED UNFAIRLY IN THE SECOND BOUT",
+      "source_id": "61-70968-0023",
+      "source_sha256": "2e018381a6c3ca3257b4edcddf637841a1688cacf9944b922e512acc6f1ffc2a",
+      "source_path": "test-clean/61/70968/0023.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.025,
+      "asset_start_seconds": 7.86,
+      "asset_end_seconds": 12.885
+    },
+    {
+      "reference": "SPOKE THE SQUIRE LOSING ALL PATIENCE AND IT WAS TO YOU THAT I GAVE ANOTHER PURSE IN CONSOLATION",
+      "source_id": "61-70968-0024",
+      "source_sha256": "bedacad0f35cc7921429a8d8c165ee124c287566219da559513e27f1a37da67d",
+      "source_path": "test-clean/61/70968/0024.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 6.025,
+      "asset_start_seconds": 13.135,
+      "asset_end_seconds": 19.16
+    },
+    {
+      "reference": "COME TO ME MEN HERE HERE HE RAISED HIS VOICE STILL LOUDER",
+      "source_id": "61-70968-0025",
+      "source_sha256": "12aff6263572e1e03fc7403dee4d90116a83e05b0eb2466b9722a72d2da2d485",
+      "source_path": "test-clean/61/70968/0025.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.41,
+      "asset_start_seconds": 19.41,
+      "asset_end_seconds": 23.82
+    },
+    {
+      "reference": "THE STROLLERS TOOK THEIR PART IN IT WITH HEARTY ZEST NOW THAT THEY HAD SOME CHANCE OF BEATING OFF THEIR FOES",
+      "source_id": "61-70968-0026",
+      "source_sha256": "d3e8c8a006501e60851b15d13d13c40c620a4c4598306aa65828818e3b796a01",
+      "source_path": "test-clean/61/70968/0026.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.92,
+      "asset_start_seconds": 24.07,
+      "asset_end_seconds": 28.99
+    },
+    {
+      "reference": "ROBIN AND THE LITTLE TUMBLER BETWEEN THEM TRIED TO FORCE THE SQUIRE TO STAND BACK AND VERY VALIANTLY DID THESE TWO COMPORT THEMSELVES",
+      "source_id": "61-70968-0027",
+      "source_sha256": "dd46f8fc38ffa48da18df22f45216305a2e12829c9a51eff000aa20ac44b7c3f",
+      "source_path": "test-clean/61/70968/0027.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 6.87,
+      "asset_start_seconds": 29.24,
+      "asset_end_seconds": 36.11
+    },
+    {
+      "reference": "THE HEAD AND CHIEF OF THE RIOT THE NOTTINGHAM APPRENTICE WITH CLENCHED FISTS THREATENED MONTFICHET",
+      "source_id": "61-70968-0028",
+      "source_sha256": "6a22b26098aaedd48f2fe49f03f8cb025d12b35d50f2a9701ba6be1d74fee1b9",
+      "source_path": "test-clean/61/70968/0028.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.355,
+      "asset_start_seconds": 36.36,
+      "asset_end_seconds": 41.715
+    },
+    {
+      "reference": "THE SQUIRE HELPED TO THRUST THEM ALL IN AND ENTERED SWIFTLY HIMSELF",
+      "source_id": "61-70968-0029",
+      "source_sha256": "1fa25fee20f6352002ff271b35fff4286267708bd77fdf396a3883240731f88f",
+      "source_path": "test-clean/61/70968/0029.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.495,
+      "asset_start_seconds": 41.965,
+      "asset_end_seconds": 45.46
+    },
+    {
+      "reference": "NOW BE SILENT ON YOUR LIVES HE BEGAN BUT THE CAPTURED APPRENTICE SET UP AN INSTANT SHOUT",
+      "source_id": "61-70968-0030",
+      "source_sha256": "6e73d0238ea1be58e2aa0c5bc07db3138d37740259ed046737c9738c05b3c67d",
+      "source_path": "test-clean/61/70968/0030.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.685,
+      "asset_start_seconds": 45.71,
+      "asset_end_seconds": 51.395
+    },
+    {
+      "reference": "SILENCE YOU KNAVE CRIED MONTFICHET",
+      "source_id": "61-70968-0031",
+      "source_sha256": "4267c2f9a77ec78491331013138d0ebd4a8ac2e36361c6516cb477b31fd88409",
+      "source_path": "test-clean/61/70968/0031.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.925,
+      "asset_start_seconds": 51.645,
+      "asset_end_seconds": 54.57
+    },
+    {
+      "reference": "HE FELT FOR AND FOUND THE WIZARD'S BLACK CLOTH THE SQUIRE WAS QUITE OUT OF BREATH",
+      "source_id": "61-70968-0032",
+      "source_sha256": "497006ada4c10096ef6a96908bb6df8374c130125d4ac246eecee2db9fa0a2bd",
+      "source_path": "test-clean/61/70968/0032.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.28,
+      "asset_start_seconds": 54.82,
+      "asset_end_seconds": 59.1
+    },
+    {
+      "reference": "THRUSTING OPEN THE PROPER ENTRANCE OF THE TENT ROBIN SUDDENLY RUSHED FORTH WITH HIS BURDEN WITH A GREAT SHOUT",
+      "source_id": "61-70968-0033",
+      "source_sha256": "4e4d513749cd65dc40a57e0746463841995ccd6e5ec53ab5042116fa82e9a497",
+      "source_path": "test-clean/61/70968/0033.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.685,
+      "asset_start_seconds": 59.35,
+      "asset_end_seconds": 65.035
+    }
+  ],
+  "asset_file": "uploads/acceptance-media/en-fast-speech-listening-candidate.wav",
+  "asset_sha256": "4ed3d5949fe19567f04e3adfa80a991e73de5db6698845fe23500b99875fdbbe",
+  "asset_frame_count": 1040560,
+  "asset_sample_rate_hz": 16000,
+  "source_audio_seconds": 62.035,
+  "inserted_silence_seconds": 3.0,
+  "ordered_source_utterance_sha256": "5c15908fbfd87018dac4c3d229fe286c95391d6517861ceaffde3a0618115ea9",
+  "ordered_reference_items_sha256": "c54ce7f7e2a0db6bd76c28906c4713fa15b5bb8c06f90d61a5af1614c436b345",
+  "reference_text_sha256": "7fc0f6abaa4050cb8ae97efe33c8889b9e0057c8e6477787fe61206ee9e2d455",
+  "manual_review_pending": true,
+  "manual_review_status": "pending",
+  "manual_review_scope": "Verify transcript-to-audio correspondence, language, and single-speaker identity. For a fast-speech listening candidate, separately decide whether the original recording is naturally fast; no synthetic speed change was applied.",
+  "reference_provenance": {
+    "dataset": "openslr/librispeech_asr",
+    "dataset_revision": "71cacbfb7e2354c4226d01e70d77d5fca3d04ba1",
+    "split": "test.clean",
+    "speaker_id": 61,
+    "license": "CC BY 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "source_url": "https://huggingface.co/datasets/openslr/librispeech_asr",
+    "selection_rule": "Lowest numeric speaker_id in test.clean; preserve dataset row order; shortest prefix with at least 300 seconds of decoded source audio. The row catalog is from the pinned repository revision.",
+    "transcript_rule": "Use the corpus test.clean row text verbatim (uppercased as published); no ASR-generated reference text."
+  },
+  "reference_origin": "Pinned corpus transcript; not generated by this application's ASR."
+}

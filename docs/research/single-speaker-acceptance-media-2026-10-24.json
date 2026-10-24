@@ -993,7 +993,8 @@
             "asset_end_frame_exclusive": 5065904
           }
         ],
-        "ordered_source_utterance_sha256": "39865446240193b7737b67d487986b3afe5fd54fe5639ae6f3c28511b78a4653"
+        "ordered_source_utterance_sha256": "39865446240193b7737b67d487986b3afe5fd54fe5639ae6f3c28511b78a4653",
+        "scoring_reference_manifest": "docs/research/original-caption-reference-manifests/zh-reference.json"
       },
       "fast_speech_candidate_asset": {
         "file": "uploads/acceptance-media/zh-fast-speech-listening-candidate.wav",
@@ -1192,7 +1193,8 @@
           "manual_listening_status": "pending; this rate proxy does not establish that a human listener would classify the passage as fast speech.",
           "speed_change": "none; source recording playback speed is unchanged."
         },
-        "ordered_source_utterance_sha256": "9fb154c12a49cb5ef1e8b6fb3c47a73f79d0ba47d228dd3edc1bf07194688273"
+        "ordered_source_utterance_sha256": "9fb154c12a49cb5ef1e8b6fb3c47a73f79d0ba47d228dd3edc1bf07194688273",
+        "scoring_reference_manifest": "docs/research/original-caption-reference-manifests/zh-fast-speech-candidate.json"
       }
     },
     "en": {
@@ -2299,7 +2301,8 @@
             "asset_end_frame_exclusive": 5083599
           }
         ],
-        "ordered_source_utterance_sha256": "28a24976cbc75f6a15760b222eb8c5485a2b102a54826bf656999200f4e03de7"
+        "ordered_source_utterance_sha256": "28a24976cbc75f6a15760b222eb8c5485a2b102a54826bf656999200f4e03de7",
+        "scoring_reference_manifest": "docs/research/original-caption-reference-manifests/en-reference.json"
       },
       "fast_speech_candidate_asset": {
         "file": "uploads/acceptance-media/en-fast-speech-listening-candidate.wav",
@@ -2530,7 +2533,8 @@
           "manual_listening_status": "pending; this rate proxy does not establish that a human listener would classify the passage as fast speech.",
           "speed_change": "none; source recording playback speed is unchanged."
         },
-        "ordered_source_utterance_sha256": "5c15908fbfd87018dac4c3d229fe286c95391d6517861ceaffde3a0618115ea9"
+        "ordered_source_utterance_sha256": "5c15908fbfd87018dac4c3d229fe286c95391d6517861ceaffde3a0618115ea9",
+        "scoring_reference_manifest": "docs/research/original-caption-reference-manifests/en-fast-speech-candidate.json"
       }
     }
   }
