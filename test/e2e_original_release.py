@@ -194,6 +194,9 @@ def main():
             assert normalize(visible_english) == normalize(expected_english), english
             results.append({"case": "english-long-caption-readable-and-complete", "passed": True,
                             "visible_changes": english, "sampling_tolerance_seconds": .05})
+            page.locator("video").evaluate("video=>{video.pause();video.currentTime=6.8}")
+            page.wait_for_timeout(200)
+            assert snapshot(page)["text"], snapshot(page)
             page.screenshot(path=str(directory / "english-narrow-caption.png"))
             assert not errors, errors
         finally:
