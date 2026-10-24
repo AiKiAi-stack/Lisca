@@ -21,9 +21,10 @@ from score_original_acceptance import edit_distance, score, tokens
 
 
 class FakeRecognitionService:
-    def __init__(self, events, hold_events=False):
+    def __init__(self, events, hold_events=False, close_reason=None):
         self.connected = threading.Event()
         self.release_events = threading.Event()
+        self.close_reason = close_reason
         self.media_path = None
         if not hold_events:
             self.release_events.set()
@@ -47,6 +48,9 @@ class FakeRecognitionService:
         async def send_events(websocket: WebSocket):
             await websocket.accept()
             self.connected.set()
+            if self.close_reason:
+                await websocket.close(code=1011, reason=self.close_reason)
+                return
             await asyncio.to_thread(self.release_events.wait, 10)
             for event in events:
                 await websocket.send_json(event)
@@ -246,9 +250,12 @@ def test_recording_and_scoring_clis_preserve_remote_sample_identity_without_hash
     ]
     with FakeRecognitionService(events) as service:
         service.media_path = media_path
-        subprocess.run([
+        remote_url = service.url.replace(
+            "http://", "http://TEST_ONLY_USER:TEST_ONLY_PASSWORD@", 1
+        ) + "/sample.wav?token=TEST_ONLY_Q"
+        process = subprocess.run([
             sys.executable, str(Path(__file__).with_name("run_original_acceptance.py")),
-            service.url + "/sample.wav?token=private", "--server-url", service.url,
+            remote_url, "--server-url", service.url,
             "--output", str(recording_path),
         ], check=True, capture_output=True, text=True)
     recording = json.loads(recording_path.read_text(encoding="utf-8"))
@@ -261,6 +268,8 @@ def test_recording_and_scoring_clis_preserve_remote_sample_identity_without_hash
     assert recording["input_sha256"] is None
     assert recording["source_url"].endswith("/sample.wav?[redacted]")
     assert "private" not in json.dumps(recording)
+    for secret in ("TEST_ONLY_USER", "TEST_ONLY_PASSWORD", "TEST_ONLY_Q"):
+        assert secret not in json.dumps(recording) + process.stdout + process.stderr
     assert recording["sample_interval"]["started_at_utc"]
     assert recording["sample_interval"]["ended_at_utc"]
     assert report["source_status"] == "not_verified"
@@ -337,6 +346,60 @@ def test_recording_and_scoring_clis_require_explicit_normal_completion(
     assert report["completion_status"] == completion_status
     assert report["completion_reason"] == (reason or "completion_unverified")
     assert report["session_without_errors"] is exit_ok
+
+
+def test_recording_cli_recursively_redacts_credentials_from_events_and_output(tmp_path):
+    input_path = tmp_path / "sample.wav"
+    write_wav(input_path)
+    recording_path = tmp_path / "recording.json"
+    signed_url = (
+        "https://TEST_ONLY_USER:TEST_ONLY_PASSWORD@media.example/live.m3u8"
+        "?session_token=TEST_ONLY_QUERY_SECRET&X-Amz-Signature=TEST_ONLY_SIG"
+    )
+    events = [
+        {"type": "log", "line": f"source={signed_url}; session=test-session"},
+        {"type": "error", "message": f"recognition failed for {signed_url}; session=test-session",
+         "diagnostics": {"authorization": "TEST_ONLY_AUTH", "api_key": "TEST_ONLY_API_KEY",
+                         "source_url": signed_url}},
+        {"type": "end", "reason": "error"},
+    ]
+    with FakeRecognitionService(events) as service:
+        process = subprocess.run([
+            sys.executable, str(Path(__file__).with_name("run_original_acceptance.py")),
+            str(input_path), "--server-url", service.url, "--output", str(recording_path),
+        ], capture_output=True, text=True)
+
+    recording = json.loads(recording_path.read_text(encoding="utf-8"))
+    observed = json.dumps(recording) + process.stdout + process.stderr
+    for secret in ("TEST_ONLY_USER", "TEST_ONLY_PASSWORD", "TEST_ONLY_QUERY_SECRET",
+                   "TEST_ONLY_SIG", "test-session", "TEST_ONLY_AUTH", "TEST_ONLY_API_KEY"):
+        assert secret not in observed
+    assert "https://media.example/live.m3u8?[redacted]" in observed
+    assert process.returncode != 0
+
+
+def test_recording_cli_recursively_redacts_signed_url_from_exception_text(tmp_path):
+    input_path = tmp_path / "sample.wav"
+    write_wav(input_path)
+    recording_path = tmp_path / "recording.json"
+    signed_url = (
+        "https://TEST_ONLY_USER:TEST_ONLY_PASSWORD@x.test/"
+        "?token=TEST_ONLY_Q&sig=TEST_ONLY_S"
+    )
+    close_reason = f"failed {signed_url};session=test-session"
+    with FakeRecognitionService([], close_reason=close_reason) as service:
+        process = subprocess.run([
+            sys.executable, str(Path(__file__).with_name("run_original_acceptance.py")),
+            str(input_path), "--server-url", service.url, "--output", str(recording_path),
+        ], capture_output=True, text=True)
+
+    recording = json.loads(recording_path.read_text(encoding="utf-8"))
+    observed = json.dumps(recording) + process.stdout + process.stderr
+    assert any(error["type"] == "recording_error" for error in recording["errors"])
+    for secret in ("TEST_ONLY_USER", "TEST_ONLY_PASSWORD", "TEST_ONLY_Q",
+                   "TEST_ONLY_S", "test-session"):
+        assert secret not in observed
+    assert "https://x.test/?[redacted]" in observed
 
 
 def test_recording_and_scoring_clis_keep_error_distinct_from_transport_end(tmp_path):
