@@ -2,8 +2,9 @@
   'use strict';
   class RecoveryController {
     constructor({maxAttempts = 2, backoffMs = [1000, 2000], stableMs = 10000,
-                 progressGapMs = 2000, setTimeout: schedule = setTimeout,
-                 clearTimeout: cancel = clearTimeout} = {}) {
+                 progressGapMs = 2000,
+                 setTimeout: schedule = (...args) => globalThis.setTimeout(...args),
+                 clearTimeout: cancel = timerId => globalThis.clearTimeout(timerId)} = {}) {
       this.maxAttempts = maxAttempts;
       this.backoffMs = [...backoffMs];
       this.stableMs = stableMs;

@@ -32,6 +32,7 @@
 </section><section id="captionSettings" class="setting-section" hidden><input id="bilingual" type="checkbox" hidden>  <div id="stylePanel">
     <label>字号 <input type="range" id="sizeRange" min="16" max="64" step="1" value="30"><span class="val" id="sizeVal">30px</span></label>
     <label>位置 <input type="range" id="posRange" min="0" max="30" step="1" value="12"><span class="val" id="posVal">12%</span></label>
+    <label>对比度 <select id="contrastSel"><option value="default">白字 · 半透明黑底</option><option value="high">白字 · 实黑底</option><option value="yellow">黄字 · 实黑底</option></select></label>
     <label>字体
       <select id="fontSel">
         <option value="default">系统默认</option>
@@ -41,7 +42,7 @@
         <option value="kaiti">楷体</option>
       </select>
     </label>
-    <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 字体系统默认">重置默认</button>
+    <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 白字半透明黑底 / 字体系统默认">重置默认</button>
   </div>
 <p>字幕按语音时间显示完整短句；长句按时间分段，完整识别内容可在字幕记录查看。</p></section><section id="moreSettings" class="setting-section" hidden><label for="engine">字幕服务</label>  <select id="engine">
     <option value="aliyun-funasr" selected>云端原文字幕</option>
@@ -273,10 +274,11 @@
   const sizeVal = document.getElementById('sizeVal');
   const posRange = document.getElementById('posRange');
   const posVal = document.getElementById('posVal');
+  const contrastSel = document.getElementById('contrastSel');
   const fontSel = document.getElementById('fontSel');
   const styleReset = document.getElementById('styleReset');
   const STYLE_KEY = 'subtitleStyle';
-  const STYLE_DEFAULTS = { size: 30, pos: 12, font: 'default' };
+  const STYLE_DEFAULTS = { size: 30, pos: 12, font: 'default', contrast: 'default' };
   // 字体预设按本机已装中文字体（fc-list :lang=zh）定；楷体本机未装，走回退链
   const FONTS = {
     default: null,  // 系统默认：继承 body 字体
@@ -292,6 +294,7 @@
       if (raw) s = { ...s, ...JSON.parse(raw) };
     } catch (e) { /* 损坏值回默认 */ }
     if (!Object.prototype.hasOwnProperty.call(FONTS, s.font)) s.font = STYLE_DEFAULTS.font;
+    if (!['default', 'high', 'yellow'].includes(s.contrast)) s.contrast = STYLE_DEFAULTS.contrast;
     s.size = Math.min(64, Math.max(16, Number(s.size) || STYLE_DEFAULTS.size));
     s.pos = Math.min(30, Math.max(0, Number(s.pos) || STYLE_DEFAULTS.pos));
     return s;
@@ -304,12 +307,15 @@
     const s = styleState;
     currentEl.style.fontSize = `${s.size}px`;
     currentEl.style.bottom = `${s.pos}%`;
+    currentEl.style.backgroundColor = s.contrast === 'default' ? 'rgba(0,0,0,.72)' : '#000';
+    currentEl.style.color = s.contrast === 'yellow' ? '#ffe766' : '#fff';
     if (FONTS[s.font]) currentEl.style.fontFamily = FONTS[s.font];
     else currentEl.style.removeProperty('font-family');
     sizeRange.value = s.size;
     sizeVal.textContent = `${s.size}px`;
     posRange.value = s.pos;
     posVal.textContent = `${s.pos}%`;
+    contrastSel.value = s.contrast;
     fontSel.value = s.font;
     fitCaptionWidth();
   }
@@ -320,6 +326,7 @@
   // input 事件：拖动中即时生效（实时调整）；change 事件：下拉选择生效
   sizeRange.oninput = () => { styleState.size = parseInt(sizeRange.value, 10); applyStyle(); saveStyle(); };
   posRange.oninput = () => { styleState.pos = parseInt(posRange.value, 10); applyStyle(); saveStyle(); };
+  contrastSel.onchange = () => { styleState.contrast = contrastSel.value; applyStyle(); saveStyle(); };
   fontSel.onchange = () => { styleState.font = fontSel.value; applyStyle(); saveStyle(); };
   styleReset.onclick = () => {
     styleState = { ...STYLE_DEFAULTS };
