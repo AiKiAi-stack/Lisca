@@ -1017,16 +1017,10 @@
       && sharedViewerActive !== true && !!hlsPlayer;
   }
 
-  function rebaseRecoveredCaptionRevision(msg, offsets, latestRevisions) {
-    if (!msg || !['subtitle', 'caption_remove'].includes(msg.type)
-        || msg.sentence_id == null || !Number.isFinite(msg.revision)) return msg;
-    const id = String(msg.sentence_id);
-    if (!offsets.has(id)) {
-      const latest = latestRevisions.get(id);
-      offsets.set(id, latest == null ? 0 : Math.max(0, latest + 1 - msg.revision));
-    }
-    const revision = msg.revision + offsets.get(id);
-    return revision === msg.revision ? msg : {...msg, revision};
+  function scopeSessionCaptionIdentity(msg, generation) {
+    if (!msg || !['subtitle', 'caption_remove', 'preview'].includes(msg.type)
+        || msg.sentence_id == null) return msg;
+    return {...msg, sentence_id: `session-${generation}:${String(msg.sentence_id)}`};
   }
 
   async function connect(forceUrl, shareToken = null, startAt = 0, options = {}) {
@@ -1138,7 +1132,6 @@
     let audioClockPts = null, videoClockPts = preserveLiveMedia ? hlsVideoClockPts : null;
     let timelineMapped = false;
     let mediaOffset = 0;
-    const recoveredRevisionOffsets = preserveLiveMedia ? new Map() : null;
     const queuedMediaMessages = [];
     function flushMediaClock() {
       if (preserveLiveMedia && videoClockPts == null && Number.isFinite(hlsVideoClockPts))
@@ -1341,8 +1334,7 @@
         return;
       }
       let msg = timelineMapped ? offsetMediaMessage(input, mediaOffset) : input;
-      if (recoveredRevisionOffsets)
-        msg = rebaseRecoveredCaptionRevision(msg, recoveredRevisionOffsets, captionRevisions);
+      if (preserveLiveMedia) msg = scopeSessionCaptionIdentity(msg, generation);
       if (msg.type === 'caption_remove') {
         if (msg.sentence_id != null && Number.isFinite(msg.revision)) {
           const id = String(msg.sentence_id);

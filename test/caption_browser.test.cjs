@@ -5,7 +5,7 @@ function browser({playerWidth=260,fontSize=30}={}){
  const element=()=>({textContent:'',hidden:true,dataset:{},classList:{contains:()=>false},style:{},remove(){}});
  const current=element(), late=element();
  current.style.fontSize=`${fontSize}px`;const playerWrap={clientWidth:playerWidth};
- const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontSize:element.style.fontSize||'30px',paddingLeft:'10px',paddingRight:'10px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
+ const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preserveLiveMedia:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontSize:element.style.fontSize||'30px',paddingLeft:'10px',paddingRight:'10px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
  const moduleFile=path.join(__dirname,'../tools/webui_static/caption_presenter.js');
  if(fs.existsSync(moduleFile)){context.CaptionPresenter=require(moduleFile).CaptionPresenter;context.lines=()=>[];context.captionPresenter=new context.CaptionPresenter();}
  vm.createContext(context);
@@ -39,13 +39,13 @@ function endedSession(reason){
  const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
  const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:true}]]);
  const {RecoveryController}=require('../tools/webui_static/recovery_controller.js');
- const c={generation:1,connectionGeneration:1,RecoveryController,
+ const c={generation:1,connectionGeneration:1,preserveLiveMedia:false,RecoveryController,
    recoveryController:new RecoveryController(),recognitionOnlyStopped:false,audioClockPts:null,
    timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:msg=>msg,
    playbackGuard:{done:false},document:{getElementById:id=>elements.get(id)},
    originalCaptionMode:true,isHls:false,currentEl:{classList:{contains:()=>false}},
    cloudResumeRequired:false,status:'',setStatus(message){c.status=message;},playStarted:false,
-   playbackLimit:5,holdingForBuffer:false,uiPaused:false,recoveredRevisionOffsets:null,player:{play(){return Promise.resolve();}},
+   playbackLimit:5,holdingForBuffer:false,uiPaused:false,player:{play(){return Promise.resolve();}},
    ws:{closed:false,close(){this.closed=true;}}};
  const start=html.indexOf('    function receiveMessage(input) {');
  const end=html.indexOf('    ws.onmessage = ',start);
@@ -57,7 +57,7 @@ function terminalCloseSession(reason,{awaitingTimeline=false}={}){
  const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
  const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:false}]]);
  const recoveries=[];
- const c={generation:1,connectionGeneration:1,terminalReceived:false,recognitionOnlyStopped:false,recoveredRevisionOffsets:null,
+ const c={generation:1,connectionGeneration:1,preserveLiveMedia:false,terminalReceived:false,recognitionOnlyStopped:false,
    audioClockPts:awaitingTimeline?0:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:msg=>msg,
    playbackGuard:{done:false},document:{getElementById:id=>elements.get(id)},
    originalCaptionMode:true,isHls:false,currentEl:{classList:{contains:()=>false}},
@@ -154,25 +154,40 @@ test('captions without a revision retain the legacy client behavior',()=>{const 
 test('a cloud disconnect during local pause preserves the caption and reconnects at the same position on play',()=>{const b=browser();b.push({});vm.runInContext('uiPaused=true',b.context);assert.equal(b.context.holdCaptionForCloudReconnect(),true);assert.match(b.current.textContent,/这句译文/);assert.equal(b.context.resumeClosedCloudAfterPause(),true);assert.deepEqual(Array.from(b.context.reconnected).slice(0,3),['test.mp4',null,10]);assert.equal(b.context.reconnected[3].automaticRecovery,true);assert.equal(b.context.cloudResumeRequired,false);assert.equal(b.context.resumeClosedCloudAfterPause(),false);});
 test('cloud failures during normal playback remain visible errors rather than silent reconnect loops',()=>{const b=browser();assert.equal(b.context.holdCaptionForCloudReconnect(),false);assert.equal(b.context.cloudResumeRequired,false);});
 
-test('automatic live recovery rebases restarted sentence revisions without losing caption identity',()=>{
- const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
- const start=html.indexOf('  function rebaseRecoveredCaptionRevision(');
- const end=html.indexOf('\n\n  async function connect(',start);
- const c={};vm.createContext(c);vm.runInContext(html.slice(start,end),c);
- const offsets=new Map(),latest=new Map([['sentence-1',5]]);
- const first=c.rebaseRecoveredCaptionRevision({type:'subtitle',sentence_id:'sentence-1',revision:0},offsets,latest);
- const next=c.rebaseRecoveredCaptionRevision({type:'subtitle',sentence_id:'sentence-1',revision:1},offsets,latest);
- const removal=c.rebaseRecoveredCaptionRevision({type:'caption_remove',sentence_id:'sentence-1',revision:2},offsets,latest);
- assert.deepEqual([first.revision,next.revision,removal.revision],[6,7,8]);
- assert.equal(first.sentence_id,'sentence-1');
- assert.equal(c.rebaseRecoveredCaptionRevision({type:'subtitle',sentence_id:'new',revision:0},offsets,latest).revision,0);
- assert.equal(c.rebaseRecoveredCaptionRevision({type:'subtitle',sentence_id:'legacy'},offsets,latest).revision,undefined);
+test('a recovered ASR session reusing a sentence ID preserves both generations of transcript history',()=>{
+ const b=browser(),c=b.context,html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ Object.assign(c,{generation:2,connectionGeneration:2,preserveLiveMedia:true,recognitionOnlyStopped:false,
+   audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,
+   originalCaptionMode:true,captionHasSpeech:true,playStarted:true,holdingForBuffer:false,
+   syncSubtitle(){},markSessionRecoveryProgress(){},
+   playbackGuard:{captionProgress(){},removeCaption(){}}});
+ const old={sentence_id:'sentence-1',revision:4,beg:1,end:2,is_final:true,translated:false,text:'上一会话的句子。'};
+ c.onSubtitle(old);
+ const previewStart=html.indexOf('  function onPreview(msg) {');
+ const previewEnd=html.indexOf('\n\n  // Decoder PTS',previewStart);
+ vm.runInContext(html.slice(previewStart,previewEnd),c);
+ c.onPreview({sentence_id:'sentence-1',beg:2,end:3,text:'上一会话草稿'});
+ const helperStart=html.indexOf('  function scopeSessionCaptionIdentity(');
+ const helperEnd=html.indexOf('\n\n  async function connect(',helperStart);
+ vm.runInContext(html.slice(helperStart,helperEnd),c);
+ const start=html.indexOf('    function receiveMessage(input) {');
+ const end=html.indexOf('    ws.onmessage = ',start);
+ vm.runInContext(html.slice(start,end),c);
+ c.receiveMessage({type:'subtitle',sentence_id:'sentence-1',revision:0,beg:8,end:9,
+   is_final:true,translated:false,text:'新会话的不同句子。'});
+ assert.equal(c.subs.length,2,'new ASR generation must append a distinct transcript row');
+ assert.deepEqual(Array.from(c.subs,s=>s.text),['上一会话的句子。','新会话的不同句子。']);
+ assert.notEqual(c.subs[0].sentenceId,c.subs[1].sentenceId);
+ c.receiveMessage({type:'preview',sentence_id:'sentence-1',beg:9,end:10,text:'新会话草稿'});
+ c.receiveMessage({type:'caption_remove',sentence_id:'sentence-1',revision:1});
+ assert.deepEqual(Array.from(c.subs,s=>s.text),['上一会话的句子。']);
+ assert.deepEqual(Array.from(c.previewSubs,s=>s.text),['上一会话草稿']);
 });
 
 test('only automatic original-caption recovery on an active live HLS source preserves the media player',()=>{
  const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
  const start=html.indexOf('  function shouldPreserveLiveMedia(');
- const end=html.indexOf('\n\n  function rebaseRecoveredCaptionRevision(',start);
+ const end=html.indexOf('\n\n  async function connect(',start);
  const c={};vm.createContext(c);vm.runInContext(html.slice(start,end),c);
  const source={};
  assert.equal(c.shouldPreserveLiveMedia({automaticRecovery:true,live:true,originalCaptionMode:true,
@@ -284,10 +299,10 @@ function recoveryBrowser(){
  const Hls=require('../tools/webui_static/hls.min.js');
  const {RecoveryController}=require('../tools/webui_static/recovery_controller.js');
  let now=0,nextId=1;const timers=new Map(),actions=[],recoveryOrder=[];
- const c={recoveries:0,cancellations:0,sharedViewerActive:false,recognitionOnlyStopped:false,
+ const c={recoveries:0,cancellations:0,preserveLiveMedia:false,sharedViewerActive:false,recognitionOnlyStopped:false,
    originalCaptionMode:true,uiPaused:false,activeInput:'https://stream.test/live.m3u8',
    audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],
-   connectionGeneration:1,generation:1,playbackLimit:0,recoveredRevisionOffsets:null,playbackGuard:{live:true},player:{currentTime:8},
+   connectionGeneration:1,generation:1,playbackLimit:0,playbackGuard:{live:true},player:{currentTime:8},
    RecoveryController,recoveryController:null,performance:{now:()=>now},
    setTimeout(callback,delay){const id=nextId++;timers.set(id,{callback,at:now+delay});return id;},
    clearTimeout(id){timers.delete(id);},logEvent(){},setStatus(message){c.status=message;},
