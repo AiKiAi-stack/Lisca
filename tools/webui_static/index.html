@@ -14,7 +14,7 @@
 </header>
 <main>
  <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开内容，生成原文字幕</h2><p>中文语音出中文字幕，英文语音出英文字幕</p></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
- <div class="player-footer"><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关原文字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
+ <div class="player-footer"><div><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div id="sourceBufferStatus" role="status" hidden></div></div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关原文字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
  <div id="captionActions" hidden><button id="retryCaptions">重试字幕</button><button id="playOnly">仅播放（停止识别）</button></div>
  <div id="lateCaption" hidden></div>
 </main>
@@ -142,6 +142,7 @@
   const shareCopyBtn = document.getElementById('shareCopy');
   const shareAddressEl = document.getElementById('shareAddress');
   const statusEl = document.getElementById('status');
+  const sourceBufferStatusEl = document.getElementById('sourceBufferStatus');
   const currentEl = document.getElementById('current');
   const historyEl = document.getElementById('history');
   const fileEl = document.getElementById('file');
@@ -159,6 +160,7 @@
   let playStarted = false; // 是否已触发视频播放（等字幕就绪）
   let holdingForSync = false; // 字幕未就绪时拦截手动播放产生的 pause，不冻结后端
   let holdingForBuffer = false;
+  let sourceBufferingSince = null;
   let playbackLimit = null;
   let seekPending = false; // seek 后清空当前句显示，等新数据（ADR-0001）
   let aligningInitialPlayback = false;
@@ -875,19 +877,19 @@
       const id = String(msg.sentence_id);
       const revision = msg.revision;
       const latestRevision = captionRevisions.get(id);
-      if (latestRevision != null && revision <= latestRevision) return;
+      if (latestRevision != null && revision <= latestRevision) return false;
       captionRevisions.set(id, revision);
     }
     // In-flight final revisions remain valid while the user has paused.
     // Preserve them for playback instead of dropping transcript data.
-    if (msg.translated && seekPending && (msg.end ?? msg.beg) < player.currentTime - .25) return;
+    if (msg.translated && seekPending && (msg.end ?? msg.beg) < player.currentTime - .25) return false;
     seekPending = false;  // 仅目的地相关的新数据解除 seek 等待
-    if (!msg.text) return;
+    if (!msg.text) return false;
     if (msg.translated) {
       translatedSession = true;
-      if (msg.is_final === false) return;
+      if (msg.is_final === false) return false;
       const knownRevision = captionPresenter.seen.get(String(msg.sentence_id));
-      if (knownRevision != null && (msg.revision || 0) <= knownRevision) return;
+      if (knownRevision != null && (msg.revision || 0) <= knownRevision) return false;
       fitCaptionWidth();
       captionPresenter.enqueue(msg);
     }
@@ -896,8 +898,8 @@
       // Partial may move its begin timestamp slightly; matching shared word times
       // keeps that revision in one history row and prevents duplicate overlay text.
       const matched = subs[idx];
-      if (matched.isFinal && matched.translated && (msg.revision || 0) <= (matched.revision || 0)) return;
-      if ((msg.revision || 0) < (matched.revision || 0)) return;
+      if (matched.isFinal && matched.translated && (msg.revision || 0) <= (matched.revision || 0)) return false;
+      if ((msg.revision || 0) < (matched.revision || 0)) return false;
       matched.beg = msg.beg;
       matched.end = msg.end;
       matched.text = msg.text;
@@ -931,6 +933,7 @@
         : s.end < msg.beg || (Number.isFinite(msg.end) && s.beg > msg.end));
     }
     syncSubtitle();
+    return true;
   }
 
   function onPreview(msg) {
@@ -949,7 +952,9 @@
       end: Number.isFinite(msg.end) ? msg.end + offset : msg.end,
       words: msg.words?.map(([beg, end, text]) => [beg + offset,
         Number.isFinite(end) ? end + offset : end, text])};
-    if (msg.type === 'buffer') return {...msg, play_at: msg.play_at + offset};
+    if (msg.type === 'buffer') return {...msg, play_at: msg.play_at + offset,
+      local_silence_through: Number.isFinite(msg.local_silence_through)
+        ? msg.local_silence_through + offset : msg.local_silence_through};
     if (msg.type === 'ready' && Number.isFinite(msg.start_at))
       return {...msg, start_at: msg.start_at + offset};
     return msg;
@@ -957,6 +962,7 @@
 
   async function connect(forceUrl, shareToken = null, startAt = 0) {
     const generation = ++connectionGeneration;
+    setSourceBuffering(false, 'session_change');
     cancelPendingLocalSeek();
     pendingSeekOrigin = null;
     restoringSeek = null;
@@ -1160,7 +1166,8 @@
       let mediaRecoveryAttempts = 0;
       hlsPlayer.on(Hls.Events.INIT_PTS_FOUND, (_evt, data) => {
         if (hlsPlayer !== currentHls) return;
-        if (data.id !== 'main' || videoClockPts != null) return;
+        if (data.id !== 'main' || videoClockPts != null || !Number.isFinite(data.initPTS)
+            || !Number.isFinite(data.timescale) || data.timescale <= 0) return;
         videoClockPts = data.initPTS / data.timescale;
         flushMediaClock();
       });
@@ -1234,12 +1241,12 @@
         syncSubtitle();
       } else if (msg.type === 'subtitle') {
         if (msg.text) captionHasSpeech = true;
-        playbackGuard.progress(msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg, performance.now());
-        onSubtitle(msg);
+        if (onSubtitle(msg) && !msg.translated)
+          playbackGuard.progress(msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg, performance.now());
       } else if (msg.type === 'preview') {
         onPreview(msg);
       } else if (msg.type === 'buffer') {
-        if (Number.isFinite(msg.local_silence_through)) playbackGuard.progress(msg.local_silence_through, performance.now());
+        if (Number.isFinite(msg.local_silence_through)) playbackGuard.verifiedSilence(msg.local_silence_through, performance.now());
         if (!sharedViewerActive) {
           playbackLimit = Number.isFinite(msg.play_at) ? msg.play_at : playbackLimit;
           syncPlaybackToBuffer();
@@ -1383,12 +1390,31 @@
     }
   });
   // 视频诊断（ticket-11/16）：stalled/waiting 等不触发 error 的状态也写入会话日志
+  function setSourceBuffering(active, eventName) {
+    if (active) {
+      if (sourceBufferingSince != null) return;
+      sourceBufferingSince = performance.now();
+      sourceBufferStatusEl.hidden = false;
+      sourceBufferStatusEl.textContent = '直播源缓冲中…';
+      logEvent('source_buffering_start', `event=${eventName} media_t=${player.currentTime.toFixed(3)}s`);
+      return;
+    }
+    if (sourceBufferingSince == null) return;
+    const durationMs = Math.max(0, performance.now() - sourceBufferingSince);
+    sourceBufferingSince = null;
+    sourceBufferStatusEl.hidden = true;
+    sourceBufferStatusEl.textContent = '';
+    logEvent('source_buffering_end', `event=${eventName} duration_ms=${Math.round(durationMs)} media_t=${player.currentTime.toFixed(3)}s`);
+  }
   ['stalled', 'waiting', 'suspend', 'emptied', 'abort'].forEach((evt) => {
     player.addEventListener(evt, () => {
       const err = player.error ? ` code=${player.error.code}` : '';
       logEvent(`video_${evt}`, `ready=${player.readyState} net=${player.networkState}${err}`);
+      if (evt === 'waiting') setSourceBuffering(true, evt);
     });
   });
+  player.addEventListener('playing', () => setSourceBuffering(false, 'playing'));
+  player.addEventListener('canplay', () => setSourceBuffering(false, 'canplay'));
   player.addEventListener('loadedmetadata', () => {
     if (pendingStartAt != null) {
       aligningInitialPlayback = true;
@@ -1539,6 +1565,7 @@
   shareAddressEl.onchange = () => { shareCopyBtn.dataset.url = shareAddressEl.value; };
   stopBtn.onclick = async () => {
     const generation = ++connectionGeneration;
+    setSourceBuffering(false, 'session_stop');
     cancelPendingLocalSeek();
     pendingSeekOrigin = null;
     restoringSeek = null;
