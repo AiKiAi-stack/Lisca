@@ -44,12 +44,17 @@ def main():
             assert "第一句" in snapshot(page)["text"]
             results.append({"case": "contrast-position-and-subtitle-toggle", "passed": True,
                             "original": original, "high": high})
+            page.locator("#settingsBtn").click()
+            page.get_by_role("tab", name="字幕", exact=True).click()
+            page.locator("#posRange").focus()
+            page.locator("#posRange").press("Home")
+            page.get_by_role("button", name="关闭设置", exact=True).click()
             stop_if_active(page)
             page.reload(wait_until="domcontentloaded")
             page.locator("#settingsBtn").click()
             page.get_by_role("tab", name="字幕", exact=True).click()
             assert page.locator("#contrastSel").input_value() == "high"
-            assert page.locator("#posRange").input_value() == "30"
+            assert page.locator("#posRange").input_value() == "0"
             page.locator("#styleReset").click()
             assert page.locator("#contrastSel").input_value() == "default"
             assert page.locator("#posRange").input_value() == "12"
