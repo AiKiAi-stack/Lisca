@@ -116,6 +116,7 @@ test('server caption capacity errors retain existing captions and continue in on
  const actions={hidden:false};let resets=0;
  const c={generation:1,connectionGeneration:1,recognitionOnlyStopped:false,sharedViewerActive:false,
    originalCaptionMode:true,audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,
+   recoveredRevisionOffsets:null,
    recoveryController:{cancel(){}},cancelPendingLocalSeek(){},pendingSeekOrigin:null,restoringSeek:null,
    skipReconnectOnNextPlay:false,playbackGuard:{done:false},cloudResumeRequired:false,pauseStartedAt:1,
    cloudPlayback:true,originalCaptionsComplete:false,holdingForSync:true,holdingForBuffer:true,
