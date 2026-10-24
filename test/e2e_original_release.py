@@ -89,6 +89,23 @@ def main():
               document.querySelector('#current').innerText.includes('第一句')""", timeout=15000)
             first = snapshot(page)
             assert .0 <= first["time"] <= 1.8, first
+            timed = [first]
+            deadline = time.monotonic() + 15
+            while timed[-1]["time"] < 6.4 and time.monotonic() < deadline:
+                page.wait_for_timeout(40)
+                timed.append(snapshot(page))
+            expected = [(0., 1.8, "第一句完整字幕。"),
+                        (2., 3.8, "Second complete sentence."),
+                        (4., 5.8, "最后一句原文字幕。")]
+            for beg, end, text in expected:
+                visible = [item for item in timed if item["text"] == text]
+                assert len(visible) >= 10, (text, visible)
+                assert all(beg - .15 <= item["time"] <= end + .15 for item in visible), visible
+            gap = [item for item in timed if 6 <= item["time"] <= 6.4]
+            assert gap and all(not item["text"] for item in gap), gap
+            assert timed[-1]["time"] >= 6.4, timed[-1]
+            results.append({"case": "zh-en-visible-time-and-missing-interval", "passed": True,
+                            "media_samples": timed})
             wait_complete(page)
             started = request("/__fixture/state")["started"]
             page.locator("video").evaluate("video=>video.pause()")
