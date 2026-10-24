@@ -12,6 +12,11 @@ function browser({playerWidth=260,fontSize=30}={}){
  vm.runInContext(html.slice(html.indexOf('function captionSegments('),html.indexOf('function onPreview(')),context);
  return {context,current,late,push:cue=>context.onSubtitle({type:'subtitle',translated:true,sentence_id:1,beg:0,end:2,is_final:true,text:'这句译文必须出现在视频内。',...cue}),tick(ms){context.now=ms;context.syncSubtitle();}};
 }
+function loadShareHistoryWarning(html,context){
+ const start=html.indexOf('  function showShareHistoryNotice() {');
+ const end=html.indexOf('  function appendHistory(',start);
+ vm.runInContext(html.slice(start,end),context);
+}
 function shareHistoryViewer(){
  const b=browser(),c=b.context,html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
  const classes=new Set(),elements=new Map([['captionActions',{hidden:true}],['retryCaptions',{hidden:true}],
@@ -29,9 +34,7 @@ function shareHistoryViewer(){
  const syncStart=html.indexOf('  function syncSubtitle() {');
  const syncEnd=html.indexOf('\n\n  // 历史原地修订 partial',syncStart);
  vm.runInContext(html.slice(syncStart,syncEnd),c);
- const noticeStart=html.indexOf('  function showShareHistoryNotice() {');
- const noticeEnd=html.indexOf('  function appendHistory(',noticeStart);
- vm.runInContext(html.slice(noticeStart,noticeEnd),c);
+ loadShareHistoryWarning(html,c);
  const receiveStart=html.indexOf('    function receiveMessage(input) {');
  const receiveEnd=html.indexOf('    ws.onmessage = ',receiveStart);
  vm.runInContext(html.slice(receiveStart,receiveEnd),c);
@@ -263,6 +266,7 @@ test('server caption capacity errors retain existing captions and continue in on
    scheduleSessionRecovery(){return {status:'manual'};},showCaptionRecovery(message){c.status=message;},
    holdCaptionForCloudReconnect(){return false;},setStatus(message){c.status=message;}};
  vm.createContext(c);
+ loadShareHistoryWarning(html,c);
  const cancelStart=html.indexOf('  async function cancelCaptionProcessing(');
  const cancelEnd=html.indexOf('  function showCaptionRecovery(',cancelStart);
  vm.runInContext(html.slice(cancelStart,cancelEnd),c);
@@ -548,6 +552,7 @@ function recoveryBrowser(){
    recoverMediaError(){c.recoveries++;actions.push(['media']);},destroy(){c.destroyed=true;}};
  c.hlsPlayer=source;c.currentHls=source;
  vm.createContext(c);
+ loadShareHistoryWarning(html,c);
  const helperStart=html.indexOf('  let stoppedHlsLoaderForRecovery = null;');
  const helperEnd=html.indexOf('  async function cloudRequest(',helperStart);
  vm.runInContext(html.slice(helperStart,helperEnd),c);
