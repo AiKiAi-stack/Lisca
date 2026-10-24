@@ -87,7 +87,7 @@ class RecognitionFixture:
         self.steps = deque(self.script())
 
     def script(self):
-        if self.mode in ("silent", "no-progress"):
+        if self.mode in ("silent", "no-progress", "live-no-caption"):
             return []
         if self.mode == "controls":
             return [(beg + 1.8, (float(beg), beg + 1.8, f"Prepared sentence {beg // 2 + 1}.",
@@ -133,7 +133,7 @@ class RecognitionFixture:
             observations = self.observation["feed_observations"]
             observations.append({"at": time.monotonic(), "through": self.elapsed})
             del observations[:-256]
-        if self.mode == "recovery-auth":
+        if self.mode in ("recovery-auth", "live-auth"):
             raise OfflineAuthenticationFailure("offline fixture authentication failure")
         if self.mode in ("recovery-network", "recovery-live") and self.elapsed >= 3:
             raise ConnectionError("offline fixture connection failure")
@@ -196,7 +196,8 @@ def main():
         async def fixture_scenario(request: Request):
             mode = (await request.json())["mode"]
             if mode not in (*media, "withdrawn", "live-normal", "live-gap",
-                            "recovery-network", "recovery-auth", "recovery-live"):
+                            "recovery-network", "recovery-auth", "recovery-live",
+                            "live-no-caption", "live-auth"):
                 raise ValueError("Unknown offline scenario")
             with state["lock"]:
                 state["mode"] = mode
