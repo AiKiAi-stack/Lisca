@@ -13,6 +13,51 @@ function browser({playerWidth=260,fontSize=30}={}){
  return {context,current,late,push:cue=>context.onSubtitle({type:'subtitle',translated:true,sentence_id:1,beg:0,end:2,is_final:true,text:'这句译文必须出现在视频内。',...cue}),tick(ms){context.now=ms;context.syncSubtitle();}};
 }
 test('late complete translations appear on the video rather than disappearing',()=>{const b=browser();b.push({});b.tick(0);assert.match(b.current.textContent,/这句译文/);assert.equal(b.late.hidden,true);});
+function originalSessionMessageHandler(){
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const c={generation:1,connectionGeneration:1,recognitionOnlyStopped:false,audioClockPts:null,
+  timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:x=>x,
+  captionRevisions:new Map(),captionPresenter:{seen:new Map(),remove(){}},subs:[],historyItems:[],
+  previewSubs:[],syncSubtitle(){},captionHasSpeech:false,originalCaptionMode:false,playStarted:false,
+  progressCalls:[],playbackGuard:{degraded:false,progress(...args){c.progressCalls.push(args)}},performance:{now:()=>1},
+  acceptSubtitle:true,onSubtitle(){return c.acceptSubtitle},onPreview(){},sharedViewerActive:false,
+  useCaptionBuffer:false,cloudPlayback:true,playbackLimit:null,aligningInitialPlayback:false,isHls:false,holdingForBuffer:false,
+  player:{currentTime:0,play:()=>Promise.resolve()},holdingForSync:false,currentEl:{textContent:'',classList:{contains:()=>false}},
+  setStatus(message){c.status=message},logEvent(){},stallWatchdog(){},setTimeout(){},document:{getElementById:()=>({hidden:false})}};
+ vm.createContext(c);
+ const start=html.indexOf('    function receiveMessage(input)');
+ const end=html.indexOf('    ws.onmessage = (e) => receiveMessage(JSON.parse(e.data));',start);
+ vm.runInContext(html.slice(start,end)+'\nthis.receiveMessage=receiveMessage;',c);
+ return c;
+}
+test('the first speech after a silent ready state clears the stale no-speech status',()=>{
+ const c=originalSessionMessageHandler();
+ c.receiveMessage({type:'ready',original:true,silent:true,buffered:true,delay:.1,start_at:0});
+ assert.equal(c.status,'暂未识别到语音，继续播放');
+ c.receiveMessage({type:'subtitle',beg:4,end:4.5,text:'静音后的第一句原文',is_final:true});
+ assert.equal(c.captionHasSpeech,true);
+ assert.equal(c.status,'已识别到语音，原文字幕已就绪');
+ assert.equal(c.progressCalls.length,1);
+});
+test('a rejected old caption cannot clear the silent-session status or refresh progress',()=>{
+ const c=originalSessionMessageHandler();
+ c.receiveMessage({type:'ready',original:true,silent:true,buffered:true,delay:.1,start_at:0});
+ c.acceptSubtitle=false;
+ c.receiveMessage({type:'subtitle',beg:4,end:4.5,text:'过期的旧会话原文',is_final:true});
+ assert.equal(c.captionHasSpeech,false);
+ assert.equal(c.status,'暂未识别到语音，继续播放');
+ assert.equal(c.progressCalls.length,0);
+});
+test('the first speech does not overwrite a persistent degraded status',()=>{
+ const c=originalSessionMessageHandler();
+ c.receiveMessage({type:'ready',original:true,silent:true,buffered:true,delay:.1,start_at:0});
+ c.playbackGuard.degraded=true;
+ c.status='未能持续获取字幕，可重试';
+ c.receiveMessage({type:'subtitle',beg:4,end:4.5,text:'静音后的第一句原文',is_final:true});
+ assert.equal(c.captionHasSpeech,true);
+ assert.equal(c.status,'未能持续获取字幕，可重试');
+ assert.equal(c.progressCalls.length,1);
+});
 test('provider token drafts never become visible subtitles or a second reading frame',()=>{const b=browser();b.push({is_final:false,end:null,text:'这'});b.tick(0);assert.equal(b.current.textContent,'');assert.equal(b.late.hidden,true);});
 test('a completed cue remains readable after its source interval has expired',()=>{const b=browser();b.context.player.currentTime=1.9;b.push({});b.tick(0);b.context.player.currentTime=2.1;b.tick(100);assert.match(b.current.textContent,/这句译文/);});
 
