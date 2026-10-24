@@ -96,21 +96,27 @@ class TestASRClient:
         ]
 
     @patch("streamparser.asr_client.Recognition")
-    def test_callback_exposes_sdk_errors(self, mock_rec):
-        """SDK 的异步错误必须可由引擎轮询并反馈给用户。"""
+    def test_callback_preserves_structured_sdk_error_without_raw_message(self, mock_rec):
+        """保留 SDK 状态码/错误码，丢弃可能带敏感信息的服务端消息。"""
         mock_instance = MagicMock()
         mock_rec.return_value = mock_instance
         client = ASRClient(ASRSettings(api_key="sk-test"))
         callback = mock_rec.call_args.kwargs["callback"]
 
         class FakeResult:
+            status_code = 403
+            code = "Model.AccessDenied"
+
             def get_message(self):
-                return "invalid audio format"
+                return "private provider response"
 
         callback.on_error(FakeResult())
 
-        with pytest.raises(RuntimeError, match="invalid audio format"):
+        with pytest.raises(RuntimeError) as caught:
             client.raise_if_error()
+        assert caught.value.status_code == 403
+        assert caught.value.code == "Model.AccessDenied"
+        assert "private provider response" not in str(caught.value)
 
     @patch("streamparser.asr_client.Recognition")
     def test_callback_reports_error_when_sdk_stringification_fails(self, mock_rec):
@@ -122,8 +128,10 @@ class TestASRClient:
                 raise AttributeError("headers")
 
         callback.on_error(BrokenResult())
-        with pytest.raises(RuntimeError, match="DashScope recognition failed"):
+        with pytest.raises(RuntimeError) as caught:
             client.raise_if_error()
+        assert caught.value.status_code is None
+        assert caught.value.code is None
 
     @patch("streamparser.asr_client.Recognition")
     def test_subtitle_buffer_accessible(self, mock_rec):
