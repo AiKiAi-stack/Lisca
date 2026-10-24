@@ -11,7 +11,7 @@ import time
 import av
 from playwright.sync_api import sync_playwright
 
-from e2e_original_release import ROOT, open_scenario, request, snapshot, stop_if_active
+from e2e_original_release import launch_browser, ROOT, open_scenario, request, snapshot, stop_if_active
 
 
 def resources(pid, media):
@@ -45,8 +45,7 @@ def main():
     samples = [initial]
     result.update({"initial_resources": initial, "resource_samples": samples})
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(executable_path="/usr/bin/google-chrome",
-            headless=True, args=["--autoplay-policy=no-user-gesture-required"])
+        browser = launch_browser(playwright)
         page = browser.new_page()
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
