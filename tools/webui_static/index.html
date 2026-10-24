@@ -526,6 +526,13 @@
     notice.hidden = false;
   }
 
+  function showShareHistoryWarning(message) {
+    if (message.failure_category !== 'share_history_truncated') return false;
+    showShareHistoryNotice();
+    setStatus('较早字幕记录未保留，当前直播继续');
+    return true;
+  }
+
   function appendHistory(beg, end, text, sourceText = '') {
     const div = document.createElement('div');
     const time = document.createElement('span');
@@ -1468,18 +1475,11 @@
         // 就绪后 15s 内 t 从未前进（>0.5s）则判定源不可播，明确提示换源
         stallWatchdog();
       } else if (msg.type === 'status') {
-        if (msg.failure_category === 'share_history_truncated') {
-          showShareHistoryNotice();
-          setStatus('较早字幕记录未保留，当前直播继续');
-        } else setStatus(msg.message);
+        if (!showShareHistoryWarning(msg)) setStatus(msg.message);
       } else if (msg.type === 'log') {
         logEvent('server', msg.line);  // 服务端后台日志（ticket-14）
       } else if (msg.type === 'error') {
-        if (msg.failure_category === 'share_history_truncated') {
-          showShareHistoryNotice();
-          setStatus('较早字幕记录未保留，当前直播继续');
-          return;
-        }
+        if (showShareHistoryWarning(msg)) return;
         if (msg.failure_category === 'capacity') {
           void cancelCaptionProcessing(msg.message || '字幕记录达到安全容量上限，识别已停止',
             true, true);
