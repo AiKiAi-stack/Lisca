@@ -1532,6 +1532,11 @@
         showRecognitionFailure('识别连接异常关闭，自动恢复额度已用完；可手动重试或仅播放');
         return;
       }
+      // A terminal worker event can close the socket while its already-scheduled
+      // recovery is still waiting. Keep Stop and Only-play available so the user
+      // can cancel that timer before it opens another recognition session.
+      if (!sharedViewerActive && originalCaptionMode && recoveryController.pending
+          && !recoveryController.cancelled && !recognitionOnlyStopped) return;
       if (sharedViewerActive) {
         if (event.code === 4429) setStatus('观众人数已满（最多 3 台设备），请稍后再试', true);
         else if (!currentEl.classList.contains('err')) setStatus('直播已结束或连接已断开');

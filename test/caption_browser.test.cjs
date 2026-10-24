@@ -78,6 +78,24 @@ function terminalCloseSession(reason,{awaitingTimeline=false}={}){
  if(awaitingTimeline)c.ws.onclose({code:1005});
  return {context:c,recoveries};
 }
+function closeDuringPendingRecovery(){
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const {RecoveryController}=require('../tools/webui_static/recovery_controller.js');
+ let timerCallback;const recoveryController=new RecoveryController({setTimeout(fn){timerCallback=fn;return 1;},clearTimeout(){}});
+ recoveryController.begin();recoveryController.schedule('recognition',true,()=>{});
+ const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:true}]]);
+ const c={terminalReceived:true,originalCaptionMode:true,sharedViewerActive:false,
+   recognitionOnlyStopped:false,recoveryController,originalCaptionsComplete:false,processingComplete:false,
+   currentEl:{classList:{contains:()=>false}},logEvent(){},setStatus(){},
+   startBtn:{style:{display:'none'}},stopBtn:{style:{display:'inline-block'}},
+   shareCopyBtn:{style:{display:'inline-block'}},shareAddressEl:{hidden:false},activeShareToken:'share',
+   document:{getElementById:id=>elements.get(id)},ws:{}};
+ const closeStart=html.indexOf('    ws.onclose = (event) => {');
+ const closeEnd=html.indexOf('\n    };',closeStart)+'\n    };'.length;
+ vm.runInNewContext(html.slice(closeStart,closeEnd),c);
+ c.ws.onclose({code:1000});
+ return {context:c,elements,timerCallback};
+}
 function playBrowser({position=2,pauseStartedAt=0,now=3000,readyState=1}={}){
  const b=browser(),c=b.context,listeners={};
  Object.assign(c,{pauseStartedAt,uiPaused:true,cloudResumeRequired:false,connectionGeneration:1,recognitionOnlyStopped:false,
@@ -177,6 +195,13 @@ test('a terminal end waiting for its media timeline still suppresses close recov
  assert.equal(recoveries.length,0);
  assert.deepEqual(context.queuedMediaMessages.map(message=>message.type),['end']);
  assert.equal(context.terminalReceived,true);
+});
+test('a terminal close keeps stop and only-play visible while recovery backoff is pending',()=>{
+ const {context,elements}=closeDuringPendingRecovery();
+ assert.equal(context.recoveryController.pending.attempt,1);
+ assert.equal(context.stopBtn.style.display,'inline-block');
+ assert.equal(context.startBtn.style.display,'none');
+ assert.equal(elements.get('captionActions').hidden,false);
 });
 test('long English captions wrap to two lines on a narrow player',()=>{const b=browser({playerWidth:260,fontSize:30});const sentence='This complete English caption should keep its words and remain easy to read on a narrow player.';const text=[sentence,sentence].join(' ');const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=25),segments);assert.equal(segments.map(s=>s.text).join(' ').replace(/\s+/g,' '),text.replace(/\s+/g,' '));});
 
