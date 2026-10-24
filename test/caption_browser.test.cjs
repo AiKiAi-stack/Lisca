@@ -322,6 +322,15 @@ function recoveryBrowser(){
    advance(ms){now+=ms;for(const [id,job] of [...timers])if(job.at<=now){timers.delete(id);job.callback();}}};
 }
 test('an old HLS fatal event cannot stop a newly selected source',()=>{const b=recoveryBrowser(),c=b.context;c.hlsPlayer={};b.mediaFailure();assert.equal(c.cancellations,0);assert.equal(c.recoveries,0);});
+test('the preserved HLS instance can recover a media error after ASR reconnect advances the generation',()=>{
+ const b=recoveryBrowser(),c=b.context;
+ c.connectionGeneration=2; // automatic ASR reconnect; the active HLS instance is unchanged
+ b.mediaFailure();
+ assert.equal(c.recoveryController.pending.attempt,1);
+ b.advance(1000);
+ assert.equal(c.recoveries,1);
+ assert.equal(c.destroyed,undefined);
+});
 test('a nonfatal HLS fragment load failure consumes the shared media recovery budget',()=>{
  const b=recoveryBrowser(),c=b.context;
  b.mediaLoaderFailure(c.Hls.ErrorDetails.FRAG_LOAD_ERROR);
