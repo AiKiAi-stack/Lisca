@@ -320,7 +320,7 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
                 source_number = started
                 all_sources_started.notify_all()
             if source_number <= 8:
-                release_sources.wait(timeout=10)
+                release_sources.wait()
             return
             yield b"\x01" * 3200
 
@@ -333,20 +333,21 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
     monkeypatch.setattr(webui, "StreamSource", BlockingSource)
     with TestClient(webui.app) as client:
         client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
-        for _ in range(8):
+        try:
+            for expected_started in range(1, 9):
+                ticket = client.post("/api/cloud/sessions", json={
+                    "mode": "transcribe", "url": "https://media.test/live.mp4",
+                    "source": "auto",
+                }).json()
+                with client.websocket_connect("/ws?session=" + ticket["session"]):
+                    with all_sources_started:
+                        assert all_sources_started.wait_for(
+                            lambda: started >= expected_started, timeout=2)
+
             ticket = client.post("/api/cloud/sessions", json={
                 "mode": "transcribe", "url": "https://media.test/live.mp4",
                 "source": "auto",
             }).json()
-            with client.websocket_connect("/ws?session=" + ticket["session"]):
-                with all_sources_started:
-                    assert all_sources_started.wait_for(lambda: started > closed, timeout=2)
-
-        ticket = client.post("/api/cloud/sessions", json={
-            "mode": "transcribe", "url": "https://media.test/live.mp4",
-            "source": "auto",
-        }).json()
-        try:
             with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
                 received = []
                 while True:
