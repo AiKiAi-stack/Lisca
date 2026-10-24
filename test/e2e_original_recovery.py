@@ -27,7 +27,7 @@ def main():
     with sync_playwright() as playwright:
         browser = launch_browser(playwright)
         page = browser.new_page()
-        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.on("pageerror", lambda error: errors.append(error.stack))
         try:
             before = request("/__fixture/state")["started"]
             open_scenario(page, "recovery-network", fixture["media"]["controls"])
