@@ -1147,8 +1147,7 @@ async def ws_endpoint(ws: WebSocket):
                     ready_sent = True
                 clock_sent = False
                 silence_run = 0.0
-                last = active_session_time()
-                feed_clock = last
+                feed_clock = active_session_time()
                 playback_ceiling = timeline_offset
                 for chunk in chain((first_chunk,), chunks):
                     phase = "recognition"
@@ -1173,17 +1172,17 @@ async def ws_endpoint(ws: WebSocket):
                     # Pace by the actual PCM duration (including a short tail).
                     chunk_sec = len(chunk) / (16000 * 2)
                     if not batch_mode:
-                        # A realtime recognizer cannot consume a whole long file
-                        # in one burst. Keep only two seconds ahead of its clock;
-                        # playback can start from stable phrases before file EOF.
-                        wait = (fed_sec + chunk_sec - 2.0 - (active_session_time() - feed_clock)
-                                if prefetch_local else chunk_sec - (active_session_time() - last))
+                        # Keep local files at most two seconds ahead so playback
+                        # can start before EOF; live streams have no lead allowance.
+                        # One cumulative deadline lets delayed reads catch up without
+                        # turning source or recognizer time into permanent feed lag.
+                        lead_sec = 2.0 if prefetch_local else 0.0
+                        wait = fed_sec + chunk_sec - lead_sec - (active_session_time() - feed_clock)
                         if wait > 0:
                             if cloud and _session_wait(stop, wait):
                                 break
                             if not cloud:
                                 time.sleep(wait)
-                        last = active_session_time()
                     check_no_progress()
                     audio = s16_to_f32(chunk)
                     silence_run = silence_run + chunk_sec if len(audio) and max(abs(audio)) < 0.005 else 0.0
