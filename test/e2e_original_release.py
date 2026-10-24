@@ -5,6 +5,7 @@ regular service, never installs credentials, and writes only simulated evidence.
 """
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import time
@@ -72,6 +73,24 @@ def stop_if_active(page):
         close.click()
     if page.locator("#stop").is_visible():
         page.locator("#stop").click()
+
+
+def observe_caption_pages(page):
+    changes = []
+    deadline = time.monotonic() + 16
+    while time.monotonic() < deadline:
+        item = snapshot(page)
+        if not changes or item["text"] != changes[-1]["text"]:
+            changes.append({"time": item["time"], "text": item["text"]})
+        assert item["lines"] <= 2.1 and not item["clipped"], item
+        if item["time"] >= 11.3:
+            break
+        page.wait_for_timeout(40)
+    assert changes and item["time"] >= 11.3, changes
+    artificial_flashes = [left for left, right in zip(changes, changes[1:])
+                          if left["text"] and right["time"] - left["time"] < .55]
+    assert not artificial_flashes, artificial_flashes
+    return changes
 
 
 def main():
@@ -151,20 +170,7 @@ def main():
             assert large["text"] and large["lines"] <= 2.1 and not large["clipped"], large
             results.append({"case": "narrow-selected-large-font", "passed": True, "snapshot": large})
             page.locator("video").evaluate("video=>{video.currentTime=0;video.play()}")
-            changes = []
-            deadline = time.monotonic() + 16
-            while time.monotonic() < deadline:
-                item = snapshot(page)
-                if not changes or item["text"] != changes[-1]["text"]:
-                    changes.append({"time": item["time"], "text": item["text"]})
-                assert item["lines"] <= 2.1 and not item["clipped"], item
-                if item["time"] >= 11.3:
-                    break
-                page.wait_for_timeout(40)
-            assert changes and item["time"] >= 11.3, changes
-            artificial_flashes = [left for left, right in zip(changes, changes[1:])
-                                  if left["text"] and right["time"] - left["time"] < .55]
-            assert not artificial_flashes, artificial_flashes
+            changes = observe_caption_pages(page)
             results.append({"case": "long-caption-pages-without-artificial-flashing", "passed": True,
                             "visible_changes": changes, "sampling_tolerance_seconds": .05})
             page.locator("video").evaluate("video=>{video.pause();video.currentTime=3}")
@@ -177,6 +183,18 @@ def main():
             results.append({"case": "fullscreen-selected-large-font", "passed": True, "snapshot": full})
             page.screenshot(path=str(directory / "fullscreen-caption.png"))
             page.locator("#exitFullscreenBtn").click()
+            stop_if_active(page)
+            open_scenario(page, "long-en", fixture["media"]["long"])
+            wait_complete(page, 25000)
+            page.locator("video").evaluate("video=>{video.currentTime=0;video.play()}")
+            english = observe_caption_pages(page)
+            expected_english = "Clear original captions follow the speaker. Old lines never cover the next sentence."
+            visible_english = " ".join(item["text"] for item in english if item["text"])
+            normalize = lambda text: re.sub(r"[^a-z0-9]", "", text.lower())
+            assert normalize(visible_english) == normalize(expected_english), english
+            results.append({"case": "english-long-caption-readable-and-complete", "passed": True,
+                            "visible_changes": english, "sampling_tolerance_seconds": .05})
+            page.screenshot(path=str(directory / "english-narrow-caption.png"))
             assert not errors, errors
         finally:
             stop_if_active(page)

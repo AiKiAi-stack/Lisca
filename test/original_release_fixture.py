@@ -7,6 +7,7 @@ never a speech-accuracy or public-source acceptance result.
 import json
 import math
 import os
+import re
 from collections import deque
 from fractions import Fraction
 from pathlib import Path
@@ -115,6 +116,13 @@ class RecognitionFixture:
             return [(1.0, (0., 5., "This sentence was withdrawn.", None, True, 1)),
                     (1.2, (0., 5., "", None, True, 1)),
                     (1.4, (0., 5., "This sentence was withdrawn.", None, True, 1))]
+        if self.mode == "long-en":
+            text = "Clear original captions follow the speaker. Old lines never cover the next sentence."
+            tokens = re.findall(r"\S+\s*", text)
+            width = 10.8 / len(tokens)
+            words = [(index * width, (index + 1) * width, token.strip())
+                     for index, token in enumerate(tokens)]
+            return [(10.8, (0., 10.8, text, words, True, 1))]
         if self.mode == "long":
             text = "这是一段用于验证字幕在窄屏和放大字号后仍保持完整短句的原文内容，所有文字都应该在对应语音时间内显示，而不是被裁切或挤成很多行。"
             width = 10.8 / len(text)
@@ -195,7 +203,7 @@ def main():
         @webui.app.post("/__fixture/scenario")
         async def fixture_scenario(request: Request):
             mode = (await request.json())["mode"]
-            if mode not in (*media, "withdrawn", "live-normal", "live-gap",
+            if mode not in (*media, "withdrawn", "long-en", "live-normal", "live-gap",
                             "recovery-network", "recovery-auth", "recovery-live",
                             "live-no-caption", "live-auth"):
                 raise ValueError("Unknown offline scenario")
