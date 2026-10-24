@@ -55,7 +55,7 @@ def main():
                     page.locator("#cloudState").filter(has_text="尚未配置").wait_for()
                     page.get_by_role("button", name="关闭设置", exact=True).click()
                 else:
-                    assert page.locator("#" + action).is_visible()
+                    assert page.locator("#" + action).is_visible(), {"action": action, "snapshot": snapshot(page)}
                     page.locator("#" + action).click()
                 stopped = wait_state(page, lambda state: state["active"] == 0)
                 page.wait_for_timeout(3000)
@@ -81,8 +81,10 @@ def main():
             # A browser HLS failure uses the first shared attempt. A subsequent
             # ASR network failure may consume only the remaining second attempt.
             failed_fragments = []
+            fragment_requests = []
 
             def fail_one_fragment(route):
+                fragment_requests.append(time.monotonic())
                 if not failed_fragments:
                     failed_fragments.append(time.monotonic())
                     route.fulfill(status=503, body="offline fixture source unavailable")
@@ -97,11 +99,22 @@ def main():
             wait_state(page, lambda state: state["active"] == 0, timeout=15)
             page.wait_for_timeout(3000)
             mixed = request("/__fixture/state")
+            page.locator("#settingsBtn").click()
+            page.get_by_role("tab", name="更多", exact=True).click()
+            page.locator("#logBtn").click()
+            diagnostics = page.locator("#logText").input_value()
             assert len(failed_fragments) == 1
+            assert len(fragment_requests) == 2, fragment_requests
+            assert fragment_requests[1] - fragment_requests[0] >= .85, fragment_requests
             assert mixed["started"] == before + 2, mixed["started"] - before
+            assert "fragLoadError" in diagnostics, diagnostics
+            assert "recovery_wait: media 1/2" in diagnostics, diagnostics
+            assert "recovery_wait: recognition 2/2" in diagnostics, diagnostics
             results.append({"case": "media-and-recognition-share-two-attempts", "passed": True,
                             "injected_media_failures": 1, "recognizers_started": 2,
-                            "status": snapshot(page)["status"]})
+                            "fragment_requests": len(fragment_requests),
+                            "observed_media_backoff_seconds": fragment_requests[1] - fragment_requests[0],
+                            "status": snapshot(page)["status"], "public_diagnostics": diagnostics})
             page.unroute(pattern, fail_one_fragment)
             assert not errors, errors
         finally:
