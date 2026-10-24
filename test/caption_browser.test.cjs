@@ -53,6 +53,31 @@ function endedSession(reason){
  c.receiveMessage(reason === undefined ? {type:'end'} : {type:'end',reason});
  return c;
 }
+function terminalCloseSession(reason,{awaitingTimeline=false}={}){
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:false}]]);
+ const recoveries=[];
+ const c={generation:1,connectionGeneration:1,terminalReceived:false,recognitionOnlyStopped:false,
+   audioClockPts:awaitingTimeline?0:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:msg=>msg,
+   playbackGuard:{done:false},document:{getElementById:id=>elements.get(id)},
+   originalCaptionMode:true,isHls:false,currentEl:{classList:{contains:()=>false}},
+   cloudResumeRequired:false,setStatus(){},playStarted:false,playbackLimit:5,holdingForBuffer:false,
+   uiPaused:false,player:{currentTime:8,play(){return Promise.resolve();}},
+   recoveryController:{pending:null,cancelled:false},activeInput:'local.mp4',sharedViewerActive:false,
+   logEvent(){},scheduleSessionRecovery(...args){recoveries.push(args);return {status:'scheduled'};},
+   connect(){},showCaptionRecovery(){},startBtn:{style:{}},stopBtn:{style:{}},shareCopyBtn:{style:{}},
+   shareAddressEl:{hidden:false},ws:null};
+ c.ws={close(code,reason){this.closeCode=code;this.closeReason=reason;this.onclose({code:code??1005});}};
+ const closeStart=html.indexOf('    ws.onclose = (event) => {');
+ const closeEnd=html.indexOf('\n    };',closeStart)+'\n    };'.length;
+ vm.runInNewContext(html.slice(closeStart,closeEnd),c);
+ const receiveStart=html.indexOf('    function receiveMessage(input) {');
+ const receiveEnd=html.indexOf('    ws.onmessage = ',receiveStart);
+ vm.runInNewContext(html.slice(receiveStart,receiveEnd),c);
+ c.receiveMessage({type:'end',reason});
+ if(awaitingTimeline)c.ws.onclose({code:1005});
+ return {context:c,recoveries};
+}
 function playBrowser({position=2,pauseStartedAt=0,now=3000,readyState=1}={}){
  const b=browser(),c=b.context,listeners={};
  Object.assign(c,{pauseStartedAt,uiPaused:true,cloudResumeRequired:false,connectionGeneration:1,recognitionOnlyStopped:false,
@@ -95,6 +120,20 @@ test('continuous unprepared seeks ask once and restart only at the final positio
 test('a short local resume clears its pause clock and uses the existing socket',()=>{const b=playBrowser();b.play();assert.equal(b.context.pauseStartedAt,null);assert.deepEqual(b.context.ws.messages,['resume']);assert.equal(b.context.reconnected,undefined);});
 test('a completed worker end marks local original captions reusable',()=>{const c=endedSession('completed');assert.equal(c.originalCaptionsComplete,true);assert.equal(c.playbackLimit,Infinity);assert.equal(c.playbackGuard.done,true);});
 test('cancelled, failed, and legacy worker ends do not claim completion or unbounded media',()=>{for(const reason of ['cancelled','error',undefined]){const c=endedSession(reason);assert.equal(c.originalCaptionsComplete,false);assert.equal(c.playbackLimit,5);assert.equal(c.playbackGuard.done,false);}});
+test('a terminal worker end never schedules another recovery from its socket close',()=>{
+ for(const reason of ['completed','cancelled','error']){
+  const {context,recoveries}=terminalCloseSession(reason);
+  assert.equal(recoveries.length,0,`${reason} end must not schedule recovery`);
+  assert.equal(context.ws.closeCode,1000);
+  assert.equal(context.terminalReceived,true);
+ }
+});
+test('a terminal end waiting for its media timeline still suppresses close recovery',()=>{
+ const {context,recoveries}=terminalCloseSession('completed',{awaitingTimeline:true});
+ assert.equal(recoveries.length,0);
+ assert.deepEqual(context.queuedMediaMessages.map(message=>message.type),['end']);
+ assert.equal(context.terminalReceived,true);
+});
 test('long English captions wrap to two lines on a narrow player',()=>{const b=browser({playerWidth:260,fontSize:30});const sentence='This complete English caption should keep its words and remain easy to read on a narrow player.';const text=[sentence,sentence].join(' ');const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=25),segments);assert.equal(segments.map(s=>s.text).join(' ').replace(/\s+/g,' '),text.replace(/\s+/g,' '));});
 
 test('resizing a pending queue reapplies its budget without replacing the current page',()=>{const p=new CaptionPresenter();p.enqueue({sentence_id:1,beg:0,text:'第一句完整的字幕。'});const current=p.tick(0,0);p.enqueue({sentence_id:2,beg:0,text:'这是一段较长的字幕用于检查放大字号之后待显示分页的总阅读时间仍然受到限制不会无限积压。'.repeat(3)});p.setColumns(12);assert.ok(p.current.text.startsWith('第一句'));assert.ok(p.queue.reduce((n,c)=>n+c.hold,0)<=14000);assert.equal(current.text,'第一句完整的字幕。');});

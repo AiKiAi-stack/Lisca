@@ -1267,9 +1267,11 @@
       }
     }
 
+    let terminalReceived = false;
     ws.onopen = () => { logEvent('ws_open', ''); setStatus('已连接，引擎加载中…'); };
     function receiveMessage(input) {
       if (generation !== connectionGeneration || recognitionOnlyStopped) return;
+      if (input.type === 'end') terminalReceived = true;
       if (input.type === 'timeline') {
         audioClockPts = input.audio_pts;
         flushMediaClock();
@@ -1406,11 +1408,12 @@
           holdingForBuffer = false;
           player.play().catch(() => {});
         }
-        ws.close();
+        ws.close(1000, 'terminal-end');
       }
     }
     ws.onmessage = (e) => receiveMessage(JSON.parse(e.data));
     ws.onerror = () => {
+      if (terminalReceived) return;
       logEvent('ws_error', '连接失败');
       if (originalCaptionMode && !sharedViewerActive) {
         const recovery = scheduleSessionRecovery('recognition', true, () => {
@@ -1425,7 +1428,7 @@
     };
     ws.onclose = (event) => {
       logEvent('ws_close', '');
-      if (event.code !== 1000 && originalCaptionMode && !sharedViewerActive
+      if (!terminalReceived && event.code !== 1000 && originalCaptionMode && !sharedViewerActive
           && !recognitionOnlyStopped && !recoveryController.cancelled) {
         const recovery = scheduleSessionRecovery('recognition', true, () => {
           connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
