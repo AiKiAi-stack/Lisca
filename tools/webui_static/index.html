@@ -953,6 +953,8 @@
       words: msg.words?.map(([beg, end, text]) => [beg + offset,
         Number.isFinite(end) ? end + offset : end, text])};
     if (msg.type === 'buffer') return {...msg, play_at: msg.play_at + offset,
+      local_silence_from: Number.isFinite(msg.local_silence_from)
+        ? msg.local_silence_from + offset : msg.local_silence_from,
       local_silence_through: Number.isFinite(msg.local_silence_through)
         ? msg.local_silence_through + offset : msg.local_silence_through};
     if (msg.type === 'ready' && Number.isFinite(msg.start_at))
@@ -1233,6 +1235,7 @@
         const revision = Number.isFinite(msg.revision) ? msg.revision : 0;
         if ((captionPresenter.seen.get(String(msg.sentence_id)) ?? -1) > revision) return;
         captionPresenter.remove(msg.sentence_id, revision);
+        playbackGuard.removeCaption(msg.sentence_id);
         const removed = new Set(subs.filter(s => s.sentenceId === msg.sentence_id).map(s => s.historyItem));
         removed.forEach(item => item?.remove());
         historyItems = historyItems.filter(item => !removed.has(item));
@@ -1242,8 +1245,11 @@
       } else if (msg.type === 'subtitle') {
         const accepted = onSubtitle(msg);
         if (accepted) {
-          if (!msg.translated)
-            playbackGuard.progress(msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg, performance.now());
+          if (!msg.translated) {
+            const beg = Number.isFinite(msg.beg) ? msg.beg : msg.words?.[0]?.[0];
+            const end = msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg;
+            playbackGuard.captionProgress(msg.sentence_id, beg, end, performance.now());
+          }
           if (msg.text) {
             const firstSpeech = !captionHasSpeech;
             captionHasSpeech = true;
@@ -1254,7 +1260,8 @@
       } else if (msg.type === 'preview') {
         onPreview(msg);
       } else if (msg.type === 'buffer') {
-        if (Number.isFinite(msg.local_silence_through)) playbackGuard.verifiedSilence(msg.local_silence_through, performance.now());
+        if (Number.isFinite(msg.local_silence_from) && Number.isFinite(msg.local_silence_through))
+          playbackGuard.verifiedSilence(msg.local_silence_from, msg.local_silence_through, performance.now());
         if (!sharedViewerActive) {
           playbackLimit = Number.isFinite(msg.play_at) ? msg.play_at : playbackLimit;
           syncPlaybackToBuffer();
