@@ -144,7 +144,8 @@ class RecognitionFixture:
 
 
 def main():
-    directory = ROOT / "logs" / "original-release-fixture"
+    directory = Path(os.environ.get("STREAM_ASR_FIXTURE_DIR",
+                                    str(ROOT / "logs" / "original-release-fixture")))
     directory.mkdir(parents=True, exist_ok=True)
     media = {"normal": (8, False, 0, True), "long": (12, False, 0, True),
              "silent": (20, True, 0, True), "controls": (40, False, 0, True),

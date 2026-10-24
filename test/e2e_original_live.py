@@ -52,6 +52,7 @@ def main(mode, seconds):
             while time.monotonic() - begun < seconds:
                 sample = snapshot(page)
                 sample.update(page.locator("video").evaluate("video=>({ready_state:video.readyState,ended:video.ended})"))
+                sample["source_buffer_status"] = page.locator("#sourceBufferStatus").inner_text() if page.locator("#sourceBufferStatus").count() else None
                 sample["wall_seconds"] = time.monotonic() - begun
                 samples.append(sample)
                 page.wait_for_timeout(50)
@@ -61,8 +62,14 @@ def main(mode, seconds):
                 for current, following in zip(samples, samples[1:])
                 if current["paused"] and current["ready_state"] >= 3
                 and "等待" in current["status"] and "字幕" in current["status"])
+            source_wait = sum(
+                following["wall_seconds"] - current["wall_seconds"]
+                for current, following in zip(samples, samples[1:])
+                if current["ready_state"] < 3 and not current["paused"])
             frames = observed["frames"]
             result.update({"application_wait_seconds": round(application_wait, 3),
+                           "source_wait_seconds": round(source_wait, 3),
+                           "observed_wall_seconds": round(samples[-1]["wall_seconds"], 3),
                            "media_advance_seconds": round(samples[-1]["time"]-samples[0]["time"], 3),
                            "source_wait_events": len(observed["waiting"]),
                            "pause_events": observed["pauses"],
