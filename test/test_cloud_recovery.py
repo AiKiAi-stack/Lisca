@@ -1,6 +1,8 @@
 """Recovery behavior through the owner HTTP session and WebSocket interfaces."""
 import os
 import sys
+import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -315,8 +317,10 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
             nonlocal started
             with counts_lock:
                 started += 1
+                source_number = started
                 all_sources_started.notify_all()
-            release_sources.wait(timeout=10)
+            if source_number <= 8:
+                release_sources.wait(timeout=10)
             return
             yield b"\x01" * 3200
 
@@ -344,8 +348,14 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
         }).json()
         try:
             with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
-                rejected = [ws.receive_json(), ws.receive_json()]
-            assert rejected == [
+                received = []
+                while True:
+                    event = ws.receive_json()
+                    received.append(event)
+                    if event["type"] == "end":
+                        break
+            terminal = [event for event in received if event["type"] in ("error", "end")]
+            assert terminal == [
                 {"type": "error", "failure_category": "capacity", "retryable": False,
                  "message": "后台识别任务达到安全上限，已有任务仍在关闭；请稍后重试"},
                 {"type": "end", "reason": "error"},
@@ -356,6 +366,31 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
             release_sources.set()
             with all_sources_closed:
                 assert all_sources_closed.wait_for(lambda: closed == started, timeout=3)
+
+        # The worker slots remain occupied until each blocked source has
+        # actually closed. Once they unwind, the public session path admits a
+        # fresh worker instead of leaking capacity permanently.
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            ticket = client.post("/api/cloud/sessions", json={
+                "mode": "transcribe", "url": "https://media.test/live.mp4",
+                "source": "auto",
+            }).json()
+            with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+                reopened_events = []
+                while True:
+                    event = ws.receive_json()
+                    reopened_events.append(event)
+                    if event["type"] == "end":
+                        break
+            reopened_errors = [event for event in reopened_events if event["type"] == "error"]
+            if not any(event.get("failure_category") == "capacity" for event in reopened_errors):
+                break
+            time.sleep(0.01)
+        assert reopened_errors, "a released worker slot did not admit a public session"
+        assert reopened_errors[0].get("failure_category") is None
+        with all_sources_closed:
+            assert all_sources_closed.wait_for(lambda: closed == started, timeout=2)
 
 
 def test_ws_caption_identity_capacity_keeps_existing_finals_and_reports_incomplete(monkeypatch):

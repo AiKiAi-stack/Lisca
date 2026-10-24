@@ -65,12 +65,14 @@ _MAX_WS_EVENT_BACKLOG = 2048
 _MAX_SESSION_CAPTIONS = 20_000
 _MAX_SESSION_CAPTION_VARIANTS = 8
 _MAX_PENDING_CAPTIONS = 2_048
+_MAX_ACTIVE_RECOGNITION_WORKERS = 8
 logger = logging.getLogger("webui")  # 会话生命周期 INFO 日志（用户可见）
 _SHARES: dict[str, LiveShare] = {}
 _SHARE_LOCK = threading.RLock()
 _CLOUD = CloudConfigStore(os.path.join(os.path.dirname(UPLOAD_DIR), ".data", "cloud.bin"))
 _CLOUD_JOBS: dict = {}
 _CLOUD_LOCK = threading.RLock()
+_ACTIVE_RECOGNITION_WORKERS = threading.BoundedSemaphore(_MAX_ACTIVE_RECOGNITION_WORKERS)
 
 
 class SessionCapacityError(RuntimeError):
@@ -1243,27 +1245,52 @@ async def ws_endpoint(ws: WebSocket):
                 error_event.update(failure_category="capacity", retryable=False)
             put(error_event)
         finally:
-            if translation:
-                translation.close()
-            if engine is not None and callable(getattr(engine, "close", None)):
-                try:
-                    engine.close()
-                except Exception as exc:  # noqa: BLE001 - 断开连接时仍需结束会话
-                    logger.warning("引擎关闭失败: %s", exc)
+            try:
+                if translation:
+                    try:
+                        translation.close()
+                    except Exception:  # noqa: BLE001 - release worker slot after cleanup failure
+                        logger.warning("翻译器关闭失败")
+                if engine is not None and callable(getattr(engine, "close", None)):
+                    try:
+                        engine.close()
+                    except Exception:  # noqa: BLE001 - 断开连接时仍需结束会话
+                        logger.warning("引擎关闭失败")
+                if put in _LOG_SINKS:
+                    _LOG_SINKS.remove(put)
+                logger.info("会话结束")
+                if worker_failed:
+                    terminal_reason = "error"
+                elif overflowed.is_set():
+                    terminal_reason = "error"
+                elif stop.is_set():
+                    terminal_reason = "cancelled"
+                elif normal_completion:
+                    terminal_reason = "completed"
+                put({"type": "end", "reason": terminal_reason})
+            finally:
+                # Keep the slot until the actual worker has released its source,
+                # ASR and event sink, even if the owner WebSocket already closed.
+                _ACTIVE_RECOGNITION_WORKERS.release()
+
+    if not _ACTIVE_RECOGNITION_WORKERS.acquire(blocking=False):
+        message = "后台识别任务达到安全上限，已有任务仍在关闭；请稍后重试"
+        logger.warning("后台识别任务达到安全上限，拒绝新任务")
+        if put in _LOG_SINKS:
+            _LOG_SINKS.remove(put)
+        put({"type": "error", "failure_category": "capacity", "retryable": False,
+             "message": message})
+        put({"type": "end", "reason": "error"})
+    else:
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except RuntimeError:
+            _ACTIVE_RECOGNITION_WORKERS.release()
             if put in _LOG_SINKS:
                 _LOG_SINKS.remove(put)
-            logger.info("会话结束")
-            if worker_failed:
-                terminal_reason = "error"
-            elif overflowed.is_set():
-                terminal_reason = "error"
-            elif stop.is_set():
-                terminal_reason = "cancelled"
-            elif normal_completion:
-                terminal_reason = "completed"
-            put({"type": "end", "reason": terminal_reason})
-
-    threading.Thread(target=worker, daemon=True).start()
+            put({"type": "error", "failure_category": "capacity", "retryable": False,
+                 "message": "无法创建后台识别任务，请稍后重试"})
+            put({"type": "end", "reason": "error"})
 
     try:
         while True:
