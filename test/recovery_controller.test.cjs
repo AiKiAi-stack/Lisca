@@ -1,5 +1,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
 const {RecoveryController,disableHlsAutomaticRetries}=require('../tools/webui_static/recovery_controller.js');
 
 function clock(){
@@ -42,6 +44,27 @@ test('nonretryable failures do not wait and cancellation interrupts a pending re
   assert.equal(timers.size,0);
   timers.advance(5000);
   assert.deepEqual(actions,[]);
+});
+
+test('default retry timers keep the browser global receiver',()=>{
+  const source=fs.readFileSync(require.resolve('../tools/webui_static/recovery_controller.js'),'utf8');
+  const browserGlobal={receiverTag:'browser-window',scheduled:[],cancelled:[]};
+  browserGlobal.setTimeout=function(callback,delay){
+    assert.equal(this.receiverTag,'browser-window','setTimeout lost its Window receiver');
+    this.scheduled.push({callback,delay});return 73;
+  };
+  browserGlobal.clearTimeout=function(timerId){
+    assert.equal(this.receiverTag,'browser-window','clearTimeout lost its Window receiver');
+    this.cancelled.push(timerId);
+  };
+  vm.createContext(browserGlobal);
+  vm.runInContext(source,browserGlobal);
+  const controller=new browserGlobal.RecoveryController();
+  controller.begin();
+  assert.equal(controller.schedule('recognition',true,()=>{}).delayMs,1000);
+  assert.deepEqual(browserGlobal.scheduled.map(job=>job.delay),[1000]);
+  controller.cancel();
+  assert.deepEqual(browserGlobal.cancelled,[73]);
 });
 
 test('coincident media and recognition failures resolve to one full-session recovery',()=>{

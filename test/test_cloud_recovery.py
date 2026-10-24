@@ -226,3 +226,74 @@ def test_no_progress_watchdog_is_nonretryable_through_public_websocket(monkeypat
     assert error["retryable"] is False
     assert error["message"].startswith("识别连续 15 秒没有字幕或静音处理进展")
     assert events[-1] == {"type": "end", "reason": "error"}
+
+
+def test_ws_event_backlog_overflow_is_visible_and_not_normal_completion(monkeypatch):
+    import asyncio
+    import threading
+    from collections import deque
+
+    monkeypatch.setattr(webui, "_MAX_WS_EVENT_BACKLOG", 4, raising=False)
+    monkeypatch.setattr(webui, "_SERVER_LOGS", deque())
+    send_json = webui.WebSocket.send_json
+    delayed = {"done": False}
+
+    async def delay_first_owner_send(socket, data, mode="text"):
+        if socket.scope["path"] == "/ws" and not delayed["done"]:
+            delayed["done"] = True
+            await asyncio.sleep(0.1)
+        await send_json(socket, data, mode)
+
+    monkeypatch.setattr(webui.WebSocket, "send_json", delay_first_owner_send)
+    emitted = {"count": 0}
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            yield b"\x01" * 3200
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            return (None, None, "", None)
+
+        def poll(self):
+            if emitted["count"] >= 100:
+                return (None, None, "", None)
+            emitted["count"] += 1
+            index = emitted["count"]
+            return (index * 0.1, index * 0.1 + 0.1, f"caption {index}", None,
+                    True, index)
+
+        def finish(self):
+            return (None, None, "", None)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "mode": "transcribe", "url": "https://media.test/live.mp4",
+            "source": "auto",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    error = next(event for event in events if event["type"] == "error")
+    assert error["failure_category"] == "capacity"
+    assert error["retryable"] is False
+    assert events[-1] == {"type": "end", "reason": "error"}
+    assert emitted["count"] < 100
+    assert "TEST_ONLY_KEY" not in str(events)
