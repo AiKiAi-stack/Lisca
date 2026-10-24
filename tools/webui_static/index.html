@@ -73,6 +73,7 @@
 <script src="/hls.min.js"></script>
 <script src="/caption_presenter.js"></script>
 <script src="/playback_guard.js"></script>
+<script src="/recovery_controller.js"></script>
 <script>
   const urlEl = document.getElementById('url');
   const engineEl = document.getElementById('engine');
@@ -95,6 +96,27 @@
   let connectionGeneration = 0;
   let pendingStartAt = null;
   let activeInput = '';
+  const recoveryController = new RecoveryController();
+
+  function scheduleSessionRecovery(kind, retryable, recover, generation = connectionGeneration) {
+    const result = recoveryController.schedule(kind, retryable, info => {
+      if (generation !== connectionGeneration || recognitionOnlyStopped) return;
+      recover(info);
+    });
+    if (result.status === 'scheduled' || result.status === 'waiting') {
+      const attempt = result.attempt;
+      const delaySeconds = result.delayMs / 1000;
+      setStatus(`正在恢复${kind === 'media' ? '直播源' : '识别'}（${attempt}/${result.maxAttempts}，${delaySeconds} 秒后）…`);
+      logEvent('recovery_wait', `${kind} ${attempt}/${result.maxAttempts}; wait=${delaySeconds}s`);
+    }
+    return result;
+  }
+  function markSessionRecoveryProgress(coverageTime) {
+    if (!Number.isFinite(coverageTime) || !Number.isFinite(player.currentTime)) return false;
+    return recoveryController.markProgress(performance.now(), {
+      mediaTime: player.currentTime, coverageTime,
+    });
+  }
 
   async function cloudRequest(path, method = 'GET', data) {
     const response = await fetch(path, {method, headers:{'Content-Type':'application/json'},
@@ -129,10 +151,27 @@
     finally { button.disabled = false; }
   };
   document.getElementById('clearCloud').onclick = async () => {
+    const generation = ++connectionGeneration;
+    recoveryController.cancel();
+    recognitionOnlyStopped = true;
+    cloudResumeRequired = false;
+    cloudPlayback = false;
+    originalCaptionMode = false;
+    const activeSocket = ws;
+    ws = null;
+    activeCloudSession = null;
+    activeShareToken = null;
+    if (activeSocket) {
+      activeSocket.onmessage = null;
+      activeSocket.onclose = null;
+      activeSocket.close();
+    }
     try {
       await cloudRequest('/api/cloud', 'DELETE');
+      if (generation !== connectionGeneration) return;
       document.getElementById('apiKey').value = '';
       await refreshCloud();
+      if (generation !== connectionGeneration) return;
       setStatus('配置已删除，云端会话已停止');
     } catch (error) { cloudStateEl.textContent = error.message; }
   };
@@ -835,13 +874,15 @@
     const longPause = pauseStartedAt != null && performance.now() - pauseStartedAt >= 15000;
     const disconnected = !ws || ws.readyState > 1;
     if (!cloudResumeRequired && !(localCloud && pauseStartedAt != null && (longPause || disconnected))) return false;
+    const retryResume = cloudResumeRequired;
     cloudResumeRequired = false;
     pauseStartedAt = null;
     const position = player.currentTime;
     playStarted = false;
     holdingForSync = true;
     player.pause();
-    connect(activeInput, null, position);
+    if (retryResume) connect(activeInput, null, position, {automaticRecovery:true});
+    else connect(activeInput, null, position);
     return true;
   }
 
@@ -955,7 +996,9 @@
     return msg;
   }
 
-  async function connect(forceUrl, shareToken = null, startAt = 0) {
+  async function connect(forceUrl, shareToken = null, startAt = 0, options = {}) {
+    const automaticRecovery = options.automaticRecovery === true;
+    recoveryController.begin({preserveAttempts: automaticRecovery});
     const generation = ++connectionGeneration;
     cancelPendingLocalSeek();
     pendingSeekOrigin = null;
@@ -1069,6 +1112,9 @@
     let params;
     if (!sharedViewerActive) {
       if (cloudPlayback) {
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        setStatus('正在建立云端识别会话…');
         try {
           const ticket = await cloudRequest('/api/cloud/sessions', 'POST', {url, mode:'transcribe', source:sourceLanguageEl.value, start_at:startAt});
           if (generation !== connectionGeneration) {
@@ -1077,6 +1123,9 @@
           }
           activeCloudSession = ticket.session;
         } catch (error) {
+          if (generation !== connectionGeneration) return;
+          startBtn.style.display = 'inline-block';
+          stopBtn.style.display = 'none';
           setStatus(error.message, true);
           currentEl.textContent = error.message;
           currentEl.classList.add('err');
@@ -1143,6 +1192,7 @@
       // Retain downloaded A/V while ASR finalizes; a ten-second forward buffer
       // and zero back buffer lose media during a long recognition wait.
       hlsPlayer = new Hls({
+        ...disableHlsAutomaticRetries(Hls.DefaultConfig),
         liveSyncDurationCount: 3,
         lowLatencyMode: false,
         maxLiveSyncPlaybackRate: 1,
@@ -1157,7 +1207,6 @@
         : `/video?url=${encodeURIComponent(url)}`);
       hlsPlayer.attachMedia(player);
       const currentHls = hlsPlayer;
-      let mediaRecoveryAttempts = 0;
       hlsPlayer.on(Hls.Events.INIT_PTS_FOUND, (_evt, data) => {
         if (hlsPlayer !== currentHls) return;
         if (data.id !== 'main' || videoClockPts != null) return;
@@ -1168,21 +1217,29 @@
         if (hlsPlayer !== currentHls) return;
         if (!data.fatal) return;
         logEvent('hls_error', `${data.type}/${data.details}`);
-        if (mediaRecoveryAttempts >= 2) {
-          if (!sharedViewerActive && !recognitionOnlyStopped) showCaptionRecovery('直播源恢复失败（已重试 2 次），识别已停止；请换源或重试');
-          else setStatus('直播源恢复失败，请重新加入或联系主机', true);
-          if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-          document.getElementById('playOnly').hidden = true;
+        const retryable = data.type === Hls.ErrorTypes.NETWORK_ERROR
+          || data.type === Hls.ErrorTypes.MEDIA_ERROR;
+        const recovery = scheduleSessionRecovery('media', retryable, () => {
+          if (hlsPlayer !== currentHls) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) currentHls.startLoad();
+          else currentHls.recoverMediaError();
+        }, generation);
+        if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
+        if (sharedViewerActive) {
+          setStatus(recovery.status === 'exhausted'
+            ? '直播源恢复失败（已重试 2 次），请重新加入或联系主机'
+            : '直播源发生无法自动恢复的错误，请重新加入或联系主机', true);
+          if (hlsPlayer === currentHls) { currentHls.destroy(); hlsPlayer = null; }
           return;
         }
-        mediaRecoveryAttempts++;
-        setStatus(`正在恢复直播源（${mediaRecoveryAttempts}/2）…`);
-        logEvent('media_recovery', `${mediaRecoveryAttempts}/2`);
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && hlsPlayer) {
-          hlsPlayer.startLoad();  // 网络抖动自动重连
-        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hlsPlayer) {
-          hlsPlayer.recoverMediaError();
-        } else {
+        if (!recognitionOnlyStopped) {
+          showCaptionRecovery(recovery.status === 'exhausted'
+            ? '媒体和识别共用的恢复额度已用完；可重试字幕或仅播放'
+            : '直播源发生无法自动恢复的错误；可重试字幕或仅播放');
+        }
+        if (hlsPlayer === currentHls) { currentHls.destroy(); hlsPlayer = null; }
+        document.getElementById('playOnly').hidden = true;
+        if (!retryable) {
           currentEl.textContent = '⚠ 直播流播放失败（源可能失效，换个频道）';
           currentEl.classList.add('err');
         }
@@ -1236,10 +1293,15 @@
         if (msg.text) captionHasSpeech = true;
         playbackGuard.progress(msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg, performance.now());
         onSubtitle(msg);
+        markSessionRecoveryProgress(msg.end ?? msg.words?.at(-1)?.[1]);
       } else if (msg.type === 'preview') {
         onPreview(msg);
+        markSessionRecoveryProgress(msg.end);
       } else if (msg.type === 'buffer') {
-        if (Number.isFinite(msg.local_silence_through)) playbackGuard.progress(msg.local_silence_through, performance.now());
+        if (Number.isFinite(msg.local_silence_through)) {
+          playbackGuard.progress(msg.local_silence_through, performance.now());
+          markSessionRecoveryProgress(msg.local_silence_through);
+        }
         if (!sharedViewerActive) {
           playbackLimit = Number.isFinite(msg.play_at) ? msg.play_at : playbackLimit;
           syncPlaybackToBuffer();
@@ -1275,8 +1337,26 @@
       } else if (msg.type === 'log') {
         logEvent('server', msg.line);  // 服务端后台日志（ticket-14）
       } else if (msg.type === 'error') {
+        if (originalCaptionMode && !sharedViewerActive) {
+          const recovery = scheduleSessionRecovery('recognition', msg.retryable === true, () => {
+            if (uiPaused && !/^https?:/i.test(activeInput)) {
+              cloudResumeRequired = true;
+              setStatus('识别连接暂时中断；继续播放时会按恢复预算重新连接');
+              return;
+            }
+            connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
+              {automaticRecovery:true});
+          }, generation);
+          if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
+          if (recovery.status === 'exhausted') {
+            showCaptionRecovery('媒体和识别共用的恢复额度已用完：' + msg.message);
+            return;
+          }
+          if (msg.retryable === true && holdCaptionForCloudReconnect()) return;
+          showCaptionRecovery('语音识别失败：' + msg.message);
+          return;
+        }
         if (holdCaptionForCloudReconnect()) return;
-        if (originalCaptionMode && !sharedViewerActive) { showCaptionRecovery('语音识别失败：' + msg.message); return; }
         currentEl.textContent = '⚠ ' + msg.message;
         currentEl.classList.add('err');
         setStatus('出错', true);
@@ -1296,6 +1376,9 @@
             : msg.reason === 'error' ? '识别未完成，可重试或仅播放'
             : '识别结束状态未确认，可重试或仅播放');
         }
+        if (recoveryController.pending) {
+          setStatus(`识别连接已结束，${recoveryController.pending.delayMs / 1000} 秒后继续恢复（${recoveryController.pending.attempt}/${recoveryController.maxAttempts}）…`);
+        }
         playStarted = true;  // 同上（静默视频等零字幕场景）
         // Only a successful drain proves there is no more ASR waterline to wait for.
         if (processingComplete) playbackLimit = Infinity;
@@ -1307,9 +1390,31 @@
       }
     }
     ws.onmessage = (e) => receiveMessage(JSON.parse(e.data));
-    ws.onerror = () => { logEvent('ws_error', '连接失败'); setStatus('连接失败', true); };
+    ws.onerror = () => {
+      logEvent('ws_error', '连接失败');
+      if (originalCaptionMode && !sharedViewerActive) {
+        const recovery = scheduleSessionRecovery('recognition', true, () => {
+          connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
+            {automaticRecovery:true});
+        }, generation);
+        if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
+        showCaptionRecovery('识别连接失败，自动恢复额度已用完；可手动重试或仅播放');
+        return;
+      }
+      setStatus('连接失败', true);
+    };
     ws.onclose = (event) => {
       logEvent('ws_close', '');
+      if (event.code !== 1000 && originalCaptionMode && !sharedViewerActive
+          && !recognitionOnlyStopped && !recoveryController.cancelled) {
+        const recovery = scheduleSessionRecovery('recognition', true, () => {
+          connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
+            {automaticRecovery:true});
+        }, generation);
+        if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
+        showCaptionRecovery('识别连接异常关闭，自动恢复额度已用完；可手动重试或仅播放');
+        return;
+      }
       if (sharedViewerActive) {
         if (event.code === 4429) setStatus('观众人数已满（最多 3 台设备），请稍后再试', true);
         else if (!currentEl.classList.contains('err')) setStatus('直播已结束或连接已断开');
@@ -1489,6 +1594,7 @@
 
   async function cancelCaptionProcessing(message, onlyPlay = false) {
     const generation = ++connectionGeneration;
+    recoveryController.cancel();
     cancelPendingLocalSeek();
     pendingSeekOrigin = null;
     restoringSeek = null;
@@ -1539,6 +1645,7 @@
   shareAddressEl.onchange = () => { shareCopyBtn.dataset.url = shareAddressEl.value; };
   stopBtn.onclick = async () => {
     const generation = ++connectionGeneration;
+    recoveryController.cancel();
     cancelPendingLocalSeek();
     pendingSeekOrigin = null;
     restoringSeek = null;

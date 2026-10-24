@@ -654,6 +654,12 @@ def playback_guard_js():
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/recovery_controller.js")
+def recovery_controller_js():
+    return FileResponse(os.path.join(STATIC_DIR, "recovery_controller.js"),
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.get("/hls.min.js")
 def hls_js():
     """hls.js（vendored 本地文件，ticket-19：Chrome 原生 HLS 不支持 TS 分片直播源）"""
@@ -1014,7 +1020,7 @@ async def ws_endpoint(ws: WebSocket):
                     if o[0] is not None:
                         emit(o)
                     # 异步引擎（API）积压的句子逐条取出（增量，含 partial）
-                    while True:
+                    while not stop.is_set():
                         o2 = call_provider(engine.poll)
                         if o2[0] is None:
                             break
