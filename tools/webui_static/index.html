@@ -1240,9 +1240,17 @@
         previewSubs = previewSubs.filter(s => s.sentenceId !== msg.sentence_id);
         syncSubtitle();
       } else if (msg.type === 'subtitle') {
-        if (msg.text) captionHasSpeech = true;
-        if (onSubtitle(msg) && !msg.translated)
-          playbackGuard.progress(msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg, performance.now());
+        const accepted = onSubtitle(msg);
+        if (accepted) {
+          if (!msg.translated)
+            playbackGuard.progress(msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg, performance.now());
+          if (msg.text) {
+            const firstSpeech = !captionHasSpeech;
+            captionHasSpeech = true;
+            if (firstSpeech && originalCaptionMode && playStarted && !playbackGuard.degraded && !holdingForBuffer)
+              setStatus('已识别到语音，原文字幕已就绪');
+          }
+        }
       } else if (msg.type === 'preview') {
         onPreview(msg);
       } else if (msg.type === 'buffer') {

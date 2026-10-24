@@ -71,6 +71,51 @@ function playBrowser({position=2,pauseStartedAt=0,now=3000,readyState=1}={}){
  return {context:c,play(){listeners.play();}};
 }
 test('late complete translations appear on the video rather than disappearing',()=>{const b=browser();b.push({});b.tick(0);assert.match(b.current.textContent,/这句译文/);assert.equal(b.late.hidden,true);});
+function originalSessionMessageHandler(){
+ const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const c={generation:1,connectionGeneration:1,recognitionOnlyStopped:false,audioClockPts:null,
+  timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:x=>x,
+  captionRevisions:new Map(),captionPresenter:{seen:new Map(),remove(){}},subs:[],historyItems:[],
+  previewSubs:[],syncSubtitle(){},captionHasSpeech:false,originalCaptionMode:false,playStarted:false,
+  progressCalls:[],playbackGuard:{degraded:false,progress(...args){c.progressCalls.push(args)}},performance:{now:()=>1},
+  acceptSubtitle:true,onSubtitle(){return c.acceptSubtitle},onPreview(){},sharedViewerActive:false,
+  useCaptionBuffer:false,cloudPlayback:true,playbackLimit:null,aligningInitialPlayback:false,isHls:false,holdingForBuffer:false,
+  player:{currentTime:0,play:()=>Promise.resolve()},holdingForSync:false,currentEl:{textContent:'',classList:{contains:()=>false}},
+  setStatus(message){c.status=message},logEvent(){},stallWatchdog(){},setTimeout(){},document:{getElementById:()=>({hidden:false})}};
+ vm.createContext(c);
+ const start=html.indexOf('    function receiveMessage(input)');
+ const end=html.indexOf('    ws.onmessage = (e) => receiveMessage(JSON.parse(e.data));',start);
+ vm.runInContext(html.slice(start,end)+'\nthis.receiveMessage=receiveMessage;',c);
+ return c;
+}
+test('the first speech after a silent ready state clears the stale no-speech status',()=>{
+ const c=originalSessionMessageHandler();
+ c.receiveMessage({type:'ready',original:true,silent:true,buffered:true,delay:.1,start_at:0});
+ assert.equal(c.status,'暂未识别到语音，继续播放');
+ c.receiveMessage({type:'subtitle',beg:4,end:4.5,text:'静音后的第一句原文',is_final:true});
+ assert.equal(c.captionHasSpeech,true);
+ assert.equal(c.status,'已识别到语音，原文字幕已就绪');
+ assert.equal(c.progressCalls.length,1);
+});
+test('a rejected old caption cannot clear the silent-session status or refresh progress',()=>{
+ const c=originalSessionMessageHandler();
+ c.receiveMessage({type:'ready',original:true,silent:true,buffered:true,delay:.1,start_at:0});
+ c.acceptSubtitle=false;
+ c.receiveMessage({type:'subtitle',beg:4,end:4.5,text:'过期的旧会话原文',is_final:true});
+ assert.equal(c.captionHasSpeech,false);
+ assert.equal(c.status,'暂未识别到语音，继续播放');
+ assert.equal(c.progressCalls.length,0);
+});
+test('the first speech does not overwrite a persistent degraded status',()=>{
+ const c=originalSessionMessageHandler();
+ c.receiveMessage({type:'ready',original:true,silent:true,buffered:true,delay:.1,start_at:0});
+ c.playbackGuard.degraded=true;
+ c.status='未能持续获取字幕，可重试';
+ c.receiveMessage({type:'subtitle',beg:4,end:4.5,text:'静音后的第一句原文',is_final:true});
+ assert.equal(c.captionHasSpeech,true);
+ assert.equal(c.status,'未能持续获取字幕，可重试');
+ assert.equal(c.progressCalls.length,1);
+});
 test('provider token drafts never become visible subtitles or a second reading frame',()=>{const b=browser();b.push({is_final:false,end:null,text:'这'});b.tick(0);assert.equal(b.current.textContent,'');assert.equal(b.late.hidden,true);});
 test('a completed cue remains readable after its source interval has expired',()=>{const b=browser();b.context.player.currentTime=1.9;b.push({});b.tick(0);b.context.player.currentTime=2.1;b.tick(100);assert.match(b.current.textContent,/这句译文/);});
 
@@ -124,7 +169,7 @@ test('a new HLS generation maps its first decoder timestamp to the current audio
 test('a stale HLS decoder timestamp cannot remap a replacement source',()=>{const {context:c,hls}=hlsClockMapping();c.hlsPlayer={};hls.handlers.init(null,{id:'main',initPTS:90000,timescale:90000});assert.equal(c.videoClockPts,null);assert.equal(c.offset,0);});
 function mapBufferMessage(msg,offset){const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');const start=html.indexOf('  function offsetMediaMessage(msg, offset) {');const end=html.indexOf('  async function connect(',start);const c={};vm.runInNewContext(html.slice(start,end),c);return c.offsetMediaMessage(msg,offset);}
 test('verified silent coverage follows the remapped HLS media clock',()=>{const mapped=mapBufferMessage({type:'buffer',play_at:8,local_silence_through:7},3);assert.equal(mapped.play_at,11);assert.equal(mapped.local_silence_through,10);});
-function subtitleCoverageRouting(accepted,translated=false){const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');const start=html.indexOf('    function receiveMessage(input) {');const end=html.indexOf('    ws.onmessage = ',start);let progressCalls=0;const c={generation:1,connectionGeneration:1,recognitionOnlyStopped:false,audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,captionHasSpeech:false,playbackGuard:{progress(){progressCalls++;}},performance:{now:()=>20},offsetMediaMessage:msg=>msg,onSubtitle(){return accepted;},onPreview(){},syncPlaybackToBuffer(){}};vm.runInNewContext(html.slice(start,end),c);c.receiveMessage({type:'subtitle',text:'caption',beg:0,end:3,translated});return progressCalls;}
+function subtitleCoverageRouting(accepted,translated=false){const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');const start=html.indexOf('    function receiveMessage(input) {');const end=html.indexOf('    ws.onmessage = ',start);let progressCalls=0;const c={generation:1,connectionGeneration:1,recognitionOnlyStopped:false,audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,captionHasSpeech:false,originalCaptionMode:false,playbackGuard:{degraded:false,progress(){progressCalls++;}},performance:{now:()=>20},offsetMediaMessage:msg=>msg,onSubtitle(){return accepted;},onPreview(){},syncPlaybackToBuffer(){}};vm.runInNewContext(html.slice(start,end),c);c.receiveMessage({type:'subtitle',text:'caption',beg:0,end:3,translated});return progressCalls;}
 test('only accepted original subtitle updates advance live caption coverage',()=>{assert.equal(subtitleCoverageRouting(true),1);assert.equal(subtitleCoverageRouting(false),0);assert.equal(subtitleCoverageRouting(true,true),0);});
 
 function sourceBufferEvents(){const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');const start=html.indexOf('  // 视频诊断（ticket-11/16）');const end=html.indexOf("  player.addEventListener('loadedmetadata'",start);const listeners={},events=[],indicator={hidden:true,textContent:''};const c={player:{currentTime:12,readyState:2,networkState:2,error:null,addEventListener(name,callback){listeners[name]=callback;}},sourceBufferStatusEl:indicator,performance:{now:()=>c.now},now:1000,logEvent(type,detail){events.push({type,detail});},setStatus(){},statusEl:{textContent:''},sourceBufferingSince:null};vm.runInNewContext(html.slice(start,end),c);return {context:c,listeners,events,indicator};}
