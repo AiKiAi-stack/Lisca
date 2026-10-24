@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "dataset": "AISHELL/AISHELL-3@f20d5db4a31fe779ef07bb1af4ea92da5c786622#train",
+  "config": "language=zh; role=fast-speech-listening-candidate; speaker_id=SSB0005; ordered_source_utterance_sha256=9fb154c12a49cb5ef1e8b6fb3c47a73f79d0ba47d228dd3edc1bf07194688273",
+  "sha256": "6ac3ae3417bd23ba862fca14288b0c33cb07be73ad24858778589fa7f49a872e",
+  "seconds": 65.4561875,
+  "items": [
+    {
+      "reference": "将于十一月二十一日早七点在东方明珠塔下跑起",
+      "source_id": "SSB00050014",
+      "source_sha256": "01346e01b6bf135b396cab21fa9a2740b1f29ec052042103167e4ccb915b2cf7",
+      "source_path": "train/wav/SSB0005/SSB00050014.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 7.3769375,
+      "asset_start_seconds": 0.0,
+      "asset_end_seconds": 7.3769375
+    },
+    {
+      "reference": "经广州日报报道后成为了社会热点",
+      "source_id": "SSB00050015",
+      "source_sha256": "a9307af137a1cfb7e6b1312ba60cc9b3466ebd45c0dd563af80c5ec2226ac079",
+      "source_path": "train/wav/SSB0005/SSB00050015.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.4409375,
+      "asset_start_seconds": 7.6269375,
+      "asset_end_seconds": 13.067875
+    },
+    {
+      "reference": "反倒会伤害国家队的长远利益",
+      "source_id": "SSB00050016",
+      "source_sha256": "0f73b83869c0ff2655ee513bda19f3a91acdee3a4c5fd04e4036d5fcfafe19e3",
+      "source_path": "train/wav/SSB0005/SSB00050016.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.266125,
+      "asset_start_seconds": 13.317875,
+      "asset_end_seconds": 17.584
+    },
+    {
+      "reference": "他前天举办粉丝见面会",
+      "source_id": "SSB00050017",
+      "source_sha256": "1ce8dd6761de01fd01899f3969b9c5a4a2aa7391065e9991e7681fc91b6d5d5e",
+      "source_path": "train/wav/SSB0005/SSB00050017.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.861125,
+      "asset_start_seconds": 17.834,
+      "asset_end_seconds": 21.695125
+    },
+    {
+      "reference": "五百五十二万六千零三",
+      "source_id": "SSB00050018",
+      "source_sha256": "2f8b76dea6a8ae3dc67f30eb501349c0f4999a32b8eb64d03a3512cb43c28347",
+      "source_path": "train/wav/SSB0005/SSB00050018.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.2670625,
+      "asset_start_seconds": 21.945125,
+      "asset_end_seconds": 26.2121875
+    },
+    {
+      "reference": "带动服务经济社会发展",
+      "source_id": "SSB00050019",
+      "source_sha256": "31d2cc58881ad3b84fab1027873369b0bd2f0ff96ff206e90c74e93434f60744",
+      "source_path": "train/wav/SSB0005/SSB00050019.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.8199375,
+      "asset_start_seconds": 26.4621875,
+      "asset_end_seconds": 30.282125
+    },
+    {
+      "reference": "该机场紧急处置一起非法干扰航班事件",
+      "source_id": "SSB00050020",
+      "source_sha256": "3c512e669630ad836caca348addf3b72fad610349023d6eb802cf2e5cf1ae89d",
+      "source_path": "train/wav/SSB0005/SSB00050020.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 6.323,
+      "asset_start_seconds": 30.532125,
+      "asset_end_seconds": 36.855125
+    },
+    {
+      "reference": "购买高价项目的客群心态也在发生改变",
+      "source_id": "SSB00050021",
+      "source_sha256": "d7ffa374982350472eed7be34a4988fe3bcb0ad5e388f0a9a6abc8de52b60632",
+      "source_path": "train/wav/SSB0005/SSB00050021.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 7.099,
+      "asset_start_seconds": 37.105125,
+      "asset_end_seconds": 44.204125
+    },
+    {
+      "reference": "广州女孩儿失联剧情反转因诈骗被拘一直隐瞒身份",
+      "source_id": "SSB00050022",
+      "source_sha256": "30bbfe43d675533fa5fa023920197e9cc176592d4ddae45f55765b3c9aaf0e75",
+      "source_path": "train/wav/SSB0005/SSB00050022.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 9.6870625,
+      "asset_start_seconds": 44.454125,
+      "asset_end_seconds": 54.1411875
+    },
+    {
+      "reference": "一百家新型产业公司平均实现营业收入四亿元",
+      "source_id": "SSB00050023",
+      "source_sha256": "bc93f423b44b047ee97590211941965b9ab020391afcea2b6f05ea91be06913c",
+      "source_path": "train/wav/SSB0005/SSB00050023.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 7.308,
+      "asset_start_seconds": 54.3911875,
+      "asset_end_seconds": 61.6991875
+    },
+    {
+      "reference": "除了提高产品品质外",
+      "source_id": "SSB00050024",
+      "source_sha256": "96a434bf83e57e57709025873126180f0be1d5d23504ea00cc2aa9451e691729",
+      "source_path": "train/wav/SSB0005/SSB00050024.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.507,
+      "asset_start_seconds": 61.9491875,
+      "asset_end_seconds": 65.4561875
+    }
+  ],
+  "asset_file": "uploads/acceptance-media/zh-fast-speech-listening-candidate.wav",
+  "asset_sha256": "6ac3ae3417bd23ba862fca14288b0c33cb07be73ad24858778589fa7f49a872e",
+  "asset_frame_count": 1047299,
+  "asset_sample_rate_hz": 16000,
+  "source_audio_seconds": 62.9561875,
+  "inserted_silence_seconds": 2.5,
+  "ordered_source_utterance_sha256": "9fb154c12a49cb5ef1e8b6fb3c47a73f79d0ba47d228dd3edc1bf07194688273",
+  "ordered_reference_items_sha256": "db21e71e9739254e13c6546271abad73be07398fef1dd1375a6abb55a52fc68c",
+  "reference_text_sha256": "54b4c9fd945d4ee924b0758935e5f4ef3c20d5822f5c42cef6a9113afb04e727",
+  "manual_review_pending": true,
+  "manual_review_status": "pending",
+  "manual_review_scope": "Verify transcript-to-audio correspondence, language, and single-speaker identity. For a fast-speech listening candidate, separately decide whether the original recording is naturally fast; no synthetic speed change was applied.",
+  "reference_provenance": {
+    "dataset": "AISHELL/AISHELL-3",
+    "dataset_revision": "f20d5db4a31fe779ef07bb1af4ea92da5c786622",
+    "split": "train",
+    "speaker_id": "SSB0005",
+    "license": "Apache-2.0",
+    "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+    "source_url": "https://huggingface.co/datasets/AISHELL/AISHELL-3",
+    "selection_rule": "First lexicographic speaker ID present in both train/content.txt and spk-info.txt; then numeric utterance suffix order, shortest prefix with at least 300 seconds of decoded source audio.",
+    "transcript_rule": "The source content.txt alternates Chinese character and pinyin tokens; the fixed reference is the even-indexed character token sequence as published."
+  },
+  "reference_origin": "Pinned corpus transcript; not generated by this application's ASR."
+}
