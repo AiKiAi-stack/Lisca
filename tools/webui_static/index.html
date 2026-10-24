@@ -1215,6 +1215,14 @@
         : `/video?url=${encodeURIComponent(url)}`);
       hlsPlayer.attachMedia(player);
       const currentHls = hlsPlayer;
+      const hlsNetworkLoadErrors = new Set([
+        Hls.ErrorDetails.MANIFEST_LOAD_ERROR, Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT,
+        Hls.ErrorDetails.LEVEL_LOAD_ERROR, Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT,
+        Hls.ErrorDetails.FRAG_LOAD_ERROR, Hls.ErrorDetails.FRAG_LOAD_TIMEOUT,
+        Hls.ErrorDetails.KEY_LOAD_ERROR, Hls.ErrorDetails.KEY_LOAD_TIMEOUT,
+        Hls.ErrorDetails.AUDIO_TRACK_LOAD_ERROR, Hls.ErrorDetails.AUDIO_TRACK_LOAD_TIMEOUT,
+        Hls.ErrorDetails.SUBTITLE_LOAD_ERROR, Hls.ErrorDetails.SUBTITLE_TRACK_LOAD_TIMEOUT,
+      ].filter(Boolean));
       hlsPlayer.on(Hls.Events.INIT_PTS_FOUND, (_evt, data) => {
         if (hlsPlayer !== currentHls) return;
         if (data.id !== 'main' || videoClockPts != null || !Number.isFinite(data.initPTS)
@@ -1224,8 +1232,12 @@
       });
       hlsPlayer.on(Hls.Events.ERROR, (_evt, data) => {
         if (hlsPlayer !== currentHls) return;
-        if (!data.fatal) return;
-        logEvent('hls_error', `${data.type}/${data.details}`);
+        const networkLoadFailure = data.type === Hls.ErrorTypes.NETWORK_ERROR
+          && hlsNetworkLoadErrors.has(data.details);
+        if (!data.fatal && !networkLoadFailure) return;
+        const responseCode = Number.isInteger(data.response?.code) ? ` HTTP ${data.response.code}` : '';
+        logEvent('hls_error', `${data.type}/${data.details}${responseCode}`);
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) currentHls.stopLoad();
         const retryable = data.type === Hls.ErrorTypes.NETWORK_ERROR
           || data.type === Hls.ErrorTypes.MEDIA_ERROR;
         const recovery = scheduleSessionRecovery('media', retryable, () => {

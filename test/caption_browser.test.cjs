@@ -248,8 +248,9 @@ test('only-play cancels pending recovery while leaving the media player running'
 test('verified silent audio advances progress without a fabricated subtitle',()=>{const g=new CaptionPlaybackGuard();g.reset({now:0,live:false});g.progress(20,19000);assert.equal(g.tick({now:20000,time:18,limit:20,ready:true}),'none');});
 function recoveryBrowser(){
  const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
+ const Hls=require('../tools/webui_static/hls.min.js');
  const {RecoveryController}=require('../tools/webui_static/recovery_controller.js');
- let now=0,nextId=1;const timers=new Map(),actions=[];
+ let now=0,nextId=1;const timers=new Map(),actions=[],recoveryOrder=[];
  const c={recoveries:0,cancellations:0,sharedViewerActive:false,recognitionOnlyStopped:false,
    originalCaptionMode:true,uiPaused:false,activeInput:'https://stream.test/live.m3u8',
    audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],
@@ -260,28 +261,63 @@ function recoveryBrowser(){
    showCaptionRecovery(){c.cancellations++;},holdCaptionForCloudReconnect(){return false;},
    connect(...args){actions.push(['recognition',args]);},
    document:{getElementById:()=>({hidden:false})},
-   currentEl:{textContent:'',classList:{contains:()=>false,add(){},remove(){}}},
-   Hls:{Events:{ERROR:'error'},ErrorTypes:{NETWORK_ERROR:'network',MEDIA_ERROR:'media'}}};
+   currentEl:{textContent:'',classList:{contains:()=>false,add(){},remove(){}}},Hls};
  c.recoveryController=new RecoveryController({setTimeout:c.setTimeout,clearTimeout:c.clearTimeout});
  c.recoveryController.begin();
- const source={on(_event,callback){c.callback=callback;},startLoad(){c.recoveries++;actions.push(['media']);},
+ const schedule=c.recoveryController.schedule.bind(c.recoveryController);
+ c.recoveryController.schedule=(...args)=>{recoveryOrder.push('schedule');return schedule(...args);};
+ const source={on(_event,callback){c.callback=callback;},stopLoad(){c.stoppedLoads=(c.stoppedLoads||0)+1;recoveryOrder.push('stopLoad');},
+   startLoad(){c.recoveries++;actions.push(['media']);},
    recoverMediaError(){c.recoveries++;actions.push(['media']);},destroy(){c.destroyed=true;}};
  c.hlsPlayer=source;c.currentHls=source;
  vm.createContext(c);
  const helperStart=html.indexOf('  function scheduleSessionRecovery(');
  const helperEnd=html.indexOf('  async function cloudRequest(',helperStart);
  vm.runInContext(html.slice(helperStart,helperEnd),c);
- const mediaStart=html.indexOf('      hlsPlayer.on(Hls.Events.ERROR');
+ const mediaStart=html.indexOf('      const hlsNetworkLoadErrors = new Set([');
  const mediaEnd=html.indexOf('      player.muted = false;  // HLS 直播',mediaStart);
  vm.runInContext(html.slice(mediaStart,mediaEnd),c);
  const wsStart=html.indexOf('    function receiveMessage(input) {');
  const wsEnd=html.indexOf('    ws.onmessage = ',wsStart);
  vm.runInContext(html.slice(wsStart,wsEnd),c);
- return {context:c,actions,mediaFailure(){c.callback(null,{fatal:true,type:'network'});},
+ return {context:c,actions,recoveryOrder,
+   mediaFailure(){c.callback(null,{fatal:true,type:c.Hls.ErrorTypes.NETWORK_ERROR});},
+   mediaLoaderFailure(details,code=503){c.callback(null,{fatal:false,type:c.Hls.ErrorTypes.NETWORK_ERROR,
+     details,response:{code}});},
    recognitionFailure(retryable=true){c.receiveMessage({type:'error',message:'连接中断',retryable});},
    advance(ms){now+=ms;for(const [id,job] of [...timers])if(job.at<=now){timers.delete(id);job.callback();}}};
 }
 test('an old HLS fatal event cannot stop a newly selected source',()=>{const b=recoveryBrowser(),c=b.context;c.hlsPlayer={};b.mediaFailure();assert.equal(c.cancellations,0);assert.equal(c.recoveries,0);});
+test('a nonfatal HLS fragment load failure consumes the shared media recovery budget',()=>{
+ const b=recoveryBrowser(),c=b.context;
+ b.mediaLoaderFailure(c.Hls.ErrorDetails.FRAG_LOAD_ERROR);
+ assert.equal(c.recoveryController.attempts,1);
+ assert.equal(c.recoveryController.pending.delayMs,1000);
+ assert.equal(c.stoppedLoads,1);
+ assert.deepEqual(b.recoveryOrder,['stopLoad','schedule']);
+ b.advance(1000);
+ assert.deepEqual(b.actions.map(action=>action[0]),['media']);
+});
+test('nonfatal HLS manifest, level, fragment, key, and track load errors share the budget',()=>{
+ const Hls=require('../tools/webui_static/hls.min.js');
+ const detailNames=['MANIFEST_LOAD_ERROR','MANIFEST_LOAD_TIMEOUT','LEVEL_LOAD_ERROR','LEVEL_LOAD_TIMEOUT',
+   'FRAG_LOAD_ERROR','FRAG_LOAD_TIMEOUT','KEY_LOAD_ERROR','KEY_LOAD_TIMEOUT',
+   'AUDIO_TRACK_LOAD_ERROR','AUDIO_TRACK_LOAD_TIMEOUT','SUBTITLE_LOAD_ERROR','SUBTITLE_TRACK_LOAD_TIMEOUT'];
+ for(const name of detailNames){
+  const b=recoveryBrowser(),c=b.context,detail=Hls.ErrorDetails[name];
+  assert.ok(detail,`HLS ${name} must exist in the vendored version`);
+  b.mediaLoaderFailure(detail);
+  assert.equal(c.recoveryController.attempts,1,`${name} should use the shared media budget`);
+  assert.equal(c.stoppedLoads,1,`${name} should stop implicit HLS actions`);
+ }
+});
+test('a nonfatal HLS buffer-stall warning does not consume recovery budget',()=>{
+ const b=recoveryBrowser(),c=b.context;
+ c.callback(null,{fatal:false,type:c.Hls.ErrorTypes.MEDIA_ERROR,
+   details:c.Hls.ErrorDetails.BUFFER_STALLED_ERROR});
+ assert.equal(c.recoveryController.attempts,0);
+ assert.equal(c.stoppedLoads,undefined);
+});
 test('media and recognition failures share the same visible two-attempt budget',()=>{
  const b=recoveryBrowser(),c=b.context;
  b.mediaFailure();assert.equal(c.recoveryController.pending.delayMs,1000);
