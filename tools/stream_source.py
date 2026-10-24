@@ -9,11 +9,13 @@
     for chunk_bytes in src.iter_chunks(chunk_sec=0.1):
         audio_f32 = s16_to_f32(chunk_bytes)   # np.float32, 值域 [-1, 1]
 """
+import io
 import os
+import re
 import ssl
 import tempfile
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse, urlsplit
 
 import av
 import numpy as np
@@ -21,6 +23,18 @@ import numpy as np
 SAMPLING_RATE = 16000
 OPEN_TIMEOUT_SEC = 5.0
 READ_TIMEOUT_SEC = 5.0
+MAX_REDIRECTED_HLS_BYTES = 1024 * 1024
+
+_HLS_CONTENT_TYPES = {
+    "application/vnd.apple.mpegurl",
+    "application/x-mpegurl",
+    "application/mpegurl",
+    "audio/mpegurl",
+    "audio/x-mpegurl",
+}
+_HLS_URI_ATTRIBUTE = re.compile(
+    r'(?i)(\bURI\s*=\s*)(?:"([^"]*)"|\'([^\']*)\'|([^,\r\n]*))'
+)
 
 # 平台 CDN 防盗链：裸 Lavf UA 会被部分节点 403，统一带浏览器 UA
 DEFAULT_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -166,9 +180,31 @@ class StreamSource:
             if separator and name.strip():
                 headers[name.strip()] = value.strip()
         request = urllib.request.Request(url, headers=headers)
-        return urllib.request.urlopen(
+        response = urllib.request.urlopen(
             request, timeout=READ_TIMEOUT_SEC, context=self._tls_context
         )
+        try:
+            effective_url = response.geturl()
+        except Exception:
+            response.close()
+            raise
+        if effective_url == url or not _is_hls_manifest_candidate(response, url):
+            return response
+
+        try:
+            prefix = response.read(16)
+        except Exception:
+            response.close()
+            raise
+        if not prefix.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"#EXTM3U"):
+            return _PrefixedResponse(prefix, response, effective_url)
+
+        try:
+            body = _read_bounded_hls_manifest(response, prefix)
+            body = _rewrite_hls_playlist(body, effective_url)
+        finally:
+            response.close()
+        return _NamedResponse(io.BytesIO(body), effective_url)
 
     def _remove_temporary_ca_file(self):
         if self._temporary_ca_file is not None:
@@ -232,3 +268,90 @@ class _NamedResponse:
 
     def close(self):
         self._response.close()
+
+
+class _PrefixedResponse:
+    """Replay a short sniffed prefix before continuing the original response."""
+
+    def __init__(self, prefix: bytes, response, url: str):
+        self._prefix = io.BytesIO(prefix)
+        self._response = response
+        self.name = url
+
+    def read(self, size=-1):
+        if size is None or size < 0:
+            return self._prefix.read() + self._response.read()
+        prefix = self._prefix.read(size)
+        if len(prefix) < size:
+            prefix += self._response.read(size - len(prefix))
+        return prefix
+
+    def close(self):
+        try:
+            self._prefix.close()
+        finally:
+            self._response.close()
+
+    def __getattr__(self, name):
+        return getattr(self._response, name)
+
+
+def _is_hls_manifest_candidate(response, url: str) -> bool:
+    if urlparse(url).path.lower().endswith((".m3u8", ".m3u")):
+        return True
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return False
+    return headers.get_content_type().lower() in _HLS_CONTENT_TYPES
+
+
+def _read_bounded_hls_manifest(response, prefix: bytes) -> bytes:
+    body = bytearray(prefix)
+    headers = getattr(response, "headers", None)
+    content_length = headers.get("Content-Length") if headers is not None else None
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError:
+            declared_length = 0
+        if declared_length > MAX_REDIRECTED_HLS_BYTES:
+            raise ValueError("redirected HLS manifest exceeds the size limit")
+
+    while len(body) <= MAX_REDIRECTED_HLS_BYTES:
+        chunk = response.read(min(64 * 1024, MAX_REDIRECTED_HLS_BYTES + 1 - len(body)))
+        if not chunk:
+            return bytes(body)
+        body.extend(chunk)
+    raise ValueError("redirected HLS manifest exceeds the size limit")
+
+
+def _resolve_hls_uri(uri: str, base_url: str) -> str:
+    if urlsplit(uri).scheme or uri.startswith("//"):
+        return uri
+    return urljoin(base_url, uri)
+
+
+def _rewrite_hls_playlist(body: bytes, base_url: str) -> bytes:
+    text = body.decode("utf-8")
+    bom = "\ufeff" if text.startswith("\ufeff") else ""
+    if bom:
+        text = text[1:]
+    rewritten = []
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        ending = line[len(content):]
+        if content.lstrip().startswith("#"):
+            def replace_uri(match):
+                uri = match.group(2) or match.group(3) or match.group(4) or ""
+                quote = '"' if match.group(2) is not None else "'" if match.group(3) is not None else ""
+                return match.group(1) + quote + _resolve_hls_uri(uri, base_url) + quote
+
+            content = _HLS_URI_ATTRIBUTE.sub(replace_uri, content)
+        else:
+            stripped = content.strip()
+            if stripped:
+                leading = content[:len(content) - len(content.lstrip())]
+                trailing = content[len(content.rstrip()):]
+                content = leading + _resolve_hls_uri(stripped, base_url) + trailing
+        rewritten.append(content + ending)
+    return (bom + "".join(rewritten)).encode("utf-8")
