@@ -27,6 +27,12 @@ from cloud_translation import CloudConfigStore  # noqa: E402
 from original_release_hls import generate_hls, serve_hls  # noqa: E402
 
 
+class OfflineAuthenticationFailure(Exception):
+    """Structured provider evidence for a test, without making an API call."""
+    status_code = 401
+    code = "InvalidApiKey"
+
+
 def generate_media(path, seconds=8, silent=False, silent_seconds=0, with_audio=True):
     with av.open(str(path), "w") as output:
         video = output.add_stream("libx264", rate=10)
@@ -68,6 +74,8 @@ class RecognitionFixture:
             self.mode = state["mode"]
             state["started"] += 1
             state["active"] += 1
+            state["scenario_started"] += 1
+            self.attempt = state["scenario_started"]
             self.observation = {"id": state["started"], "mode": self.mode,
                                 "created_at": time.monotonic(), "closed": False,
                                 "feed_observations": []}
@@ -79,7 +87,7 @@ class RecognitionFixture:
         self.steps = deque(self.script())
 
     def script(self):
-        if self.mode in ("silent", "no-progress"):
+        if self.mode in ("silent", "no-progress", "live-no-caption"):
             return []
         if self.mode == "controls":
             return [(beg + 1.8, (float(beg), beg + 1.8, f"Prepared sentence {beg // 2 + 1}.",
@@ -88,7 +96,7 @@ class RecognitionFixture:
         if self.mode == "silence-speech":
             return [(5.8, (4., 5.8, "静音后的第一句原文。", None, True, 1)),
                     (7.8, (6., 7.8, "Speech continues after silence.", None, True, 2))]
-        if self.mode == "live-normal":
+        if self.mode in ("live-normal", "recovery-live"):
             return [(beg + 1.5, (float(beg), beg + 1.5, f"Live sentence {beg // 2 + 1}.",
                       None, True, beg // 2 + 1)) for beg in range(0, 60, 2)]
         if self.mode == "live-gap":
@@ -125,6 +133,10 @@ class RecognitionFixture:
             observations = self.observation["feed_observations"]
             observations.append({"at": time.monotonic(), "through": self.elapsed})
             del observations[:-256]
+        if self.mode in ("recovery-auth", "live-auth"):
+            raise OfflineAuthenticationFailure("offline fixture authentication failure")
+        if self.mode in ("recovery-network", "recovery-live") and self.elapsed >= 3:
+            raise ConnectionError("offline fixture connection failure")
         while self.steps and self.steps[0][0] <= self.elapsed:
             self.pending.append(self.steps.popleft()[1])
         return self.poll()
@@ -141,6 +153,7 @@ class RecognitionFixture:
             with self.state["lock"]:
                 self.state["active"] -= 1
                 self.observation["closed"] = True
+                self.observation["closed_at"] = time.monotonic()
 
 
 def main():
@@ -155,7 +168,8 @@ def main():
         generate_media(directory / (name + ".mp4"), *arguments)
     (directory / "invalid.bin").write_bytes(b"This is not decodable media.")
     state = {"mode": "normal", "started": 0, "active": 0, "audio_seconds": 0.,
-             "lock": threading.Lock(), "live_started": time.monotonic(), "engines": []}
+             "lock": threading.Lock(), "live_started": time.monotonic(), "engines": [],
+             "scenario_started": 0}
     hls_directory = directory / "hls"
     hls_directory.mkdir(exist_ok=True)
     generate_hls(hls_directory)
@@ -181,11 +195,14 @@ def main():
         @webui.app.post("/__fixture/scenario")
         async def fixture_scenario(request: Request):
             mode = (await request.json())["mode"]
-            if mode not in (*media, "withdrawn", "live-normal", "live-gap"):
+            if mode not in (*media, "withdrawn", "live-normal", "live-gap",
+                            "recovery-network", "recovery-auth", "recovery-live",
+                            "live-no-caption", "live-auth"):
                 raise ValueError("Unknown offline scenario")
             with state["lock"]:
                 state["mode"] = mode
-                if mode.startswith("live-"):
+                state["scenario_started"] = 0
+                if mode.startswith("live-") or mode == "recovery-live":
                     state["live_started"] = time.monotonic()
             return {"mode": mode, "simulated_recognition": True}
 

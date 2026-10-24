@@ -15,6 +15,8 @@
       this.faultActive = false;
       this.degraded = false;
       this.recoveryCandidate = null;
+      this.watchingCoverage = false;
+      this.uncoveredSince = null;
       this.done = false;
       this.failed = false;
       this.pausedAt = null;
@@ -76,12 +78,40 @@
           return 'timeout';
         }
       }
+      if (this.watchingCoverage && !this.degraded && this.live && ready
+          && this.bufferedAhead(time, limit)) {
+        if (this.covers(time)) {
+          this.uncoveredSince = null;
+        } else if (this.uncoveredSince == null) {
+          this.uncoveredSince = time;
+        } else if (time - this.uncoveredSince >= 0.5) {
+          this.degraded = true;
+          this.faultActive = true;
+          this.heldForFaultMs = 0;
+          this.holdAt = null;
+          this.recoveryCandidate = null;
+          this.watchingCoverage = false;
+          this.uncoveredSince = null;
+          return 'degrade';
+        }
+      } else if (this.covers(time)) {
+        this.uncoveredSince = null;
+      }
       if (this.degraded) {
         if (this.sustainedCoverage(time, now) && this.bufferedAhead(time, limit)) {
           this.clearFault();
           return 'recovered';
         }
         return 'none';
+      }
+      if (!ready && this.live && Number.isFinite(limit) && this.holdAt == null) {
+        if (!this.faultActive) {
+          this.faultActive = true;
+          this.heldForFaultMs = 0;
+        }
+        this.holdAt = now;
+        this.recoveryCandidate = null;
+        return 'hold';
       }
       if (this.holdAt != null) {
         const currentHoldMs = Math.max(0, now - this.holdAt);
@@ -100,7 +130,10 @@
         }
         return 'none';
       }
-      if (!ready || !Number.isFinite(limit)) return 'none';
+      // A healthy live source may have media data before ASR emits `ready`.
+      // Keep the same bounded two-second wait in that startup window; local
+      // files still wait for their explicit recognition-ready signal.
+      if ((!ready && !this.live) || !Number.isFinite(limit)) return 'none';
       if (this.faultActive && this.sustainedCoverage(time, now) && this.bufferedAhead(time, limit)) {
         this.clearFault();
         return 'recovered';
@@ -120,7 +153,23 @@
       return Number.isFinite(limit) && limit >= time + 1;
     }
     allCoverageSpans() {
-      return [...this.captionSpans.values(), ...this.silenceSpans];
+      const captions = [...this.captionSpans.entries()].map(([key, span]) => ({...span, key}));
+      const silence = this.silenceSpans.map((span, index) => ({...span, key:`silence:${index}`}));
+      return [...captions, ...silence];
+    }
+    coveragePath(time) {
+      const spans = this.allCoverageSpans().filter(span => span.end >= time - COVERAGE_GAP_TOLERANCE)
+        .sort((a, b) => a.beg - b.beg);
+      let through = time;
+      let contributors = 0;
+      for (const span of spans) {
+        if (span.beg > through + COVERAGE_GAP_TOLERANCE) break;
+        if (span.end > through + 0.02) {
+          through = span.end;
+          contributors++;
+        }
+      }
+      return {through, contributors};
     }
     coversRange(from, through) {
       if (!Number.isFinite(from) || !Number.isFinite(through) || through < from) return false;
@@ -146,17 +195,30 @@
         this.recoveryCandidate = null;
         return false;
       }
+      const path = this.coveragePath(time);
       if (!this.recoveryCandidate) {
         this.recoveryCandidate = {since:now, mediaTime:time, lastMediaTime:time,
-          lastMediaAdvanceAt:now};
+          lastMediaAdvanceAt:now, coverageThrough:path.through,
+          forwardCoverage:path.contributors > 1};
         return false;
       }
       const candidate = this.recoveryCandidate;
       if (time < candidate.lastMediaTime - COVERAGE_GAP_TOLERANCE
           || !this.coversRange(candidate.mediaTime, time)) {
         this.recoveryCandidate = {since:now, mediaTime:time, lastMediaTime:time,
-          lastMediaAdvanceAt:now};
+          lastMediaAdvanceAt:now, coverageThrough:path.through,
+          forwardCoverage:path.contributors > 1};
         return false;
+      }
+      if (path.through < candidate.coverageThrough - COVERAGE_GAP_TOLERANCE) {
+        this.recoveryCandidate = {since:now, mediaTime:time, lastMediaTime:time,
+          lastMediaAdvanceAt:now, coverageThrough:path.through,
+          forwardCoverage:path.contributors > 1};
+        return false;
+      }
+      if (path.through > candidate.coverageThrough + 0.02) {
+        candidate.coverageThrough = path.through;
+        candidate.forwardCoverage = true;
       }
       if (time > candidate.lastMediaTime + 0.02) {
         candidate.lastMediaTime = time;
@@ -166,7 +228,7 @@
           lastMediaAdvanceAt:now};
         return false;
       }
-      return now - candidate.since >= 600 && time - candidate.mediaTime >= 0.25
+      return candidate.forwardCoverage && now - candidate.since >= 600 && time - candidate.mediaTime >= 0.25
         && now - candidate.lastMediaAdvanceAt <= 500;
     }
     clearFault() {
@@ -175,6 +237,8 @@
       this.holdAt = null;
       this.degraded = false;
       this.recoveryCandidate = null;
+      this.watchingCoverage = this.live;
+      this.uncoveredSince = null;
     }
   }
   if (typeof module !== 'undefined' && module.exports) module.exports = {CaptionPlaybackGuard};

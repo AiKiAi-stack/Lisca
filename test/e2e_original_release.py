@@ -4,7 +4,9 @@ Requires original_release_fixture.py at the sole WebUI port, 8002. It refuses a
 regular service, never installs credentials, and writes only simulated evidence.
 """
 import json
+import os
 from pathlib import Path
+import shutil
 import time
 from urllib.request import Request, urlopen
 
@@ -12,6 +14,14 @@ from playwright.sync_api import sync_playwright
 
 BASE = "http://127.0.0.1:8002"
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def launch_browser(playwright):
+    executable = (os.environ.get("STREAM_ASR_BROWSER") or shutil.which("google-chrome")
+                  or shutil.which("chromium") or shutil.which("chromium-browser"))
+    options = {"executable_path": executable} if executable else {}
+    return playwright.chromium.launch(headless=True,
+        args=["--autoplay-policy=no-user-gesture-required"], **options)
 
 
 def request(path, data=None):
@@ -58,6 +68,8 @@ def wait_complete(page, timeout=20000):
 
 
 def stop_if_active(page):
+    for close in page.locator("dialog[open] [data-close]").all():
+        close.click()
     if page.locator("#stop").is_visible():
         page.locator("#stop").click()
 
@@ -69,8 +81,7 @@ def main():
     directory.mkdir(parents=True, exist_ok=True)
     results = []
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(executable_path="/usr/bin/google-chrome",
-            headless=True, args=["--autoplay-policy=no-user-gesture-required"])
+        browser = launch_browser(playwright)
         page = browser.new_page(viewport={"width": 1280, "height": 800})
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
@@ -80,6 +91,23 @@ def main():
               document.querySelector('#current').innerText.includes('第一句')""", timeout=15000)
             first = snapshot(page)
             assert .0 <= first["time"] <= 1.8, first
+            timed = [first]
+            deadline = time.monotonic() + 15
+            while timed[-1]["time"] < 6.4 and time.monotonic() < deadline:
+                page.wait_for_timeout(40)
+                timed.append(snapshot(page))
+            expected = [(0., 1.8, "第一句完整字幕。"),
+                        (2., 3.8, "Second complete sentence."),
+                        (4., 5.8, "最后一句原文字幕。")]
+            for beg, end, text in expected:
+                visible = [item for item in timed if item["text"] == text]
+                assert len(visible) >= 10, (text, visible)
+                assert all(beg - .15 <= item["time"] <= end + .15 for item in visible), visible
+            gap = [item for item in timed if 6 <= item["time"] <= 6.4]
+            assert gap and all(not item["text"] for item in gap), gap
+            assert timed[-1]["time"] >= 6.4, timed[-1]
+            results.append({"case": "zh-en-visible-time-and-missing-interval", "passed": True,
+                            "media_samples": timed})
             wait_complete(page)
             started = request("/__fixture/state")["started"]
             page.locator("video").evaluate("video=>video.pause()")
@@ -122,6 +150,25 @@ def main():
             assert abs(large["fontSize"]-64) < .1, large
             assert large["text"] and large["lines"] <= 2.1 and not large["clipped"], large
             results.append({"case": "narrow-selected-large-font", "passed": True, "snapshot": large})
+            page.locator("video").evaluate("video=>{video.currentTime=0;video.play()}")
+            changes = []
+            deadline = time.monotonic() + 16
+            while time.monotonic() < deadline:
+                item = snapshot(page)
+                if not changes or item["text"] != changes[-1]["text"]:
+                    changes.append({"time": item["time"], "text": item["text"]})
+                assert item["lines"] <= 2.1 and not item["clipped"], item
+                if item["time"] >= 11.3:
+                    break
+                page.wait_for_timeout(40)
+            assert changes and item["time"] >= 11.3, changes
+            artificial_flashes = [left for left, right in zip(changes, changes[1:])
+                                  if left["text"] and right["time"] - left["time"] < .55]
+            assert not artificial_flashes, artificial_flashes
+            results.append({"case": "long-caption-pages-without-artificial-flashing", "passed": True,
+                            "visible_changes": changes, "sampling_tolerance_seconds": .05})
+            page.locator("video").evaluate("video=>{video.pause();video.currentTime=3}")
+            page.wait_for_timeout(200)
             page.locator("#fullscreenBtn").click()
             page.wait_for_function("document.fullscreenElement !== null")
             full = snapshot(page)
