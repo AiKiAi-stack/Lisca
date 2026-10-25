@@ -69,8 +69,8 @@ def test_generated_hls_retains_wav_lineage_and_marks_aac_as_lossy(
                - provenance["source_interval_seconds"]["end"]) < 0.25
 
 
-def test_full_hls_demux_preserves_nonempty_zero_duration_tail_packet(
-        tmp_path, synthetic_hls_samples):
+def test_full_hls_demux_preserves_short_tail_and_rejects_payload_mismatch(
+        tmp_path, synthetic_hls_samples, monkeypatch):
     spec = synthetic_hls_samples["en"]
     source_samples = 48_800  # 3.05 s forces a final partial AAC access unit.
     signal = (0.12 * np.sin(2 * np.pi * 660 * np.arange(source_samples) / 16_000))
@@ -90,7 +90,12 @@ def test_full_hls_demux_preserves_nonempty_zero_duration_tail_packet(
     decoded_hash, decoded_count, decoded_duration, decoded_first_pts = hls._decode_pcm_provenance(
         provenance["encoded_hls_playlist_path"])
 
-    assert final_segment["packet_duration_fallback_count"] >= 1
+    # Auto-probing this short TS tail can select MP2 and fabricate its bytes.
+    import av
+    with av.open(str(Path(provenance["sample_directory"]) / final_segment["filename"]),
+                 format="mpegts") as tail:
+        assert tail.streams.audio[0].codec_context.name == "aac"
+        assert sum(packet.size > 0 for packet in tail.demux(audio=0)) > 0
     assert final_segment["audio_end_seconds"] > final_segment["playlist_end_seconds"]
     assert provenance["fixed_wav_pcm_sample_count"] == source_samples
     assert provenance["decoded_from_playlist_sha256"] == provenance[
@@ -103,6 +108,20 @@ def test_full_hls_demux_preserves_nonempty_zero_duration_tail_packet(
     assert (decoded_hash, decoded_count, decoded_duration) == (
         provenance["decoded_pcm_sha256"], provenance["decoded_pcm_sample_count"],
         provenance["decoded_pcm_duration_seconds"])
+
+    original_packet_hash = hls._packet_hash
+    observed_packets = set()
+
+    def changed_payload_on_second_read(packet):
+        identity = (packet.pts, packet.size)
+        if identity in observed_packets:
+            return "0" * 64
+        observed_packets.add(identity)
+        return original_packet_hash(packet)
+
+    monkeypatch.setattr(hls, "_packet_hash", changed_payload_on_second_read)
+    with pytest.raises(ValueError, match="not bound to the full HLS stream"):
+        hls.prepare_hls_sample("en", tmp_path)
 
 
 def test_live_playlist_exposes_only_source_clock_segments_and_never_endlist(
@@ -469,7 +488,7 @@ def _write_one_valid_hls_case(output, provenance):
             "case_query_present": True, "playlist_has_endlist": False,
         "visible_segment_indices": [0], "source_elapsed_seconds": segment["end_seconds"],
             "playlist_sha256": playlist_sha,
-            "response_status": 200,
+            "response_status": 200, "response_complete": True,
         })
         requests.append({
             "case_id": label, "method": "GET", "requester_role": role,
@@ -492,6 +511,45 @@ def _write_one_valid_hls_case(output, provenance):
     (output / "decoded-arrivals.jsonl").write_text(json.dumps({
         "event": "stream_source_pcm_summary", "case_id": label,
         "process_id": 123, "is_live_hls": True, "stream_status": "closed",
+        "pyav_version": provenance["pyav_version"],
+        "libav_versions": provenance["libav_versions"],
         "first_decoded_pcm_monotonic_ns": first_body_ns + 600_000_000,
     }) + "\n", encoding="utf-8")
     return provenance
+
+
+@pytest.mark.parametrize("problem", [
+    "server_pyav_version", "server_libav_versions", "server_runtime_missing",
+    "manifest_incomplete", "manifest_completion_missing",
+])
+def test_hls_audit_rejects_wrong_server_runtime_or_incomplete_manifest(
+        tmp_path, synthetic_hls_samples, problem):
+    del synthetic_hls_samples
+    provenance = hls.prepare_hls_sample("zh", tmp_path)
+    _write_one_valid_hls_case(tmp_path, provenance)
+    args = SimpleNamespace(language="zh", output=tmp_path, origin_log=None, decoded_log=None)
+    if problem.startswith("server_"):
+        path = tmp_path / "decoded-arrivals.jsonl"
+        row = json.loads(path.read_text())
+        if problem == "server_pyav_version":
+            row["pyav_version"] = "different-runtime"
+        elif problem == "server_libav_versions":
+            row["libav_versions"]["libavcodec"] = [0, 0, 0]
+        else:
+            row.pop("pyav_version")
+            row.pop("libav_versions")
+        path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    else:
+        path = tmp_path / "origin-requests.jsonl"
+        rows = startup._read_jsonl(path)
+        row = next(item for item in rows if item["resource_kind"] == "playlist")
+        if problem == "manifest_incomplete":
+            row["response_complete"] = False
+        else:
+            row.pop("response_complete")
+        path.write_text("\n".join(json.dumps(item) for item in rows) + "\n", encoding="utf-8")
+    result = hls.analyze(args)
+    assert result["hls_evidence_validated"] is False
+    assert result["acceptance_gate_passed"] is False
+    assert any(("runtime" if problem.startswith("server_") else "manifest") in blocker
+               for blocker in result["hls_gate_blockers"])

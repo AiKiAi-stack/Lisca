@@ -100,12 +100,7 @@ def _encode_fixed_hls(wav_path, playlist_path, segment_pattern):
 def _parse_encoded_playlist(path, directory):
     import av
 
-    # Some standalone MPEG-TS segments do not retain enough program metadata
-    # for FFmpeg to report the AAC packet duration. Read the same packets
-    # through the complete HLS playlist first, where FFmpeg sees the stream's
-    # AAC configuration, then use that duration only for an exact PTS/size
-    # match. This preserves the final nonempty AAC packet instead of treating
-    # a duration-zero packet as empty or guessing its length.
+    # Bind every segment packet to the full playlist, including the AAC tail.
     packet_durations = {}
     with av.open(str(path)) as container:
         if container.format.name != "hls" or not container.streams.audio:
@@ -144,31 +139,31 @@ def _parse_encoded_playlist(path, directory):
             raise ValueError("generated HLS playlist has an invalid or missing MPEG-TS segment")
         playlist_end = start + duration
         packet_duration_fallback_count = 0
-        with av.open(str(segment_path)) as container:
-            if not container.streams.audio:
+        # Very short TS tails can be misprobed as MPEG program streams/MP2.
+        with av.open(str(segment_path), format="mpegts") as container:
+            if (not container.streams.audio
+                    or container.streams.audio[0].codec_context.name != "aac"):
                 raise ValueError("generated MPEG-TS segment has no AAC audio stream")
             audio_stream = container.streams.audio[0]
             audio_bounds = []
             for packet in container.demux(audio_stream):
                 time_base = packet.time_base or audio_stream.time_base
                 if packet.size and packet.pts is not None and time_base is not None:
+                    candidates = packet_durations.get((packet.pts, packet.size), [])
+                    packet_hash = _packet_hash(packet)
+                    matching = [item[1] for item in candidates if item[0] == packet_hash]
+                    full_playlist_duration = matching[0] if len(matching) == 1 else None
+                    if full_playlist_duration is None:
+                        raise ValueError(
+                            "standalone MPEG-TS AAC packet is not bound to the full HLS stream")
                     packet_duration = packet.duration or 0
                     if packet_duration <= 0:
-                        candidates = packet_durations.get((packet.pts, packet.size), [])
-                        if len(candidates) == 1:
-                            full_playlist_duration = candidates[0][1]
-                        else:
-                            packet_hash = _packet_hash(packet)
-                            matching = [item[1] for item in candidates
-                                        if item[0] == packet_hash]
-                            full_playlist_duration = matching[0] if len(matching) == 1 else None
-                        if full_playlist_duration is None:
-                            raise ValueError(
-                                "standalone MPEG-TS AAC packet is not bound to the full HLS stream")
                         packet_duration = round(full_playlist_duration / float(time_base))
                         if packet_duration <= 0:
                             raise ValueError("full HLS AAC packet duration cannot be represented")
                         packet_duration_fallback_count += 1
+                    if abs(float(packet_duration * time_base) - full_playlist_duration) > 1e-9:
+                        raise ValueError("standalone AAC packet duration differs from full HLS")
                     packet_start = float(packet.pts * time_base)
                     packet_end = float((packet.pts + packet_duration) * time_base)
                     audio_bounds.append((packet_start, packet_end))
@@ -507,7 +502,7 @@ class PacedHLSHandler(BaseHTTPRequestHandler):
                 "request_started_monotonic_ns": request_ns,
                 "case_source_clock_started_monotonic_ns": source_clock_ns,
                 "source_elapsed_seconds": round(elapsed, 6),
-                "response_body_started_monotonic_ns": time.monotonic_ns(),
+                "response_finished_monotonic_ns": time.monotonic_ns(),
                 "visible_segment_indices": [item["index"] for item in visible],
                 "visible_segment_count": len(visible), "playlist_has_endlist": False,
                 "playlist_sha256": _sha256_bytes(body), "response_status": 200,
@@ -669,6 +664,7 @@ def _valid_manifest_observation(row, provenance, case_id):
     elapsed = row.get("source_elapsed_seconds")
     visible = row.get("visible_segment_indices")
     if (row.get("method") != "GET" or row.get("response_status") != 200
+            or row.get("response_complete") is not True
             or row.get("playlist_has_endlist") is not False
             or not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed)
             or not isinstance(visible, list)):
@@ -838,6 +834,11 @@ def _validate_case_hls(label, run, output, provenance, requests, decode_rows):
 
     decodes = [row for row in decode_rows if row.get("case_id") == label
                and row.get("event") == "stream_source_pcm_summary"]
+    decoder_runtime_matches = bool(
+        len(decodes) == 1 and decodes[0].get("pyav_version") == provenance["pyav_version"]
+        and decodes[0].get("libav_versions") == provenance["libav_versions"])
+    if not decoder_runtime_matches:
+        blockers.append(f"{label}: actual service decoder runtime is missing or mismatched")
     if (len(decodes) != 1 or decodes[0].get("is_live_hls") is not True
             or decodes[0].get("process_id") != run.get("service_pid")):
         blockers.append(f"{label}: first decoded PCM is not uniquely correlated to this service's live HLS")
@@ -852,6 +853,7 @@ def _validate_case_hls(label, run, output, provenance, requests, decode_rows):
     summary["browser_proxy_audio_video_segment_gets"] = len(browser_segments)
     summary["source_clock_started_monotonic_ns"] = source_clock_ns
     summary["browser_playback_observed"] = browser_report_played
+    summary["decoder_runtime_matches_source_provenance"] = decoder_runtime_matches
     summary["validated"] = not blockers
     return not blockers, blockers, normalized, summary
 

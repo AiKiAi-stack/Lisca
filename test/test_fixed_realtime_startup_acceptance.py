@@ -114,6 +114,8 @@ def test_stream_source_probe_records_numeric_first_decoded_pcm_without_url(tmp_p
     assert len(chunks) == 2
     assert row["case_id"] == "zh-startup-01"
     assert row["first_decoded_pcm_monotonic_ns"] > 0
+    assert row["pyav_version"]
+    assert "libavcodec" in row["libav_versions"]
     assert row["first_chunk_bytes"] == 3200
     assert row["first_chunk_duration_ms"] == 100.0
     assert row["decoded_pcm_duration_ms"] == 200.0

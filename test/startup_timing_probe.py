@@ -14,6 +14,8 @@ import threading
 import time
 from urllib.parse import parse_qs, urlsplit
 
+import av
+
 
 CASE_PATTERN = re.compile(r"(?:zh|en)-startup-[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _PATCHED = "_fixed_startup_probe_installed"
@@ -113,6 +115,9 @@ def install_stream_source_probe(webui_module, output_path):
                 "event": "stream_source_pcm_summary",
                 "case_id": case_id,
                 "process_id": os.getpid(),
+                "pyav_version": av.__version__,
+                "libav_versions": {name: list(version)
+                                   for name, version in sorted(av.library_versions.items())},
                 "is_live_hls": self._fixed_startup_probe_live_hls,
                 "stream_status": stream_status,
                 "first_decoded_pcm_utc": first_pcm_utc,
