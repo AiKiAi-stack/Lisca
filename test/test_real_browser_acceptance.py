@@ -84,3 +84,36 @@ def test_player_failure_classification_is_separate_from_console_diagnostics():
     assert acceptance.fatal_player_sample({"status_is_error": False,
                                             "media_error_code": 4}) == {
         "type": "media_error", "code": 4}
+
+
+def test_browser_launch_failure_cannot_report_valid_sampling(tmp_path, monkeypatch):
+    media = tmp_path / "sample.wav"
+    media.write_bytes(b"source identity only; browser launch must fail first")
+
+    def fail_launch(_playwright):
+        raise RuntimeError("browser dependency unavailable")
+
+    monkeypatch.setattr(acceptance, "launch_browser", fail_launch)
+    args = acceptance.parse_args(["--media", str(media), "--label", "no-browser",
+                                  "--output", str(tmp_path)])
+    result = acceptance.collect(args)
+    report = json.loads((tmp_path / "no-browser.report.json").read_text())
+
+    assert result["session_post_start_count"] == 0
+    assert result["exit_ok"] is False
+    assert report["sampling"]["sample_count"] == 0
+    assert result["measurement_status"] == "measurement_invalid"
+    assert report["sampling"]["status"] == "measurement_invalid"
+
+
+def test_error_message_presence_survives_recording_sanitization_without_raw_text(tmp_path):
+    event = acceptance.sanitize_ws_event({"type": "error",
+        "message": "private provider details must not be saved"}, 30)
+    recording = acceptance.write_browser_recording(
+        media_path="https://media.test/live.m3u8", output_path=tmp_path / "error.json",
+        events=[event], status="failed", completion_signal=None,
+        completion_reason="completion_unverified", errors=[],
+        started_at="2026-10-25T00:00:00+00:00", started=time.monotonic(), metadata={})
+
+    assert recording["events"][0]["message_present"] is True
+    assert "private provider details" not in (tmp_path / "error.json").read_text()

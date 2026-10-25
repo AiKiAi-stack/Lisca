@@ -114,7 +114,7 @@ def sanitize_ws_event(event, observed_after_ms):
             safe[name] = _safe_value(event[name])
     if event_type == "error":
         # Provider error text can echo account data; retain its category and presence only.
-        safe["message_present"] = bool(event.get("message"))
+        safe["message_present"] = bool(event.get("message")) or event.get("message_present") is True
     safe["observed_after_ms"] = max(0, round(float(observed_after_ms)))
     return safe
 
@@ -574,7 +574,7 @@ def collect(args):
 
     gaps = [b["observed_after_ms"] - a["observed_after_ms"] for a, b in zip(samples, samples[1:])]
     max_gap = max(gaps, default=0)
-    measurement_invalid = max_gap > 100 or any(
+    measurement_invalid = len(samples) < 2 or max_gap > 100 or any(
         item.get("within_sampling_tolerance") is False for item in checkpoints)
     metadata = {"language": args.language, "media_kind": "remote_stream" if remote else "local_file",
                 "sample_interval_ms": 50, "sampling_tolerance_seconds": 0.1,
