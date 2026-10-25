@@ -2,6 +2,8 @@
 
 2026-10-25（Asia/Shanghai）。用户明确要求按Matt `to-spec → to-tickets → implement/implement-spec` 继续，并更新GitHub Issue、commit、PR。2026-10-23已确认的规格、公开测试边界、12项任务粒度和依赖原样承接，不重新访谈或另建范围。
 
+集成PR：[draft #47](https://github.com/AiKiAi-stack/stream-with-asr/pull/47)。分支已实际推送；不是仅本地草稿。
+
 父规格：[34 · 原文字幕首版：实现规格与发布验收](https://github.com/AiKiAi-stack/stream-with-asr/issues/34)。所有Issue当前保持open；01–07的代码/离线任务完成不等于PR已合并或首版发布通过。
 
 | 本地任务 | GitHub | 实施状态 | 阻塞任务 |
@@ -23,4 +25,7 @@
 
 实施沿用集成分支 `feat/original-caption-release`，PR先保持draft。01–07可在相应PR合并时关闭；08/11按用户原决定延期，09/10继续验收，12及父规格保持开放。不得使用自动关闭关键字把未完成验收或整份规格提前关闭。
 
-最新直播失败与外部验收缺口见[真实验收](2026-10-24-original-caption-real-acceptance.md)及[实施状态](2026-10-23-original-caption-implementation-status.md)。实时启动观测辅助文件尚在完成中；指定Luna/Max子代理额度耗尽，没有把未运行的独立双轴复审记为完成。
+最新直播失败与外部验收缺口见[真实验收](2026-10-24-original-caption-real-acceptance.md)及[实施状态](2026-10-23-original-caption-implementation-status.md)。实时启动观测辅助文件尚在完成中；指定Luna/Max子代理一度受额度限制，恢复后继续处理原生CI崩溃与实时启动采集。最终候选的独立双轴复审仍待运行，不记为完成。
+
+
+当前集成提交包含启动测量辅助，仍未新增真实启动批次或改变3秒阈值。独立审查已运行到`0d4fb4d`：Standards 0，Spec 3项代码问题集中修复中；新辅助文件的审查补充及最终候选复审待完成。
