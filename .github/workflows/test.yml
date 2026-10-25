@@ -17,7 +17,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -e .
-          pip install pytest
+          pip install pytest playwright
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
