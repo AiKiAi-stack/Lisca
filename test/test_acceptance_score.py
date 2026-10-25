@@ -156,6 +156,45 @@ def test_scoring_cli_reports_input_and_reference_hashes_separately(tmp_path):
     assert report["release_gate_passed"] is False
 
 
+def test_scoring_cli_recursively_redacts_legacy_signed_source_url(tmp_path):
+    signed_url = (
+        "https://TEST_ONLY_USER:TEST_ONLY_PASSWORD@media.example/live.m3u8"
+        "?session_token=TEST_ONLY_SESSION&X-Amz-Signature=TEST_ONLY_SIGNATURE"
+    )
+    manifest = {"dataset": "fixed", "config": "en", "sha256": "a" * 64, "seconds": 1,
+                "items": [{"reference": "Keep these words"}]}
+    recording = {
+        "source_kind": "remote_stream", "source_url": signed_url,
+        "api_key": "TEST_ONLY_API_KEY",
+        "events": [
+            {"type": "subtitle", "sentence_id": 1, "beg": 0,
+             "is_final": True, "text": f"Keep these words {signed_url} api_key=TEST_ONLY_API_KEY"},
+            {"type": "end", "reason": "completed"},
+        ],
+        "errors": [],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    recording_path = tmp_path / "recording.json"
+    report_path = tmp_path / "report.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    recording_path.write_text(json.dumps(recording), encoding="utf-8")
+
+    process = subprocess.run([
+        sys.executable, str(Path(__file__).with_name("score_original_acceptance.py")),
+        str(manifest_path), str(recording_path), "--language", "en", "--output", str(report_path),
+    ], check=False, capture_output=True, text=True)
+    report_text = report_path.read_text(encoding="utf-8")
+    report = json.loads(report_text)
+    observed = report_text + process.stdout + process.stderr
+
+    assert process.returncode == 0, process.stdout + process.stderr
+    for secret in ("TEST_ONLY_USER", "TEST_ONLY_PASSWORD", "TEST_ONLY_SESSION",
+                   "TEST_ONLY_SIGNATURE", "TEST_ONLY_API_KEY"):
+        assert secret not in observed
+    assert report["source_url"] == "https://media.example/live.m3u8?[redacted]"
+    assert "https://media.example/live.m3u8?[redacted]" in observed
+
+
 def test_scoring_cli_names_a_reference_hash_mismatch_without_erasing_accuracy(tmp_path):
     input_hash = "b" * 64
     recording = {"source_kind": "local_file", "input_sha256": input_hash,

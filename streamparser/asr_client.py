@@ -157,13 +157,20 @@ class ASRClient:
             while len(self._audio_buffer) >= self.chunk_size:
                 send_data = bytes(self._audio_buffer[: self.chunk_size])
                 self._audio_buffer = self._audio_buffer[self.chunk_size :]
-                try:
-                    self._recognition.send_audio_frame(send_data)
-                except Exception:
-                    self._errors.put(ASRTransportFailure())
-                    self._running.clear()
-                    self._cancelled.set()
+                if not self._send_audio_frame(send_data):
                     return
         if self._audio_buffer and not self._cancelled.is_set():
-            self._recognition.send_audio_frame(bytes(self._audio_buffer))
+            if not self._send_audio_frame(bytes(self._audio_buffer)):
+                return
             self._audio_buffer.clear()
+
+    def _send_audio_frame(self, data: bytes) -> bool:
+        try:
+            self._recognition.send_audio_frame(data)
+        except Exception:
+            self._audio_buffer.clear()
+            self._errors.put(ASRTransportFailure())
+            self._running.clear()
+            self._cancelled.set()
+            return False
+        return True

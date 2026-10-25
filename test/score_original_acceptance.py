@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import unicodedata
 
+from run_original_acceptance import redact_recording
+
 
 def tokens(text, language):
     text = unicodedata.normalize("NFKC", text).lower()
@@ -158,8 +160,9 @@ if __name__ == "__main__":
     parser.add_argument("--language", choices=("zh", "en"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    result = score(json.loads(args.manifest.read_text(encoding="utf-8")),
-                   json.loads(args.recording.read_text(encoding="utf-8")), args.language)
+    result = redact_recording(score(
+        json.loads(args.manifest.read_text(encoding="utf-8")),
+        json.loads(args.recording.read_text(encoding="utf-8")), args.language))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({k: v for k, v in result.items() if k not in ("reference", "transcript")}, ensure_ascii=False))

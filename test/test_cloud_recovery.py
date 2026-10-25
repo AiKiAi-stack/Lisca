@@ -86,6 +86,120 @@ def test_media_read_failure_exposes_safe_recovery_evidence_and_releases_session(
     assert closed == {"source": 1, "engine": 1}
 
 
+def test_partial_asr_send_failure_is_reported_by_public_cloud_websocket(monkeypatch):
+    from streamparser import asr_client
+    from engines.aliyun_funasr import AliyunFunASREngine
+
+    closed = {"source": 0, "recognition": 0}
+
+    class Recognition:
+        def __init__(self, **_kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def send_audio_frame(self, _data):
+            raise OSError("TEST_ONLY_PRIVATE_TRANSPORT_DETAIL")
+
+        def stop(self):
+            closed["recognition"] += 1
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            yield b"\x00\x00" * 800
+
+        def close(self):
+            closed["source"] += 1
+
+    monkeypatch.setattr(asr_client, "Recognition", Recognition)
+    monkeypatch.setattr(webui, "StreamSource", Source)
+
+    def create_engine(_name, **kwargs):
+        return AliyunFunASREngine(chunk_size=3200, **kwargs)
+
+    monkeypatch.setattr(webui, "create_engine", create_engine)
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "mode": "transcribe", "url": "https://media.test/clip.mp4",
+            "source": "auto",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    error = next(event for event in events if event["type"] == "error")
+    assert error["failure_category"] == "network"
+    assert error["retryable"] is True
+    assert "TEST_ONLY_PRIVATE_TRANSPORT_DETAIL" not in str(events)
+    assert "TEST_ONLY_KEY" not in str(events)
+    assert events[-1] == {"type": "end", "reason": "error"}
+    assert closed == {"source": 1, "recognition": 1}
+
+
+@pytest.mark.parametrize(("phase", "failure", "retryable"), [
+    ("media_open", TimeoutError("private startup timeout"), True),
+    ("media_open", HTTPError("https://media.test/private", 503, "private", {}, None), True),
+    ("media_open", HTTPError("https://media.test/private", 403, "private", {}, None), False),
+    ("media_preflight", URLError(TimeoutError("private first-read timeout")), True),
+    ("media_preflight", HTTPError("https://media.test/private", 429, "private", {}, None), True),
+    ("media_preflight", URLError(ssl.SSLCertVerificationError("private certificate")), False),
+    ("media_preflight", ValueError("private decoder detail"), False),
+])
+def test_startup_media_failures_expose_typed_recovery_and_release_source(
+        monkeypatch, phase, failure, retryable):
+    closed = {"source": 0}
+    engine_created = []
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            if phase == "media_open":
+                raise failure
+
+        def iter_chunks(self):
+            raise failure
+
+        def close(self):
+            closed["source"] += 1
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine",
+                        lambda *_args, **_kwargs: engine_created.append("created"))
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "mode": "transcribe", "url": "https://media.test/live.m3u8",
+            "source": "auto",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    error = next(event for event in events if event["type"] == "error")
+    expected_message = ("无法打开媒体流：请检查来源、网络和访问权限；未启动识别"
+                        if phase == "media_open" else "输入音频解码失败，未启动识别")
+    assert error["message"] == expected_message
+    assert error["failure_category"] == ("media_network" if retryable else "media_decode")
+    assert error["retryable"] is retryable
+    assert "private" not in str(events)
+    assert "TEST_ONLY_KEY" not in str(events)
+    assert events[-1] == {"type": "end", "reason": "error"}
+    assert engine_created == []
+    assert closed["source"] == (1 if phase == "media_preflight" else 0)
+
+
 def test_cloud_ws_exposes_provider_permission_evidence_without_raw_error(monkeypatch):
     class Source:
         def __init__(self, *_args, **_kwargs):

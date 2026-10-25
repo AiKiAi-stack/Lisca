@@ -1308,7 +1308,7 @@ async def ws_endpoint(ws: WebSocket):
                 error_event.update(failure_category="no_progress", retryable=False)
             elif phase == "capacity":
                 error_event.update(failure_category="capacity", retryable=False)
-            elif phase == "media_decode":
+            elif phase in ("media_open", "media_preflight", "media_decode"):
                 reason = exc.reason if isinstance(exc, URLError) else exc
                 retryable = isinstance(reason, (TimeoutError, ConnectionError, socket.gaierror))
                 if isinstance(exc, HTTPError):
