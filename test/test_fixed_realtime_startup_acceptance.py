@@ -240,13 +240,50 @@ def test_twenty_dummy_cases_measure_delay_but_never_pass_acceptance(tmp_path, mo
     args = SimpleNamespace(language="zh", output=output, origin_log=origin_log,
                            decoded_log=decode_log)
     result = startup.analyze(args)
-    assert result["cases"][0]["acceptance_latency_upper_bound_from_origin_first_PCM_write_ms"] == 400.0
+    assert result["cases"][0]["acceptance_latency_upper_bound_from_origin_first_PCM_write_ms"] == 401.0
     assert result["cases"][0]["decoded_PCM_yield_to_visible_ms_diagnostic"] == 200.0
     assert result["acceptance_gate_passed"] is False
     assert result["attempted_starts"] == 20
     assert result["cold_starts"] == 1 and result["warm_starts"] == 19
     assert result["valid_correlated_upper_bound_starts"] == 0
     assert any("requires exactly 20 valid" in blocker for blocker in result["gate_blockers"])
+
+    # Midpoint timing meets 3 s, but its calibrated upper bound does not.
+    for index in range(1, 21):
+        label = f"zh-startup-{index:02d}"
+        report_path = output / f"{label}.report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["simulated_recognition"] = False
+        report["clock_calibration"]["uncertainty_ms"] = 20
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+    for row in origin_rows:
+        row["origin_first_pcm_write_started_monotonic_ns"] -= 2_590_000_000
+    origin_log.write_text("\n".join(json.dumps(row) for row in origin_rows) + "\n",
+                          encoding="utf-8")
+    near_cutoff = startup.analyze(args)
+    assert near_cutoff["valid_correlated_upper_bound_starts"] == 20
+    assert near_cutoff["latency_ms"]["p95_nearest_rank"] == 3010.0
+    assert near_cutoff["acceptance_gate_passed"] is False
+    assert "P95 must be at most 3000 ms" in near_cutoff["gate_blockers"]
+
+    for index in range(1, 21):
+        report_path = output / f"zh-startup-{index:02d}.report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["clock_calibration"]["uncertainty_ms"] = 10.01
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+    rounded_cutoff = startup.analyze(args)
+    assert rounded_cutoff["latency_ms"]["p95_nearest_rank"] == 3000.1
+    assert rounded_cutoff["acceptance_gate_passed"] is False
+
+    for invalid_uncertainty in (None, -1, True, "1", float("nan"), float("inf"), 50.1):
+        for index in range(1, 21):
+            report_path = output / f"zh-startup-{index:02d}.report.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["clock_calibration"]["uncertainty_ms"] = invalid_uncertainty
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+        invalid = startup.analyze(args)
+        assert invalid["valid_correlated_upper_bound_starts"] == 0
+        assert invalid["acceptance_gate_passed"] is False
 
 
 def test_analyzer_rejects_missing_or_ambiguous_application_get(tmp_path, monkeypatch, capsys):

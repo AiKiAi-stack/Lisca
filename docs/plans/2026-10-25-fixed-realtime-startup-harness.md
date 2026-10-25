@@ -46,6 +46,11 @@ clips and evidence go under ignored logs/fixed-realtime-startup/.
   cannot give a false pass due to hidden AV demux probing or read-ahead. The
   actual wire-arrival timestamp is not observed. Decoded-PCM-yield to visible
   remains a diagnostic, not the gate endpoint.
+- The gated upper bound adds the full reported clock-calibration uncertainty
+  to the midpoint-mapped visibility time and rounds upward to 0.1 ms. Missing,
+  non-finite, negative, or over-50-ms uncertainty invalidates the case. A
+  midpoint below 3000 ms cannot pass if its uncertainty-adjusted P95 exceeds
+  that limit.
 - Each case reports app ready.delay, time to ready, time to first media
   playback, a source-clock playback-lag proxy, and observed freezes separately.
   The PRD gives no numeric threshold for these added-media-delay or freeze

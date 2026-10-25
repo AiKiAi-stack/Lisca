@@ -324,7 +324,7 @@ class _CalibratedPage:
                     "method": "bracketed_same_host_monotonic_to_browser_performance_clock",
                     "sampler_origin_monotonic_ns": round(midpoint - (now - start) * 1e6),
                     "bracket_ms": round((after - before) / 1e6, 3),
-                    "uncertainty_ms": round((after - before) / 2e6 + 1.0, 3),
+                    "uncertainty_ms": math.ceil(((after - before) / 2e6 + 1.0) * 1000) / 1000,
                     "captured_at_utc": _utc_now(),
                 }
             except Exception:
@@ -592,7 +592,13 @@ def analyze(args):
             origin_ns = origins[0].get("origin_first_pcm_write_started_monotonic_ns")
             if isinstance(origin_ns, (int, float)):
                 origin_bound_ms = (visible_ns - int(origin_ns)) / 1e6
-        latency_ms = origin_bound_ms
+        uncertainty_ms = calibration.get("uncertainty_ms")
+        valid_uncertainty = (isinstance(uncertainty_ms, (int, float))
+                             and not isinstance(uncertainty_ms, bool)
+                             and 0 <= uncertainty_ms <= 50 and math.isfinite(uncertainty_ms))
+        # Gate the latest possible visibility time; round upward to keep the bound conservative.
+        latency_ms = (math.ceil((origin_bound_ms + uncertainty_ms) * 10) / 10
+                      if origin_bound_ms is not None and valid_uncertainty else None)
         events = recording.get("events") or []
         ready = next((event for event in events if event.get("type") == "ready"), None)
         playing_ms = report.get("preparation", {}).get("first_playing_after_ms")
@@ -637,7 +643,7 @@ def analyze(args):
             and stable is not None and latency_ms is not None and latency_ms >= 0
             and decoded_latency_ms is not None and decoded_latency_ms >= 0
             and calibration.get("method") == "bracketed_same_host_monotonic_to_browser_performance_clock"
-            and calibration.get("uncertainty_ms", 999) <= 50 and not errors)
+            and valid_uncertainty and not errors)
         cases.append({
             "label": label, "startup_class": run.get("startup_class"),
             "service_pid": run.get("service_pid"),
@@ -647,6 +653,7 @@ def analyze(args):
             "case_valid": valid,
             "recording_status": report.get("recording_status"),
             "sampling_status": sampling.get("status"),
+            "clock_calibration_uncertainty_ms": uncertainty_ms,
             "first_ready_after_collection_start_ms": report.get("preparation", {}).get("first_ready_after_ms"),
             "acceptance_latency_upper_bound_from_origin_first_PCM_write_ms": round(latency_ms, 1) if latency_ms is not None else None,
             "decoded_PCM_yield_to_visible_ms_diagnostic": round(decoded_latency_ms, 1) if decoded_latency_ms is not None else None,
