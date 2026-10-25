@@ -11,7 +11,7 @@
 
 本轮接续来源聊天为“登录 gh 并继续项目更新”（`01a16871-60bd-7253-ad52-f259a610c941`），自动化为`automation-2`。
 
-本轮已修复HTTPS信任/重定向、累计送音频节奏、直播watchdog误用、音轨PTS间隙压缩、preview超行、尾页闪现及重排换行、late-ready回退和累计直播等待。最终Python222通过/1Windows跳过，Node102通过，离线完整浏览器9/9。真实五分钟中文CER7.87%、英文WER1.66%；中文65秒快语速CER4.67%，参考7条已由用户逐条确认。自动分数和回放均不替代独立声学同步；英文AMI候选因含糊未确认，替代素材另行准备。
+本轮已修复HTTPS信任/重定向、累计送音频节奏、直播watchdog误用、音轨PTS间隙压缩、preview超行、尾页闪现及重排换行、late-ready回退和累计直播等待。最终Python222通过/1Windows跳过，Node102通过，离线完整浏览器9/9。真实五分钟中文CER7.87%、英文WER1.66%；中文65秒快语速CER4.67%，参考7条已由用户逐条确认。自动分数和回放均不替代独立声学同步；英文AMI候选因含糊未确认；新的[MIT连续83秒候选](docs/research/2026-10-25-english-fast-speech-second-replacement.md)已准备，等待用户同时核对自然速度、单人清晰和官方参考文字，未调用其识别。
 
 普通8002服务已恢复，页面/本地资源HTTP200、fixture404，配置只在内存。当前进程以持久notes的 `webui-resumed-final-process.json` 与 `webui-resumed-final-health.json` 为准；历史PID不可直接停止。真实批次已结束，原始事件、失败证据、哈希及141条听审包保留在忽略目录 `logs/original-caption-acceptance/real-2026-10-25/`。本轮仅本地提交，未推送、未创建远端Issue/PR。
 

@@ -133,3 +133,6 @@ Al Jazeera 最低码率英文来源在1038.982秒后以 `no_progress` 失败（�
 ## 接续后运行状态
 
 此前普通服务进程在后续接续时已不存在；2026-10-25下午恢复了相同代码的单个普通8002服务。页面及全部本地资源再次HTTP200并与保存文件匹配，`/__fixture/state`为404，配置仍只在内存（saved=false），本地媒体句柄0。进程及健康旁证位于持久notes的 `webui-resumed-final-process.json` / `webui-resumed-final-health.json`；恢复服务没有重新调用ASR或覆盖旧实验。
+
+
+英文已另准备[MIT OCW连续83.471秒候选](../research/2026-10-25-english-fast-speech-second-replacement.md)并给用户试听/参考核对；WAV为16kHz mono PCM，完整SHA-256 `f9633213924e851c9d7ef83504fa0e165150ccd7a33cb0829405a9e06fb02529`。它保持原始连续区间、无变速/拼接/额外静音，官方38条字幕已映射为评分参考；用户确认前保持语速、单人清晰与文字未确认，未新增付费识别。只读取了源视频的必要HTTP范围，完整源SHA-256明确未计算，与候选WAV完整哈希区分。
