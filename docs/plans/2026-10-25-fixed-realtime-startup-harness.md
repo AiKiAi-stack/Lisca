@@ -1,4 +1,4 @@
-# PRD 7.3 fixed real-time startup harness
+# Paced WAV startup diagnostics — not the HLS live gate
 
 This helper prepares one fixed prefix from each accepted five-minute reference
 WAV, serves each prefix at real-time pace on a separate loopback media port,
@@ -6,6 +6,15 @@ and measures the first stable caption in the existing real browser collector.
 It does not modify the provider or the existing collector. The optional WebUI
 wrapper observes the first decoded PCM chunk at the decoder boundary, before
 the chunk is yielded into the session loop; it does not observe wire arrival.
+
+## Method correction (2026-10-26)
+
+A paced HTTP WAV avoids backend local-file prefetch, but does **not** enter the
+WebUI's HLS live branch. The two recorded cold-pilot timings describe ordinary
+remote-WAV behavior; they cannot pass or fail PRD 7.3's live-HLS requirement.
+The analyzer now requires independently observed native HLS plus the HLS URL
+path, matching run metadata, and separately validated HLS provenance. Even 20
+fast, otherwise valid WAV cases cannot pass. Keep the 3 s target unchanged.
 
 ## Fixed media
 
@@ -138,39 +147,11 @@ AGENTS.md. If its cloud configuration exists only in process memory, re-enter
 it privately through the UI after restart; never put a key in the command line,
 environment, source files, or evidence.
 
-Run the first cold case and then the remaining 19 warm cases for a language.
-Each command starts exactly one real session; there are no retries. The CLI
-refuses a 21st case or duplicate label.
-
-    PID=<current-webui-pid>
-    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/fixed_realtime_startup_acceptance.py collect \
-      --language zh --label zh-startup-01 --startup-class cold \
-      --service-pid "$PID" --cold-first-session-confirmed --allow-real-recognition
-
-    for n in $(seq -w 2 20); do
-      /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/fixed_realtime_startup_acceptance.py collect \
-        --language zh --label "zh-startup-$n" --startup-class warm \
-        --service-pid "$PID" --allow-real-recognition
-    done
-
-The live collection commands above are future instructions only. Do not run
-them until a product-side decoder change (if accepted by the main agent) passes
-the actual-prefix preflight, and the current WebUI owner has been stopped and
-restarted by the operator for the cold batch. Restart the instrumented WebUI
-between language batches to obtain a cold case for English, privately reapply
-the in-memory configuration if needed, and use the same commands with en
-labels. For clarity, the English commands are:
-
-    PID=<new-webui-pid-after-restart>
-    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/fixed_realtime_startup_acceptance.py collect \
-      --language en --label en-startup-01 --startup-class cold \
-      --service-pid "$PID" --cold-first-session-confirmed --allow-real-recognition
-
-    for n in $(seq -w 2 20); do
-      /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/fixed_realtime_startup_acceptance.py collect \
-        --language en --label "en-startup-$n" --startup-class warm \
-        --service-pid "$PID" --allow-real-recognition
-    done
+Do not run a paid 20-case WAV batch for the live requirement. The existing
+one-case Chinese and English cold pilots remain diagnostic evidence only.
+A real HLS producer must enter the native and browser HLS paths and separately
+validate the generated media, full request log, source pacing, and earliest
+app audio-body boundary before it can use the shared statistics.
 
 Analyze each language from saved artifacts:
 
@@ -181,9 +162,10 @@ Analyze each language from saved artifacts:
 
 ## Evidence status
 
-The helper, fixed clips, source probes, and PyAV option experiment were
-validated offline. No real WebUI session was started by this work. The
-acceptance result remains false until
+The initial helper, fixed clips, source probes, and PyAV option experiment were
+validated offline. Two later real WAV cold pilots are recorded in the linked
+real acceptance log. They do not cover the HLS live pipeline. The shared live
+acceptance result remains false unless that pipeline is independently verified and
 each language has exactly 20 valid, non-simulated independent starts, the
 measured stable-caption P95 is at most 3000 ms, cold/warm evidence is present,
 and playback-delay and freeze observations are recorded. Missing captions,
