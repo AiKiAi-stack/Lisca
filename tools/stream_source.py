@@ -88,7 +88,9 @@ class StreamSource:
                 # Decode a few segments behind the edge for a stable startup.
                 # Alignment uses the decoded PTS, never the duration of a
                 # separately fetched sliding playlist.
-                options["live_start_index"] = "-3"
+                # Python io_open provides AVIOContexts without an FFmpeg HTTP
+                # URLContext; HLS keepalive assumes that URLContext exists.
+                options.update(live_start_index="-3", http_persistent="0")
             else:
                 # libavformat http protocol requires CRLF-terminated headers.
                 options["headers"] = "".join(f"{k}: {v}\r\n" for k, v in hdrs.items())
