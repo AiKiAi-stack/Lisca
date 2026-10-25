@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/43
+
 **What to build:** 中英文观看者能按 PRD 完成本地字幕旅程，维护者获得可核对的准确率、实际画面同步和控制请求证据。
 
 **Blocked by:** 01 配置识别服务并安全打开内容；02 在当前语音区间显示可读的原文短句；03 本地提前播放、静音放行与无进展退出；04 本地暂停跳转复用字幕并隔离旧会话；06 统一故障恢复预算并证明停止后没有新请求；07 把评分报告绑定到正确的识别输入。

@@ -2,6 +2,8 @@
 
 日期：2026-10-23（Asia/Shanghai）。依据[已确认的实现规格 / TR](2026-10-23-original-caption-release-spec.md)。
 
+2026-10-25：规格与12项任务已按用户要求迁移到GitHub：父规格[#34](https://github.com/AiKiAi-stack/stream-with-asr/issues/34)，子任务#35–#46。依赖、当前状态与后续实施见[GitHub映射](2026-10-25-original-caption-github-tracking.md)；下文不能登录时的记录保留为历史。
+
 **状态：已确认并正式保存，现已开始实施。** 用户于 2026-10-23 接受实现规格、测试边界、12 项任务粒度及阻塞关系，任务 10 保持一个任务、按中文/英文/频道分别留证。每个正式任务位于 `.scratch/original-caption-release/issues/`；默认 `ready-for-agent` 表示定义可执行，不代表依赖或外部前提已满足，也不代表已经实现。用户随后明确将 08/11 延后；逐项进度见[实施状态](2026-10-23-original-caption-implementation-status.md)。
 
 2026-10-24：01–07已完成代码及离线行为验证；09/10等待真实识别与参考听审，08/11延期，12发布门槛未通过。当前PRD继续实施，不开启下一份TR/spec。

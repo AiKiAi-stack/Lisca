@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/37
+
 **What to build:** 长本地视频无需整段处理完即可开始；静音可播放，识别无进展时用户能退出等待，而音频投送始终有界。
 
 **Blocked by:** None (can start immediately).

@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/36
+
 **What to build:** 观看者在真实播放器中看到与当前语音时间对应的完整短句，能阅读长句、快语速内容，并在全屏和窄屏继续操作。
 
 **Blocked by:** None (can start immediately).

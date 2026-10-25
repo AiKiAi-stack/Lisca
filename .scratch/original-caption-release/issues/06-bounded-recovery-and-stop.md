@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/40
+
 **What to build:** 用户能区分服务错误并看懂恢复过程；同次故障最多恢复 2 次，停止、仅播放和删除配置都能阻断后续处理与费用。
 
 **Blocked by:** None (can start immediately).

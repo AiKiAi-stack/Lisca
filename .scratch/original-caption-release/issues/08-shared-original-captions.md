@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/42
+
 **What to build:** 观众加入主机同一场直播，看到当前媒体对应的原文字幕；不会额外识别、读取 Key 或保留已停止会话的访问权。
 
 **Blocked by:** 05 直播字幕故障有界等待并恢复当前时间轴；06 统一故障恢复预算并证明停止后没有新请求。

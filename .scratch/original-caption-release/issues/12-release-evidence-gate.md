@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/46
+
 **What to build:** 维护者可依据同一候选版本和逐项证据判断是否达到首版门槛，用户获得准确的支持清单与限制说明。
 
 **Blocked by:** 08 局域网观众正确复用主机原文字幕；09 完成中英文本地质量与长文件体验验收；10 验收中英文直播、频道旅程并建立支持矩阵；11 在干净 Windows 完成安装、观看与隐私验收。

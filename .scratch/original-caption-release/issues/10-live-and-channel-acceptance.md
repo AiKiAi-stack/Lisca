@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/44
+
 **What to build:** 用户能判断哪些直播和频道已经验证可看，维护者对中文、英文直播分别持有完整稳定性与延迟证据。
 
 **Blocked by:** 01 配置识别服务并安全打开内容；02 在当前语音区间显示可读的原文短句；05 直播字幕故障有界等待并恢复当前时间轴；06 统一故障恢复预算并证明停止后没有新请求；07 把评分报告绑定到正确的识别输入。

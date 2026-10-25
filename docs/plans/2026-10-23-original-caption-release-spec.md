@@ -1,6 +1,7 @@
 # 原文字幕首版：实现规格 / TR
 
 - 日期：2026-10-23（Asia/Shanghai）。
+- GitHub规格：https://github.com/AiKiAi-stack/stream-with-asr/issues/34（2026-10-25按用户要求迁移；原确认范围不变）。
 - 状态：已确认。2026-10-23 用户已接受实现规格、测试边界和 12 项任务及依赖关系；本地任务已正式保存，开发和发布验收尚未完成。
 - 本地任务默认标签为 `ready-for-agent`，实际状态以逐项任务和[实施状态](2026-10-23-original-caption-implementation-status.md)为准。用户于 2026-10-23 要求将 08（局域网观众）及 11（干净 Windows）延后；依赖未完成或外部前提未具备时不得开始相应执行，不因状态标签就视为实现完成。
 - 需求基线：[原文字幕 PRD v1.0](2026-10-21-live-translation-prd.md)，架构约束：[ADR-0008](../adr/0008-original-language-captions.md)。

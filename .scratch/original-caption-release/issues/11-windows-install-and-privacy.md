@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/45
+
 **What to build:** 陌生 Windows 用户可以从启动到首次中英文观看，能恢复常见安装错误并管理 Key、媒体副本和日志。
 
 **Blocked by:** 01 配置识别服务并安全打开内容；02 在当前语音区间显示可读的原文短句；03 本地提前播放、静音放行与无进展退出；04 本地暂停跳转复用字幕并隔离旧会话；06 统一故障恢复预算并证明停止后没有新请求。

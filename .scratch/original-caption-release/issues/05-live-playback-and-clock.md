@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/39
+
 **What to build:** 直播字幕落后时媒体最多累计等待 2 秒，随后继续并提示缺失；字幕恢复或来源重连后重新对应当前节目。
 
 **Blocked by:** None (can start immediately).

@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/38
+
 **What to build:** 用户暂停、继续、前后跳转和切换内容后，字幕跟随当前媒体；已经完成识别的内容不会再次发起收费识别。
 
 **Blocked by:** None (can start immediately).

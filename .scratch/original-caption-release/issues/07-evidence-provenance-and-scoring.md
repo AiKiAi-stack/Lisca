@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/41
+
 **What to build:** 维护者对录音和参考集评分时能确认识别了哪个输入，不会把不完整、失败、翻译或错配的记录当作合格原文证据。
 
 **Blocked by:** None (can start immediately).

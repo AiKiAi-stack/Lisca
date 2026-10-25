@@ -2,6 +2,8 @@
 
 **Parent:** [本地实现规格](../../../docs/plans/2026-10-23-original-caption-release-spec.md)。
 
+**GitHub:** https://github.com/AiKiAi-stack/stream-with-asr/issues/35
+
 **What to build:** 用户在本机页面配置识别服务、判断检查连接的结果，并能打开有效输入；无效输入给出可操作原因，不启动无意义的识别。
 
 **Blocked by:** None (can start immediately).
