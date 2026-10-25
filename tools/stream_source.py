@@ -96,6 +96,9 @@ class StreamSource:
                 options["headers"] = "".join(f"{k}: {v}\r\n" for k, v in hdrs.items())
                 if is_https:
                     options.update(ca_file=self._ca_file, tls_verify="1")
+                if parsed_url.path.lower().endswith(".wav"):
+                    # Limit stream-info read-ahead for known paced WAV sources.
+                    options["analyzeduration"] = "100000"
         try:
             open_kwargs = {"timeout": (OPEN_TIMEOUT_SEC, READ_TIMEOUT_SEC)} if options else {}
             if is_hls:
