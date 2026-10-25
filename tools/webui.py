@@ -27,6 +27,7 @@ import time
 import warnings
 from collections import deque
 from itertools import chain
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 
 # 代理 verify=False 的告警压掉（ticket-17）
@@ -1307,6 +1308,13 @@ async def ws_endpoint(ws: WebSocket):
                 error_event.update(failure_category="no_progress", retryable=False)
             elif phase == "capacity":
                 error_event.update(failure_category="capacity", retryable=False)
+            elif phase == "media_decode":
+                reason = exc.reason if isinstance(exc, URLError) else exc
+                retryable = isinstance(reason, (TimeoutError, ConnectionError, socket.gaierror))
+                if isinstance(exc, HTTPError):
+                    retryable = exc.code in (408, 429) or 500 <= exc.code <= 599
+                error_event.update(failure_category="media_network" if retryable else "media_decode",
+                                   retryable=retryable)
             put(error_event)
         finally:
             try:

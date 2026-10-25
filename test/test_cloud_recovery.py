@@ -1,8 +1,10 @@
 """Recovery behavior through the owner HTTP session and WebSocket interfaces."""
 import os
 import sys
+import ssl
 import threading
 import time
+from urllib.error import HTTPError, URLError
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,6 +25,65 @@ class StructuredProviderFailure(Exception):
         super().__init__("sensitive provider detail")
         self.status_code = status_code
         self.code = code
+
+
+@pytest.mark.parametrize(("failure", "category", "retryable"), [
+    (TimeoutError("private read detail"), "media_network", True),
+    (URLError(TimeoutError("private read detail")), "media_network", True),
+    (ConnectionResetError("private read detail"), "media_network", True),
+    (HTTPError("https://media.test/private", 503, "private", {}, None), "media_network", True),
+    (HTTPError("https://media.test/private", 403, "private", {}, None), "media_decode", False),
+    (URLError(ssl.SSLCertVerificationError("private certificate detail")), "media_decode", False),
+    (ValueError("private decoder detail"), "media_decode", False),
+])
+def test_media_read_failure_exposes_safe_recovery_evidence_and_releases_session(
+        monkeypatch, failure, category, retryable):
+    closed = {"source": 0, "engine": 0}
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            yield b"\x01\x01" * 1600
+            raise failure
+
+        def close(self):
+            closed["source"] += 1
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            return (None, None, "", None)
+
+        def poll(self):
+            return (None, None, "", None)
+
+        def close(self):
+            closed["engine"] += 1
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "mode": "transcribe", "url": "https://media.test/live.m3u8",
+            "source": "auto",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    error = next(event for event in events if event["type"] == "error")
+    assert error["failure_category"] == category
+    assert error["retryable"] is retryable
+    assert "private" not in str(events)
+    assert "TEST_ONLY_KEY" not in str(events)
+    assert events[-1] == {"type": "end", "reason": "error"}
+    assert closed == {"source": 1, "engine": 1}
 
 
 def test_cloud_ws_exposes_provider_permission_evidence_without_raw_error(monkeypatch):
