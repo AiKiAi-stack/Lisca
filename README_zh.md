@@ -18,6 +18,8 @@
 
 2026-10-24 的自动回归使用真实播放器和模拟识别，不能当作真实语音准确率通过。干净 Windows 安装及第二台局域网设备验收仍待完成；当前尚未达到 PRD 发布门槛。
 
+2026-10-25追加的Ubuntu真实识别、控制与直播结果见[验收记录](docs/plans/2026-10-24-original-caption-real-acceptance.md)与[逐来源支持边界](docs/research/2026-10-25-original-caption-support-matrix.md)；各项失败、未测同步和外部验收单独保留。
+
 平台页面与公开 IPTV 清单仅是来源候选，不能保证所有地址始终可播；已知网络、账号和地区限制需按来源验证。参见[来源调研](docs/research/2026-10-21-media-source-baseline.md)和[产品需求](docs/plans/2026-10-21-live-translation-prd.md)。
 
 启动诊断：从项目目录运行 `.venv\Scripts\python.exe tools\windows_launcher.py --check`，或直接使用 `.venv\Scripts\python.exe tools\webui.py --port 8002`；依赖清单是 `requirements-webui.txt`。启动日志位于 `logs/webui-windows.log`，配置位于项目的 `.data/`，视频副本位于 `uploads/`。

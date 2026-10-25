@@ -8,6 +8,8 @@ Audio is sent to DashScope and billed to your API account. Keys are in memory by
 
 Local audio can be processed ahead of playback. Once recognition completes, pause and seek reuse the captions without another recognition request. Captions follow audio timestamps and appear as short phrases rather than word-by-word drafts. The supplied 30.12-second Chinese video took about 8.1 seconds to recognize on this machine; other files can differ. Recognition errors remain possible. Live-source coverage, other languages and long-running playback require further acceptance testing.
 
+The 2026-10-25 Ubuntu continuation records real corpus scores, control checks and live-source limitations in the [acceptance record](docs/plans/2026-10-24-original-caption-real-acceptance.md) and [source matrix](docs/research/2026-10-25-original-caption-support-matrix.md). Windows and independent timing acceptance remain separate.
+
 See the [Chinese getting-started guide](README_zh.md), [current product decision](docs/adr/0008-original-language-captions.md), [PRD](docs/plans/2026-10-21-live-translation-prd.md), and [UI acceptance record](docs/ui-design.md). The original toolkit documentation follows.
 
 [English](./README.md) | [中文](./README_zh.md)

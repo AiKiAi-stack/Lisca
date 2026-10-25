@@ -1,8 +1,21 @@
 # stream-with-asr 开发上下文交接
 
-更新日期：2026-10-24，Asia/Shanghai。交接对象：在**同一台双系统电脑的 Ubuntu** 上继续开发的 Codex。
+更新日期：2026-10-25，Asia/Shanghai。交接对象：在**同一台双系统电脑的 Ubuntu** 上继续开发的 Codex。
 
 这是上下文交接，不是迁移到另一台机器。项目、媒体、日志仍在共用磁盘上；进入 Ubuntu 后按实际挂载位置打开同一个仓库即可。下文路径默认相对仓库根目录，仓库外资料使用相对路径另行说明。不要因为 Windows Codex 的聊天上下文不可继承而重新克隆、重做已有功能或删除旧证据。
+
+
+## 最新接续入口（2026-10-25）
+
+产品代码已到 `4405842`，当前分支仍为 `feat/original-caption-release`；下文10月24日及更早的HEAD、服务和“尚未真实识别”描述是历史快照。接手时先读[实施状态](docs/plans/2026-10-23-original-caption-implementation-status.md)，涉及真实质量或长测时再读[真实验收记录](docs/plans/2026-10-24-original-caption-real-acceptance.md)与[支持边界](docs/research/2026-10-25-original-caption-support-matrix.md)。
+
+本轮接续来源聊天为“登录 gh 并继续项目更新”（`01a16871-60bd-7253-ad52-f259a610c941`），自动化为`automation-2`。
+
+本轮已修复HTTPS信任/重定向、累计送音频节奏、直播watchdog误用、音轨PTS间隙压缩、preview超行、尾页闪现及重排换行、late-ready回退和累计直播等待。最终Python222通过/1Windows跳过，Node102通过，离线完整浏览器9/9。真实五分钟中文CER7.87%、英文WER1.66%；中文65秒快语速CER4.67%，参考7条已由用户逐条确认。自动分数和回放均不替代独立声学同步；英文AMI候选因含糊未确认，替代素材另行准备。
+
+普通8002服务已恢复，页面/本地资源HTTP200、fixture404，配置只在内存。当前进程以持久notes的 `webui-resumed-final-process.json` 与 `webui-resumed-final-health.json` 为准；历史PID不可直接停止。真实批次已结束，原始事件、失败证据、哈希及141条听审包保留在忽略目录 `logs/original-caption-acceptance/real-2026-10-25/`。本轮仅本地提交，未推送、未创建远端Issue/PR。
+
+继续时先核对新的英文候选是否已经获用户试听/参考确认；前提具备后才做有上限识别。随后按09/10补独立50句声学起止/覆盖率、20次固定实时启动及修复后长测延迟，逐项更新证据。08/11继续按用户决定延期，12仍未通过。每项以实测结果为完成条件，保留失败与未确认项。
 
 ## 1. 接手后先知道这些
 
