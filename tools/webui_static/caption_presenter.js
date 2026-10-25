@@ -71,38 +71,57 @@
     if (line) result.push(line);
     return result;
   }
-  function wrapTokens(tokens, maxWidth, measureText) {
+  function wrapTokenRows(tokens, maxWidth, measureText) {
     const lines = [];
     let line = '';
     let pendingSpace = '';
+    let tokenStart = -1;
+    let tokenEnd = -1;
+    let splitToken = false;
     const flush = () => {
-      if (line) lines.push(line.trimEnd());
+      if (line) lines.push({text:line.trimEnd(), tokenStart, tokenEnd, splitToken});
       line = '';
       pendingSpace = '';
+      tokenStart = -1;
+      tokenEnd = -1;
+      splitToken = false;
     };
-    for (const token of tokens) {
+    for (let index = 0; index < tokens.length; index++) {
+      const token = tokens[index];
       if (/^\s+$/u.test(token)) {
-        if (line) pendingSpace += token;
+        if (line) pendingSpace += token.replace(/[\r\n]+/gu, ' ');
         continue;
       }
       if (measureText(token) > maxWidth) {
         flush();
         const pieces = splitWideToken(token, maxWidth, measureText);
-        if (pieces.length > 1) lines.push(...pieces.slice(0, -1));
+        if (pieces.length > 1) {
+          lines.push(...pieces.slice(0, -1).map(text => ({text, tokenStart:index, tokenEnd:index + 1, splitToken:true})));
+        }
         line = pieces.at(-1) || '';
+        tokenStart = index;
+        tokenEnd = index + 1;
+        splitToken = pieces.length > 1;
         continue;
       }
       const candidate = line ? line + pendingSpace + token : token.trimStart();
       if (line && measureText(candidate) > maxWidth) {
         flush();
         line = token.trimStart();
+        tokenStart = index;
+        tokenEnd = index + 1;
       } else {
         line = candidate;
+        if (tokenStart < 0) tokenStart = index;
+        tokenEnd = index + 1;
       }
       pendingSpace = '';
     }
     flush();
     return lines;
+  }
+  function wrapTokens(tokens, maxWidth, measureText) {
+    return wrapTokenRows(tokens, maxWidth, measureText).map(row => row.text);
   }
   function balanceTailPages(tokens, maxWidth, measureText, maxLines, pageCount) {
     // A partial last page can flash too briefly. Reflow only the final few
@@ -157,20 +176,19 @@
     return best?.groups || null;
   }
   function balancedTextPages(tokens, maxWidth, measureText, maxLines) {
-    const rows = wrapTokens(tokens, maxWidth, measureText);
-    const pages = Array.from({length:Math.ceil(rows.length / maxLines)}, (_, i) =>
-      rows.slice(i * maxLines, (i + 1) * maxLines));
+    const detailedRows = wrapTokenRows(tokens, maxWidth, measureText);
+    const pages = Array.from({length:Math.ceil(detailedRows.length / maxLines)}, (_, i) =>
+      detailedRows.slice(i * maxLines, (i + 1) * maxLines).map(row => row.text));
     if (pages.length < 2 || pages.at(-1).length === maxLines) return pages;
 
     const tailPageCount = Math.min(3, pages.length);
-    const tailText = pages.slice(-tailPageCount).map(page => page.join('\n')).join(' ');
-    const tailTokens = captionTokens(tailText);
+    const tailRows = detailedRows.slice((pages.length - tailPageCount) * maxLines);
+    if (tailRows.some(row => row.splitToken)) return pages;
+    const tailTokens = tokens.slice(tailRows[0].tokenStart, tailRows.at(-1).tokenEnd);
     const preceding = pages.slice(0, -tailPageCount);
     const tailPages = balanceTailPages(tailTokens, maxWidth, measureText, maxLines, tailPageCount);
     if (!tailPages) return pages;
     return [...preceding, ...tailPages];
-
-    function pageWeightFor(page) { return page.reduce((sum, row) => sum + measureText(row), 0); }
   }
   function paginateText(text, {maxWidth, measureText, maxLines=2} = {}) {
     if (typeof measureText !== 'function') throw new TypeError('measureText callback is required');

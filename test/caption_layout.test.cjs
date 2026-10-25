@@ -30,6 +30,20 @@ test('preview pagination preserves English words across mixed-language switching
  }
 });
 
+test('tail balancing does not count carried soft wraps as one rendered row',()=>{
+ const text='Journalists reported on a regional flood response, reviewing public records and speaking with families, first responders, and local officials.';
+ const narrowMeasure=value=>Array.from(value).reduce((sum,char)=>sum+(/[il]/u.test(char)?4:8),0);
+ const pages=CaptionLayout.paginateText(text,{maxWidth:80,measureText:narrowMeasure,maxLines:2});
+ assert.ok(pages.length>1);
+ for(const page of pages){
+  const rows=page.text.split('\n');
+  assert.ok(rows.length<=2,page.text);
+  for(const row of rows)assert.ok(narrowMeasure(row)<=80,row);
+ }
+ assert.equal(withoutSpaces(pages.map(page=>page.text).join(' ')),withoutSpaces(text));
+ assert.deepEqual(words(pages.map(page=>page.text).join(' ')),words(text));
+});
+
 test('timed pagination keeps complete ASR words and maps pages to their actual word times',()=>{
  const text='The durable filter works well.';
  const spans=[

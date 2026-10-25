@@ -1,11 +1,11 @@
 const {test}=require('node:test'); const assert=require('node:assert/strict'); const fs=require('node:fs'); const vm=require('node:vm'); const path=require('node:path');
 test('diagnostic log keeps source identity but hides signed URL query values',()=>{const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');const elements=new Map();const c={URL,document:{getElementById(id){if(!elements.has(id))elements.set(id,{hidden:true,value:'',onclick:null});return elements.get(id);}}};vm.createContext(c);const start=html.indexOf("const logBtn = document.getElementById('logBtn');"),end=html.indexOf('// 字幕开关',start);vm.runInContext(html.slice(start,end),c);c.logEvent('connect','https://media.test/video.mp4?token=private-token&sig=private-signature rtsp://media.test/live?auth=private-rtsp-auth');const line=vm.runInContext('logBuffer[0]',c);assert.match(line,/media\.test\/video\.mp4/);assert.match(line,/media\.test\/live/);assert.doesNotMatch(line,/private-token|private-signature|private-rtsp-auth/);});
-function browser({playerWidth=260,fontSize=30}={}){
+function browser({playerWidth=260,fontSize=30,cssMaxWidth='90%'}={}){
  const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
  const element=()=>({textContent:'',hidden:true,dataset:{},classList:{contains:()=>false},style:{},remove(){}});
  const current=element(), late=element();
  current.style.fontSize=`${fontSize}px`;const playerWrap={clientWidth:playerWidth};
- const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preserveLiveMedia:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:20000,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontStyle:'normal',fontWeight:'600',fontSize:element.style.fontSize||'30px',fontFamily:'Arial, sans-serif',letterSpacing:'normal',paddingLeft:'10px',paddingRight:'10px',borderLeftWidth:'0px',borderRightWidth:'0px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
+ const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preserveLiveMedia:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:20000,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontStyle:'normal',fontWeight:'600',fontSize:element.style.fontSize||'30px',fontFamily:'Arial, sans-serif',letterSpacing:'normal',maxWidth:element.style.maxWidth||cssMaxWidth,paddingLeft:'10px',paddingRight:'10px',borderLeftWidth:'0px',borderRightWidth:'0px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
  const moduleFile=path.join(__dirname,'../tools/webui_static/caption_presenter.js');
  if(fs.existsSync(moduleFile)){const module=require(moduleFile);context.CaptionPresenter=module.CaptionPresenter;context.CaptionLayout=module.CaptionLayout;context.lines=()=>[];context.captionPresenter=new context.CaptionPresenter();}
  vm.createContext(context);
@@ -341,6 +341,13 @@ test('stable caption pages are cached and resize changes the layout key',()=>{
  const resized=b.context.captionSegments(cue);
  assert.notStrictEqual(resized,first);
  assertOriginalPages(b,resized,text);
+});
+test('caption width follows computed CSS max-width across the media breakpoint',()=>{
+ for(const [playerWidth,cssMaxWidth,ratio] of [[694,'90%',.90],[341,'94%',.94]]){
+  const b=browser({playerWidth,cssMaxWidth});
+  const expected=(playerWidth*ratio-20)*.97;
+  assert.ok(Math.abs(b.context.captionLayoutOptions().maxWidth-expected)<.01,{playerWidth,cssMaxWidth});
+ }
 });
 test('long large-font captions do not leave sub-600ms orphan pages',()=>{
  const b=browser({playerWidth:288,fontSize:64});

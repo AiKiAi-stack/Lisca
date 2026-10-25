@@ -569,7 +569,11 @@
     const style = getComputedStyle(currentEl);
     const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
     const border = (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
-    const maxBoxWidth = playerWidth * (playerWidth <= 720 ? .94 : .90);
+    const cssMaxWidth = String(style.maxWidth || '').trim();
+    const percentMaxWidth = cssMaxWidth.endsWith('%') ? Number.parseFloat(cssMaxWidth) / 100 : null;
+    const pixelMaxWidth = cssMaxWidth.endsWith('px') ? Number.parseFloat(cssMaxWidth) : null;
+    const maxBoxWidth = Number.isFinite(percentMaxWidth) ? playerWidth * percentMaxWidth
+      : Number.isFinite(pixelMaxWidth) ? Math.min(playerWidth, pixelMaxWidth) : playerWidth * .90;
     const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
     const maxWidth = Math.max(1, (maxBoxWidth - padding - border) * .97);
     return {maxWidth,
