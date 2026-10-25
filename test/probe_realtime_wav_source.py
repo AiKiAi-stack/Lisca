@@ -100,7 +100,9 @@ def run(language, output=DEFAULT_OUTPUT):
 def compare_open_options(language, output=DEFAULT_OUTPUT):
     """Compare one FFmpeg open option at a time against the unchanged baseline.
 
-    The same fixed prefix is delivered over the paced local HTTP origin. Every
+    The diagnostic baseline removes the product's WAV analysis limit before
+    applying each one-variable variant. The same fixed prefix is delivered over
+    the paced local HTTP origin. Every
     run fully decodes the stream, so byte count and SHA-256 detect dropped or
     changed PCM. This is diagnostic only and makes no provider calls.
     """
@@ -129,10 +131,13 @@ def compare_open_options(language, output=DEFAULT_OUTPUT):
             open_timing = {}
 
             def measured_open(*args, _option=option, **kwargs):
+                options = dict(kwargs.get("options") or {})
+                options.pop("analyzeduration", None)
                 if _option is not None:
-                    options = dict(kwargs.get("options") or {})
                     options[_option[0]] = _option[1]
-                    kwargs["options"] = options
+                kwargs["options"] = options
+                open_timing["analysis_options"] = {
+                    key: options[key] for key in ("analyzeduration", "probesize") if key in options}
                 started_ns = time.monotonic_ns()
                 try:
                     return original_open(*args, **kwargs)
@@ -166,6 +171,7 @@ def compare_open_options(language, output=DEFAULT_OUTPUT):
                 stream_source_module.av.open = original_open
             rows.append({
                 "variant": name,
+                "analysis_options": open_timing["analysis_options"],
                 "provider_calls": 0,
                 "av_open_elapsed_ms": open_timing.get("elapsed_ms"),
                 "constructor_elapsed_ms": round((constructor_done_ns - started_ns) / 1e6, 1),
@@ -187,6 +193,8 @@ def compare_open_options(language, output=DEFAULT_OUTPUT):
         thread.join(timeout=2)
 
     baseline = rows[0]
+    assert [row["analysis_options"] for row in rows] == [
+        {}, {"analyzeduration": "100000"}, {"probesize": "32768"}], "probe variants are not isolated"
     origin_rows = _read_jsonl(origin_log)
     origins_by_case = {
         row.get("case_id"): row for row in origin_rows
@@ -214,6 +222,7 @@ def compare_open_options(language, output=DEFAULT_OUTPUT):
     }
     result = {
         "probe_only": True,
+        "baseline": "counterfactual default analysis with the product WAV limit removed",
         "provider_calls": 0,
         "language": language,
         "source_sha256": manifest["source_sha256"],
