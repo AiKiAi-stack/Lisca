@@ -3,6 +3,8 @@
 The collector never configures recognition credentials or alters service routes.
 Local files run to both video EOF and the normal recognition end event. HTTP(S)
 sources stop at ``--seconds`` and are recorded as cancelled by that cap.
+``--observe-recovery`` is remote-only; it samples through retryable UI recovery
+within the same cap, while retaining every error and a failed run status.
 """
 import argparse
 from datetime import datetime, timezone
@@ -42,6 +44,7 @@ EVENT_FIELDS = {
 URL_PATTERN = re.compile(r"(?i)\b(?:https?|wss?)://[^\s<>\"']+")
 BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/-]+=*")
 PROVIDER_KEY_PATTERN = re.compile(r"(?i)\bsk-[a-z0-9_-]{16,}\b")
+RECOVERY_BACKOFF_GRACE_SECONDS = 2.5
 SENSITIVE_NAMES = {
     "api_key", "access_token", "refresh_token", "token", "session", "session_id",
     "session_token", "password", "passwd", "secret", "credential", "authorization",
@@ -119,6 +122,16 @@ def sanitize_ws_event(event, observed_after_ms):
     return safe
 
 
+def _safe_sentence_identifier(value):
+    if isinstance(value, str):
+        return sanitize_text(value)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    return None
+
+
 def _endpoint_category(method, path):
     method = str(method).upper()
     if path == "/share/start" and method == "POST":
@@ -163,6 +176,7 @@ SAMPLER_START = r"""() => {
     const video = document.querySelector('#player');
     const caption = document.querySelector('#current');
     const status = document.querySelector('#status');
+    const retry = document.querySelector('#retryCaptions');
     if (!video || !caption || !status) return;
     const css = getComputedStyle(caption);
     const lineHeight = parseFloat(css.lineHeight) || parseFloat(css.fontSize) * 1.3;
@@ -193,6 +207,7 @@ SAMPLER_START = r"""() => {
         && caption.getClientRects().length > 0,
       status: status.innerText || '',
       status_is_error: status.classList.contains('err') || caption.classList.contains('err'),
+      retry_visible: !!retry && !retry.hidden && retry.getClientRects().length > 0,
       line_count: text.trim() ? (caption.scrollHeight - padding) / lineHeight : 0,
       clipped: caption.scrollWidth > caption.clientWidth + 1,
       height_clipped: caption.scrollHeight > caption.clientHeight + 1
@@ -217,9 +232,21 @@ def drain_samples(page):
 def write_browser_recording(media_path, output_path, events, status, completion_signal,
                             completion_reason, errors, started_at, started, metadata,
                             source_before=None):
-    safe_events = [sanitize_ws_event(event, event.get("observed_after_ms", 0))
-                   for event in events if isinstance(event, dict)]
-    safe_events = [event for event in safe_events if event is not None]
+    safe_events = []
+    for source_event in events:
+        if not isinstance(source_event, dict):
+            continue
+        event = sanitize_ws_event(source_event, source_event.get("observed_after_ms", 0))
+        if event is None:
+            continue
+        generation = source_event.get("connection_generation")
+        if isinstance(generation, int) and not isinstance(generation, bool) and generation > 0:
+            event["connection_generation"] = generation
+        if "provider_sentence_id" in source_event:
+            sentence_id = _safe_sentence_identifier(source_event["provider_sentence_id"])
+            if sentence_id is not None:
+                event["provider_sentence_id"] = sentence_id
+        safe_events.append(event)
     result = write_recording(
         media_path, output_path, safe_events, status, completion_signal, completion_reason,
         [_safe_value(error) for error in errors], started_at, started,
@@ -300,6 +327,7 @@ def collect(args):
     output_dir = args.output or ROOT / "logs" / "real-browser-acceptance"
     recording_path, report_path, score_path = _result_paths(output_dir, args.label)
     remote = args.media.startswith(("http://", "https://"))
+    observe_recovery = bool(getattr(args, "observe_recovery", False))
     media_path = safe_remote_source(args.media) if remote else str(Path(args.media).resolve())
     started_at = None
     started = None
@@ -308,6 +336,8 @@ def collect(args):
     posts = {"count": 0, "started": None}
     session_post_statuses = []
     delete_responses = []
+    connection_generation = {"latest": 0}
+    latest_retryable_error = {"generation": None, "at": None}
     stop_state = {"requested": False, "trigger": None, "delete_status": None}
     source_before = None
     if not remote:
@@ -355,7 +385,7 @@ def collect(args):
             samples.extend(batch)
             video_eof |= any(sample.get("ended") for sample in batch)
 
-    def on_frame(payload):
+    def on_frame(payload, generation=None):
         if isinstance(payload, bytes):
             try:
                 payload = payload.decode("utf-8")
@@ -367,11 +397,26 @@ def collect(args):
             return
         event = sanitize_ws_event(raw, (time.monotonic() - started) * 1000)
         if event:
+            if observe_recovery and generation is not None:
+                event["connection_generation"] = generation
+                if event["type"] in ("subtitle", "caption_remove", "preview"):
+                    original_id = _safe_sentence_identifier(event.get("sentence_id"))
+                    if original_id is not None:
+                        event["provider_sentence_id"] = original_id
+                        event["sentence_id"] = f"generation-{generation}:{original_id}"
+                    elif event.get("sentence_id") is not None:
+                        # Invalid compound IDs cannot safely identify a scorer cue.
+                        event.pop("sentence_id", None)
             events.append(event)
             if event["type"] == "error":
-                errors.append({"type": "recognition_error",
-                               "failure_category": event.get("failure_category"),
-                               "retryable": event.get("retryable")})
+                error = {"type": "recognition_error",
+                         "failure_category": event.get("failure_category"),
+                         "retryable": event.get("retryable")}
+                if event.get("connection_generation") is not None:
+                    error["connection_generation"] = event["connection_generation"]
+                errors.append(error)
+                if observe_recovery and event.get("retryable") is True:
+                    latest_retryable_error.update(generation=generation, at=time.monotonic())
 
     def count_session_post(route):
         if route.request.method.upper() == "POST":
@@ -402,10 +447,42 @@ def collect(args):
         if request.method.upper() == "POST" and path == "/api/cloud/sessions":
             session_post_failures.append({"type": "session_start_request_failed"})
 
+    def on_socket_error(message, generation=None):
+        error = classify_runtime_error("websocket", message)[1]
+        if generation is not None:
+            error["connection_generation"] = generation
+        websocket_errors.append(error)
+
     def on_websocket(socket):
+        if observe_recovery:
+            try:
+                if urlsplit(socket.url).path != "/ws":
+                    return
+            except (AttributeError, TypeError, ValueError):
+                websocket_errors.append({"type": "websocket_transport_error"})
+                return
+            connection_generation["latest"] += 1
+            generation = connection_generation["latest"]
+            socket.on("framereceived", lambda payload, generation=generation:
+                      on_frame(payload, generation))
+            socket.on("socketerror", lambda message, generation=generation:
+                      on_socket_error(message, generation))
+            return
         socket.on("framereceived", on_frame)
-        socket.on("socketerror", lambda message: websocket_errors.append(
-            classify_runtime_error("websocket", message)[1]))
+        socket.on("socketerror", on_socket_error)
+
+    def latest_end_event():
+        if not observe_recovery:
+            return next((event for event in reversed(events) if event["type"] == "end"), None)
+        generation = connection_generation["latest"]
+        return next((event for event in reversed(events)
+                     if event["type"] == "end"
+                     and event.get("connection_generation") == generation), None)
+
+    def has_retryable_error(generation):
+        return any(event.get("type") == "error"
+                   and event.get("connection_generation") == generation
+                   and event.get("retryable") is True for event in events)
 
     def on_console(message):
         if message.type == "error":
@@ -482,15 +559,36 @@ def collect(args):
                         if args.stop_file and args.stop_file.exists():
                             stop_active("operator_signal")
                             break
-                        end = next((e for e in reversed(events) if e["type"] == "end"), None)
+                        end = latest_end_event()
                         player_failure = next((fatal_player_sample(sample)
                                                for sample in reversed(samples[-5:])
                                                if fatal_player_sample(sample)), None)
                         if player_failure:
                             errors.append(player_failure)
+                        event_errors = [event for event in events if event["type"] == "error"]
+                        nonretryable_error = any(event.get("retryable") is not True
+                                                 for event in event_errors)
+                        fatal_event_error = bool(event_errors) and (
+                            not observe_recovery or nonretryable_error)
+                        latest_sample = samples[-1] if samples else {}
+                        retry_ui_exhausted = (
+                            observe_recovery
+                            and latest_sample.get("retry_visible") is True
+                            and latest_sample.get("status_is_error") is True
+                        )
+                        # The live UI exposes exhausted recovery as a persistent manual-retry
+                        # button, not an error-class status. Its automatic backoff tops out at 2s.
+                        retry_ui_exhausted |= (
+                            observe_recovery
+                            and latest_sample.get("retry_visible") is True
+                            and latest_retryable_error["generation"] == connection_generation["latest"]
+                            and latest_retryable_error["at"] is not None
+                            and time.monotonic() - latest_retryable_error["at"]
+                            >= RECOVERY_BACKOFF_GRACE_SECONDS
+                        )
                         if (page_errors or websocket_errors or player_failure
-                                or session_post_failures
-                                or any(e["type"] == "error" for e in events)):
+                                or session_post_failures or fatal_event_error
+                                or retry_ui_exhausted):
                             errors.extend(session_post_failures)
                             break
                         if not posts["count"]:
@@ -512,7 +610,10 @@ def collect(args):
                                 stop_active("observation_cap")
                                 break
                             if end:
-                                break
+                                if not (observe_recovery
+                                        and end.get("reason") in ("error", "failed")
+                                        and has_retryable_error(connection_generation["latest"])):
+                                    break
                         elif end:
                             if end.get("reason") != "completed" or video_eof:
                                 break
@@ -525,8 +626,8 @@ def collect(args):
                         page.wait_for_timeout(200)
 
                     drain()
-                    last_reason = next((e.get("reason") for e in reversed(events)
-                                        if e.get("type") == "end"), None)
+                    last_end = latest_end_event()
+                    last_reason = last_end.get("reason") if last_end else None
                     if not remote and last_reason == "completed" and video_eof and not errors and not page_errors:
                         before = posts["count"]
                         checkpoint_dir = Path(output_dir).expanduser() / args.label
@@ -549,7 +650,8 @@ def collect(args):
     errors.extend(page_errors)
     errors.extend(websocket_errors)
     terminal_reasons = [e.get("reason") for e in events if e.get("type") == "end"]
-    last_reason = terminal_reasons[-1] if terminal_reasons else None
+    last_end = latest_end_event()
+    last_reason = last_end.get("reason") if last_end else None
     terminal_error = last_reason in ("error", "failed")
     if terminal_error and not any(error.get("type") == "terminal_error" for error in errors):
         errors.append({"type": "terminal_error"})
@@ -581,6 +683,8 @@ def collect(args):
                 "session_post_start_count": posts["count"], "video_eof_observed": video_eof,
                 "live_seconds_cap_reached": live_cap,
                 "operator_stop": stop_state.copy()}
+    if observe_recovery:
+        metadata["observe_recovery"] = True
     recording = write_browser_recording(media_path, recording_path, events, status, signal, reason,
                                         errors, started_at, started, metadata, source_before)
     errors = recording.get("errors", errors)
@@ -658,6 +762,8 @@ def parse_args(argv=None):
     parser.add_argument("--output", type=Path, default=None, help="Artifact output directory")
     parser.add_argument("--seconds", type=float, default=300,
                         help="Maximum observation seconds for HTTP(S) sources")
+    parser.add_argument("--observe-recovery", action="store_true",
+                        help="Keep sampling retryable live recognition recovery; errors still fail the run")
     parser.add_argument("--timeout", type=float, default=420,
                         help="Maximum wall seconds for local-file recognition and playback")
     parser.add_argument("--reference", type=Path, help="Optional fixed reference manifest")
@@ -669,6 +775,8 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if args.stop_file and args.stop_file.exists():
         parser.error("--stop-file already exists; no observation was started")
+    if args.observe_recovery and not args.media.startswith(("http://", "https://")):
+        parser.error("--observe-recovery is supported only for HTTP(S) sources")
     if not args.media.startswith(("http://", "https://")):
         args.media = str(Path(args.media).expanduser().resolve())
     if not math.isfinite(args.seconds) or args.seconds <= 0:

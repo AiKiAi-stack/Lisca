@@ -1,6 +1,8 @@
 import json
 import time
 
+import pytest
+
 import run_real_browser_acceptance as acceptance
 
 
@@ -117,3 +119,328 @@ def test_error_message_presence_survives_recording_sanitization_without_raw_text
 
     assert recording["events"][0]["message_present"] is True
     assert "private provider details" not in (tmp_path / "error.json").read_text()
+
+
+def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_start,
+                                   observe_recovery=True):
+    clock = {"now": 100.0}
+
+    class Request:
+        def __init__(self, method, url):
+            self.method = method
+            self.url = url
+
+    class Response:
+        def __init__(self, request, status):
+            self.request = request
+            self.url = request.url
+            self.status = status
+
+    class Socket:
+        def __init__(self, url="ws://127.0.0.1:8002/ws?session=TEST_ONLY_SOCKET_CAPABILITY"):
+            self.url = url
+            self.listeners = {}
+
+        def on(self, name, callback):
+            self.listeners[name] = callback
+
+        def send(self, event):
+            self.listeners["framereceived"](json.dumps(event))
+
+    class Locator:
+        def __init__(self, page, selector):
+            self.page = page
+            self.selector = selector
+
+        def fill(self, _value):
+            pass
+
+        def click(self):
+            if self.selector == "#start":
+                self.page.start()
+            elif self.selector == "#stop":
+                self.page.stop()
+
+        def is_visible(self):
+            return self.selector == "#stop" and self.page.active
+
+    class Page:
+        def __init__(self):
+            self.handlers = {}
+            self.routes = []
+            self.scheduled = []
+            self.sample_buffer = []
+            self.next_sample_at = None
+            self.sampler_started_at = None
+            self.active = False
+            self.status = "正在识别音频…"
+            self.status_is_error = False
+            self.retry_visible = False
+            self.caption = ""
+
+        def on(self, name, callback):
+            self.handlers.setdefault(name, []).append(callback)
+
+        def route(self, _pattern, callback):
+            self.routes.append(callback)
+
+        def set_default_timeout(self, _milliseconds):
+            pass
+
+        def goto(self, *_args, **_kwargs):
+            pass
+
+        def locator(self, selector):
+            return Locator(self, selector)
+
+        def evaluate(self, script):
+            if script == acceptance.SAMPLER_START:
+                self.sampler_started_at = clock["now"]
+                self.next_sample_at = clock["now"]
+                self._sample()
+                return None
+            if "__realAcceptanceSampler?.drain()" in script:
+                batch, self.sample_buffer = self.sample_buffer, []
+                return batch
+            if "__realAcceptanceSampler?.stop()" in script:
+                self._sample()
+                return None
+            raise AssertionError(f"Unexpected collector page evaluation: {script}")
+
+        def _sample(self):
+            elapsed = max(0.0, clock["now"] - self.sampler_started_at)
+            self.sample_buffer.append({
+                "observed_after_ms": round(elapsed * 1000),
+                "media_time": elapsed,
+                "duration": None,
+                "ended": False,
+                "paused": False,
+                "seeking": False,
+                "ready_state": 4,
+                "network_state": 1,
+                "media_error_code": 0,
+                "buffering": False,
+                "buffered_ahead_seconds": 1.0,
+                "visible_text": self.caption,
+                "visible": bool(self.caption),
+                "status": self.status,
+                "status_is_error": self.status_is_error,
+                "retry_visible": self.retry_visible,
+                "line_count": 1 if self.caption else 0,
+                "clipped": False,
+                "height_clipped": False,
+            })
+
+        def _post(self, method):
+            url = (acceptance.BASE + "/api/cloud/sessions" if method == "POST" else
+                   acceptance.BASE + "/api/cloud/sessions/TEST_ONLY_SESSION_CAPABILITY")
+            request = Request(method, url)
+            if method == "POST":
+                for callback in self.routes:
+                    callback(type("Route", (), {"request": request,
+                                                    "continue_": lambda _self: None})())
+            for callback in self.handlers.get("response", []):
+                callback(Response(request, 200))
+
+        def open_session(self):
+            self._post("POST")
+            return self.open_socket()
+
+        def open_socket(self, url="ws://127.0.0.1:8002/ws?session=TEST_ONLY_SOCKET_CAPABILITY"):
+            socket = Socket(url)
+            for callback in self.handlers.get("websocket", []):
+                callback(socket)
+            return socket
+
+        def start(self):
+            self.active = True
+            on_start(self)
+
+        def stop(self):
+            self.active = False
+            self._post("DELETE")
+
+        def schedule(self, after_seconds, callback):
+            self.scheduled.append((clock["now"] + after_seconds, callback))
+            self.scheduled.sort(key=lambda event: event[0])
+
+        def wait_for_timeout(self, milliseconds):
+            target = clock["now"] + milliseconds / 1000
+            while self.scheduled and self.scheduled[0][0] <= target:
+                at, callback = self.scheduled.pop(0)
+                clock["now"] = at
+                callback()
+            clock["now"] = target
+            while self.next_sample_at is not None and self.next_sample_at <= target:
+                self._sample()
+                self.next_sample_at += 0.05
+
+    page = Page()
+
+    class Browser:
+        def new_page(self, **_kwargs):
+            return page
+
+        def close(self):
+            pass
+
+    class Playwright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            pass
+
+    monkeypatch.setattr(acceptance.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(acceptance, "sync_playwright", Playwright)
+    monkeypatch.setattr(acceptance, "launch_browser", lambda _playwright: Browser())
+    monkeypatch.setattr(acceptance, "stop_if_active", lambda active_page: active_page.stop())
+    argv = ["--media", "https://media.test/live.m3u8?token=TEST_ONLY_MEDIA_CAPABILITY",
+            "--label", label, "--output", str(tmp_path), "--seconds", str(seconds)]
+    if observe_recovery:
+        argv.append("--observe-recovery")
+    args = acceptance.parse_args(argv)
+    result = acceptance.collect(args)
+    report = json.loads((tmp_path / f"{label}.report.json").read_text(encoding="utf-8"))
+    recording = json.loads((tmp_path / f"{label}.recording.json").read_text(encoding="utf-8"))
+    return result, report, recording, page, clock
+
+
+def _retry_error(socket):
+    socket.send({"type": "error", "failure_category": "network", "retryable": True})
+
+
+def test_opt_in_observation_tracks_recovery_generation_and_keeps_original_cap(
+        tmp_path, monkeypatch):
+    def on_start(page):
+        page.open_socket(
+            "ws://127.0.0.1:8002/share/TEST_ONLY_SHARE_CAPABILITY/ws?viewer_id=private")
+        first = page.open_session()
+        first.send({"type": "subtitle", "beg": 0, "end": 1, "text": "First cue",
+                    "is_final": True, "sentence_id": "same-id", "revision": 1})
+        _retry_error(first)
+        page.retry_visible = True
+        page.schedule(1.1, lambda: reconnect(page))
+
+        def reconnect(target):
+            second = target.open_session()
+            target.retry_visible = False
+            target.caption = "Recovered cue"
+            second.send({"type": "subtitle", "beg": 1, "end": 2, "text": "Recovered cue",
+                         "is_final": True, "sentence_id": "same-id", "revision": 1})
+            # A delayed end from the old socket must not terminate the new generation.
+            target.schedule(0.2, lambda: first.send({"type": "end", "reason": "error"}))
+
+    result, report, recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="recovery-cap", seconds=1.5, on_start=on_start)
+
+    assert report["session_post_start_count"] == 2
+    assert report["live_seconds_cap_reached"] is True
+    assert report["operator_stop"]["trigger"] == "observation_cap"
+    assert result["recording_status"] == "failed"
+    assert result["exit_ok"] is False
+    assert result["real_accuracy_tested"] is False
+    assert recording["metadata"]["observe_recovery"] is True
+    caption_events = [event for event in recording["events"]
+                      if event["type"] == "subtitle" and event.get("provider_sentence_id")]
+    assert [(event["connection_generation"], event["provider_sentence_id"], event["sentence_id"])
+            for event in caption_events] == [
+                (1, "same-id", "generation-1:same-id"),
+                (2, "same-id", "generation-2:same-id"),
+            ]
+    assert any(error.get("type") == "recognition_error"
+               and error.get("connection_generation") == 1 for error in recording["errors"])
+    assert recording["completion_reason"] == "cancelled"
+    assert clock["now"] - 100.0 <= 1.7
+    artifact_text = (tmp_path / "recovery-cap.recording.json").read_text(encoding="utf-8")
+    assert "TEST_ONLY" not in artifact_text
+    assert "TEST_ONLY_MEDIA_CAPABILITY" not in artifact_text
+
+
+@pytest.mark.parametrize("retryable", [False, None])
+def test_opt_in_observation_stops_on_nonretryable_or_missing_retryability(
+        tmp_path, monkeypatch, retryable):
+    def on_start(page):
+        socket = page.open_session()
+        event = {"type": "error", "failure_category": "authentication"}
+        if retryable is not None:
+            event["retryable"] = retryable
+        socket.send(event)
+
+    result, report, recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label=f"fatal-{retryable}", seconds=10,
+        on_start=on_start)
+
+    assert report["session_post_start_count"] == 1
+    assert report["live_seconds_cap_reached"] is False
+    assert result["recording_status"] == "failed"
+    assert result["exit_ok"] is False
+    assert recording["errors"][0]["retryable"] is retryable
+    assert clock["now"] - 100.0 < 0.3
+
+
+def test_opt_in_observation_stops_when_manual_retry_ui_persists_after_recovery_budget(
+        tmp_path, monkeypatch):
+    def on_start(page):
+        first = page.open_session()
+        _retry_error(first)
+        first.send({"type": "end", "reason": "error"})
+        page.retry_visible = True
+        page.schedule(1.0, lambda: failed_retry(page, 2))
+
+    def failed_retry(page, generation):
+        socket = page.open_session()
+        _retry_error(socket)
+        page.retry_visible = True
+        if generation == 2:
+            socket.send({"type": "end", "reason": "error"})
+            page.retry_visible = True
+            page.schedule(2.0, lambda: failed_retry(page, 3))
+        else:
+            # The real live UI leaves the retry button visible after its budget is exhausted.
+            page.status = "recognition recovery exhausted"
+
+    result, report, recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="recovery-budget", seconds=10, on_start=on_start)
+
+    assert report["session_post_start_count"] == 3
+    assert report["live_seconds_cap_reached"] is False
+    assert result["recording_status"] == "failed"
+    assert result["exit_ok"] is False
+    assert len([error for error in recording["errors"]
+                if error.get("type") == "recognition_error"]) == 3
+    assert clock["now"] - 100.0 < 7.0
+
+
+def test_observe_recovery_option_is_remote_only(tmp_path):
+    remote = acceptance.parse_args([
+        "--media", "https://media.test/live.m3u8", "--label", "remote",
+        "--observe-recovery",
+    ])
+    assert remote.observe_recovery is True
+
+    local = tmp_path / "sample.wav"
+    local.write_bytes(b"synthetic parser-only input")
+    with pytest.raises(SystemExit):
+        acceptance.parse_args([
+            "--media", str(local), "--label", "local", "--observe-recovery",
+        ])
+
+
+def test_default_collection_still_stops_on_retryable_error(tmp_path, monkeypatch):
+    def on_start(page):
+        socket = page.open_session()
+        _retry_error(socket)
+        page.schedule(1.0, lambda: page.open_session())
+
+    result, report, recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="default-stop", seconds=10,
+        on_start=on_start, observe_recovery=False)
+
+    assert report["session_post_start_count"] == 1
+    assert report["live_seconds_cap_reached"] is False
+    assert result["recording_status"] == "failed"
+    assert result["exit_ok"] is False
+    assert "observe_recovery" not in recording["metadata"]
+    assert "connection_generation" not in recording["events"][0]
+    assert clock["now"] - 100.0 < 0.3
