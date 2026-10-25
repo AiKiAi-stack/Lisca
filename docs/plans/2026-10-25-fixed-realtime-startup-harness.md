@@ -60,24 +60,23 @@ clips and evidence go under ignored logs/fixed-realtime-startup/.
   process. The helper checks labels, process ID, process start ticks, and that
   the cold case is first, but the operator assertion is the evidence that the
   cold process had no earlier recognition session.
-- A full-duration offline probe against the fixed prefixes found baseline
+- Before the product optimization (`666b595`), a full-duration offline probe against the fixed prefixes found baseline
   `av.open`/first-yield times around 3.1 s before any provider call: zh
   `3110.7/3111.8 ms`, en `3105.6/3106.3 ms`. The earlier source-bound probes
   measured origin pre-write to first decoded PCM at `3105.2 ms` (zh) and
-  `3104.8 ms` (en). This means current default decoder settings already exceed
-  the 3 s limit before recognition can emit a caption. Do not start the paid
-  20-run batches on this setup.
+  `3104.8 ms` (en). Those decoder settings already exceeded the 3 s limit before
+  recognition could emit a caption; no paid 20-run batch was started on them.
 - A no-provider, one-variable PyAV experiment on each actual prefix reduced
   `av.open` to about `2.0 s` with either `analyzeduration=100000` or
   `probesize=32768`, separately. For both languages and all three variants,
   the full decoded PCM byte count and SHA-256 matched baseline exactly:
   zh `518056` bytes, `c16e53f43f40e70cca8b2b0500ec9869cf59998edede38b2dd6bf8756420c7ca`;
   en `529600` bytes, `dbe9d66223ecdb09ab84d76d32894cedc094de44e3d5faa9a3af1b0d22ae07a7`.
-  Each run made exactly one app GET and zero provider calls. This suggests a
-  decoder-startup optimization for these WAV inputs, but it has not been
-  applied to product code and does not establish safety for other media
-  formats or prove that visible-caption P95 will pass. Rerun the paced probe
-  after any product change before considering live measurement.
+  Each run made exactly one app GET and zero provider calls. Product commit
+  `11ab08e` now applies only `analyzeduration=100000` to HTTP(S) WAV URL paths.
+  The generated-WAV regression yields before a gated tail and checks full PCM;
+  it passes on PyAV 17.1 and 19.0. Existing HLS/local/other-format behavior is
+  retained. This decoder improvement does not prove visible-caption P95.
 
 ## Commands
 
@@ -117,10 +116,14 @@ were also run without a provider. To repeat them in a fresh output directory:
     /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/probe_realtime_wav_source.py \
       --language en --output logs/fixed-realtime-startup-options --compare-open-options
 
-Each command makes three paced requests (baseline, `analyzeduration=100000`,
-then `probesize=32768`), fully decodes and hashes each clip, and refuses to
-overwrite evidence. The option results above are diagnostics only; they do not
-modify `StreamSource` or qualify the real-time gate.
+Each command makes three paced requests (counterfactual default-analysis
+baseline, `analyzeduration=100000`, then `probesize=32768`), fully decodes and
+hashes each clip, and refuses to overwrite evidence. The diagnostic wrapper
+first removes the product WAV limit before applying each single option; it
+records and checks the actual option sets. It never changes product code or
+qualifies the real-time gate. After integration, a fresh Chinese comparison
+measured 3109.1 / 2011.2 / 2013.3 ms from the origin bound to first yield,
+with identical full PCM and one app GET per variant.
 
 The current ordinary WebUI must remain untouched during other active work.
 After the operator chooses to begin the cold batch, start the same WebUI entry
@@ -185,7 +188,9 @@ each language has exactly 20 valid, non-simulated independent starts, the
 measured stable-caption P95 is at most 3000 ms, cold/warm evidence is present,
 and playback-delay and freeze observations are recorded. Missing captions,
 collector errors, retryable WebSocket errors, sampling gaps, missing app-GET
-to-decode correlation, or incomplete run sets cannot pass. The default decoder
-preflight currently exceeds the latency threshold; the unintegrated open-option
-experiment is not live ASR acceptance evidence. This work did not restart the
-8002 WebUI or make paid ASR calls.
+to-decode correlation, or incomplete run sets cannot pass. The integrated WAV
+analysis limit reduces decoder startup to about 2 s for the fixed inputs; the
+visible-caption deadline includes the subsequent provider and display work.
+Actual pilot results and service restarts are recorded separately in the
+[real acceptance log](2026-10-24-original-caption-real-acceptance.md); offline
+option comparisons are never live ASR acceptance evidence.
