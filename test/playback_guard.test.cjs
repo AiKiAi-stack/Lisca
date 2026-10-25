@@ -126,3 +126,61 @@ test('lost timed coverage restarts a live caption fault even while feed stays ah
   assert.equal(guard.tick({now:3400, time:12.9, limit:20, ready:true, userPaused:false}), 'degrade');
   assert.equal(guard.degraded, true);
 });
+
+test('live caption holds share a two-second wait budget across recovered fault episodes', () => {
+  const guard = new CaptionPlaybackGuard();
+  let now = 0;
+  let time = 10;
+  let waitMs = 0;
+  guard.reset({now, live:true});
+
+  assert.equal(guard.tick({now, time, limit:time, ready:false, userPaused:false}), 'hold');
+  now += 2000;
+  waitMs += 2000;
+  assert.equal(guard.tick({now, time, limit:time, ready:false, userPaused:false}), 'degrade');
+
+  // The player resumes at 1x; advancing the source clock does not erase its wait debt.
+  now += 100; time += 0.1;
+  guard.captionProgress('first-a', 10, 11, now);
+  assert.equal(guard.tick({now, time, limit:20, ready:true, userPaused:false}), 'none');
+  now += 200; time += 0.2;
+  guard.captionProgress('first-b', 11, 12, now);
+  assert.equal(guard.tick({now, time, limit:20, ready:true, userPaused:false}), 'none');
+  for (let i = 0; i < 4; i++) {
+    now += 100;
+    time += 0.1;
+    const action = guard.tick({now, time, limit:20, ready:true, userPaused:false});
+    assert.equal(action, i === 3 ? 'recovered' : 'none');
+  }
+
+  assert.equal(Math.round(now - (time - 10) * 1000), 2000);
+  now += 500;
+  assert.equal(guard.tick({now, time, limit:20, ready:true, userPaused:true}), 'none');
+  now += 5000;
+  assert.equal(guard.tick({now, time, limit:20, ready:true, userPaused:true}), 'none');
+  now += 1;
+  assert.equal(guard.tick({now, time, limit:20, ready:true, userPaused:false}), 'none');
+  assert.equal(guard.heldForSessionMs, 2000);
+
+  // A later live caption boundary must not add another full episode of application wait.
+  const nextFault = guard.tick({now, time, limit:time, ready:true, userPaused:false});
+  assert.equal(nextFault, 'degrade');
+  assert.equal(waitMs, 2000);
+  assert.equal(guard.heldForSessionMs, 2000);
+
+  // A new source session receives its own bounded initial wait.
+  guard.reset({now, live:true});
+  assert.equal(guard.tick({now, time, limit:time, ready:true, userPaused:false}), 'hold');
+});
+
+test('source buffering does not consume the live application hold or progress timeout', () => {
+  const guard = new CaptionPlaybackGuard();
+  guard.reset({now:0, live:true});
+  assert.equal(guard.tick({now:0, time:10, limit:10, ready:false, userPaused:false}), 'hold');
+  assert.equal(guard.tick({now:500, time:10, limit:10, ready:false, userPaused:false, sourceBuffering:true}), 'none');
+  assert.equal(guard.tick({now:20000, time:10, limit:10, ready:false, userPaused:false, sourceBuffering:true}), 'none');
+  assert.equal(guard.tick({now:20000, time:10, limit:10, ready:false, userPaused:false}), 'none');
+  assert.equal(guard.tick({now:21499, time:10, limit:10, ready:false, userPaused:false}), 'none');
+  assert.equal(guard.tick({now:21500, time:10, limit:10, ready:false, userPaused:false}), 'degrade');
+  assert.equal(guard.heldForSessionMs, 2000);
+});

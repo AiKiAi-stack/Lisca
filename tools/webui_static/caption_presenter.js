@@ -20,6 +20,256 @@
     const words = text.replace(/[\u3400-\u9fff]/gu, ' ').trim().split(/\s+/).filter(Boolean).length;
     return Math.max(2400, Math.min(8000, (cjk / 6 + words / 3) * 1000 + 650));
   }
+  const segmenters = new Map();
+  function captionTokens(text) {
+    const locale = /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text) ? 'ja'
+      : /\p{Script=Hangul}/u.test(text) ? 'ko'
+        : /\p{Script=Han}/u.test(text) ? 'zh' : 'en';
+    let tokens;
+    if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+      let segmenter = segmenters.get(locale);
+      if (!segmenter) {
+        segmenter = new Intl.Segmenter(locale, {granularity:'word'});
+        segmenters.set(locale, segmenter);
+      }
+      tokens = Array.from(segmenter.segment(text), item => item.segment);
+    } else {
+      tokens = text.match(/\s+|[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|[\p{L}\p{N}]+(?:[’'ʼ-][\p{L}\p{N}]+)*|[^\s]/gu) || [];
+    }
+    const result = [];
+    let opening = '';
+    for (const token of tokens) {
+      if (/^[([{（【《「『]+$/u.test(token)) { opening += token; continue; }
+      if (/^[,.;:!?，。！？；：、)\]}）】》」』…]+$/u.test(token) && result.length) {
+        let gap = '';
+        if (/^\s+$/u.test(result[result.length - 1])) gap = result.pop();
+        result[result.length - 1] += token;
+        if (gap) result.push(gap);
+        continue;
+      }
+      result.push(opening + token);
+      opening = '';
+    }
+    if (opening) result.push(opening);
+    return result;
+  }
+  function graphemes(text) {
+    if (typeof Intl !== 'undefined' && Intl.Segmenter)
+      return Array.from(new Intl.Segmenter(undefined, {granularity:'grapheme'}).segment(text), item => item.segment);
+    return Array.from(text);
+  }
+  function splitWideToken(token, maxWidth, measureText) {
+    const result = [];
+    let line = '';
+    for (const grapheme of graphemes(token)) {
+      if (line && measureText(line + grapheme) > maxWidth) {
+        result.push(line);
+        line = '';
+      }
+      line += grapheme;
+    }
+    if (line) result.push(line);
+    return result;
+  }
+  function wrapTokens(tokens, maxWidth, measureText) {
+    const lines = [];
+    let line = '';
+    let pendingSpace = '';
+    const flush = () => {
+      if (line) lines.push(line.trimEnd());
+      line = '';
+      pendingSpace = '';
+    };
+    for (const token of tokens) {
+      if (/^\s+$/u.test(token)) {
+        if (line) pendingSpace += token;
+        continue;
+      }
+      if (measureText(token) > maxWidth) {
+        flush();
+        const pieces = splitWideToken(token, maxWidth, measureText);
+        if (pieces.length > 1) lines.push(...pieces.slice(0, -1));
+        line = pieces.at(-1) || '';
+        continue;
+      }
+      const candidate = line ? line + pendingSpace + token : token.trimStart();
+      if (line && measureText(candidate) > maxWidth) {
+        flush();
+        line = token.trimStart();
+      } else {
+        line = candidate;
+      }
+      pendingSpace = '';
+    }
+    flush();
+    return lines;
+  }
+  function balanceTailPages(tokens, maxWidth, measureText, maxLines, pageCount) {
+    // A partial last page can flash too briefly. Reflow only the final few
+    // pages; the bound keeps layout cost proportional to the caption length.
+    const maxTailTokens = 64;
+    if (tokens.length > maxTailTokens || pageCount < 2) return null;
+    const pageWeight = rows => rows.reduce((sum, row) => sum + measureText(row), 0);
+    const targetWeight = pageWeight(wrapTokens(tokens, maxWidth, measureText)) / pageCount;
+    let best = null;
+    const score = groups => {
+      const weights = groups.map(pageWeight);
+      if (weights.some(weight => weight <= 0)) return Infinity;
+      return weights.reduce((sum, weight) => sum + (weight - targetWeight) ** 2, 0);
+    };
+    const hasText = range => range.some(token => !/^\s+$/u.test(token));
+
+    if (pageCount === 2) {
+      for (let cut = 1; cut < tokens.length; cut++) {
+        const first = tokens.slice(0, cut);
+        if (!hasText(first)) continue;
+        const firstRows = wrapTokens(first, maxWidth, measureText);
+        if (firstRows.length > maxLines) break;
+        const second = tokens.slice(cut);
+        if (!hasText(second)) continue;
+        const secondRows = wrapTokens(second, maxWidth, measureText);
+        if (secondRows.length > maxLines) continue;
+        const groups = [firstRows, secondRows];
+        const candidateScore = score(groups);
+        if (candidateScore < (best?.score ?? Infinity)) best = {groups, score:candidateScore};
+      }
+    } else if (pageCount === 3) {
+      for (let firstCut = 1; firstCut < tokens.length - 1; firstCut++) {
+        const first = tokens.slice(0, firstCut);
+        if (!hasText(first)) continue;
+        const firstRows = wrapTokens(first, maxWidth, measureText);
+        if (firstRows.length > maxLines) break;
+        for (let secondCut = firstCut + 1; secondCut < tokens.length; secondCut++) {
+          const second = tokens.slice(firstCut, secondCut);
+          if (!hasText(second)) continue;
+          const secondRows = wrapTokens(second, maxWidth, measureText);
+          if (secondRows.length > maxLines) break;
+          const third = tokens.slice(secondCut);
+          if (!hasText(third)) continue;
+          const thirdRows = wrapTokens(third, maxWidth, measureText);
+          if (thirdRows.length > maxLines) continue;
+          const groups = [firstRows, secondRows, thirdRows];
+          const candidateScore = score(groups);
+          if (candidateScore < (best?.score ?? Infinity)) best = {groups, score:candidateScore};
+        }
+      }
+    }
+    return best?.groups || null;
+  }
+  function balancedTextPages(tokens, maxWidth, measureText, maxLines) {
+    const rows = wrapTokens(tokens, maxWidth, measureText);
+    const pages = Array.from({length:Math.ceil(rows.length / maxLines)}, (_, i) =>
+      rows.slice(i * maxLines, (i + 1) * maxLines));
+    if (pages.length < 2 || pages.at(-1).length === maxLines) return pages;
+
+    const tailPageCount = Math.min(3, pages.length);
+    const tailText = pages.slice(-tailPageCount).map(page => page.join('\n')).join(' ');
+    const tailTokens = captionTokens(tailText);
+    const preceding = pages.slice(0, -tailPageCount);
+    const tailPages = balanceTailPages(tailTokens, maxWidth, measureText, maxLines, tailPageCount);
+    if (!tailPages) return pages;
+    return [...preceding, ...tailPages];
+
+    function pageWeightFor(page) { return page.reduce((sum, row) => sum + measureText(row), 0); }
+  }
+  function paginateText(text, {maxWidth, measureText, maxLines=2} = {}) {
+    if (typeof measureText !== 'function') throw new TypeError('measureText callback is required');
+    maxWidth = Math.max(1, Number(maxWidth) || 1);
+    maxLines = Math.max(1, Math.floor(Number(maxLines) || 2));
+    const pages = balancedTextPages(captionTokens(String(text || '')), maxWidth, measureText, maxLines);
+    return pages.map(rows => ({text:rows.join('\n'),
+      weight:Math.max(1, rows.reduce((sum, row) => sum + measureText(row), 0))}));
+  }
+  function paginateTimedWords(sourceText, words, {maxWidth, measureText, maxLines=2} = {}) {
+    if (typeof measureText !== 'function') throw new TypeError('measureText callback is required');
+    maxWidth = Math.max(1, Number(maxWidth) || 1);
+    maxLines = Math.max(1, Math.floor(Number(maxLines) || 2));
+    const rows = [];
+    let line = null;
+    const makeLine = units => {
+      const text = units.map(unit => unit.text).join('');
+      return {text, first:units[0].word, last:units.at(-1).word,
+        weight:measureText(text), units};
+    };
+    const flush = () => {
+      if (line) rows.push(makeLine(line));
+      line = null;
+    };
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      const text = sourceText.slice(word.rawStart, word.rawEnd);
+      const separator = i ? sourceText.slice(words[i - 1].rawEnd, word.rawStart) : '';
+      if (measureText(text) > maxWidth) {
+        flush();
+        for (const piece of splitWideToken(separator.trimStart() + text, maxWidth, measureText))
+          rows.push(makeLine([{word, text:piece}]));
+        continue;
+      }
+      const unitText = line ? separator + text : (i ? separator.trimStart() : '') + text;
+      const combined = line ? line.map(unit => unit.text).join('') + unitText : unitText;
+      if (line && measureText(combined) > maxWidth) {
+        flush();
+        line = [{word, text:separator.trimStart() + text}];
+      } else if (line) {
+        line.push({word, text:unitText});
+      } else {
+        line = [{word, text:unitText}];
+      }
+    }
+    flush();
+    if (maxLines === 2 && rows.length >= 3 && rows.length % 2 === 1) {
+      const tailRow = rows.at(-1);
+      const previousRowIndex = rows.length - 2;
+      const previousPageStart = rows.length - 3;
+      const previousPageRows = rows.slice(previousPageStart, rows.length - 1);
+      if (tailRow.last.end - tailRow.first.beg < .6) {
+        const previousUnits = rows[previousRowIndex].units.slice();
+        const movedUnits = [];
+        while (previousUnits.length > 1) {
+          const unit = previousUnits.pop();
+          movedUnits.unshift({...unit, text:unit.text.trimStart()});
+          const shortenedRow = makeLine(previousUnits);
+          const movedRow = makeLine(movedUnits);
+          if (movedRow.weight > maxWidth) break;
+          const priorRows = [...previousPageRows.slice(0, -1), shortenedRow];
+          const priorDuration = priorRows.at(-1).last.end - priorRows[0].first.beg;
+          const nextDuration = tailRow.last.end - movedRow.first.beg;
+          if (priorDuration >= .6 && nextDuration >= .6) {
+            rows[previousRowIndex] = shortenedRow;
+            rows.splice(rows.length - 1, 0, movedRow);
+            break;
+          }
+        }
+      }
+    }
+    const pages = [];
+    for (let i = 0; i < rows.length; i += maxLines) {
+      const pageRows = rows.slice(i, i + maxLines);
+      pages.push({beg:pageRows[0].first.beg, end:pageRows.at(-1).last.end,
+        text:pageRows.map(row => row.text.trim()).join('\n'),
+        weight:Math.max(1, pageRows.reduce((sum, row) => sum + row.weight, 0))});
+    }
+    return pages;
+  }
+  const textMeasurers = new Map();
+  function createTextMeasurer(font, letterSpacing=0) {
+    const key = `${font}|${letterSpacing}`;
+    if (textMeasurers.has(key)) return textMeasurers.get(key);
+    let context = null;
+    if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+      try { context = document.createElement('canvas').getContext('2d'); } catch (_) { context = null; }
+    }
+    const size = Number.parseFloat(String(font).match(/([\d.]+)px/)?.[1]) || 30;
+    const spacing = Number(letterSpacing) || 0;
+    const measure = text => {
+      if (context) { context.font = font; return context.measureText(text).width + Math.max(0, Array.from(text).length - 1) * spacing; }
+      return Array.from(text).reduce((sum, char) => sum + size * (/[^\x00-\xff]/u.test(char) ? 1 : 0.55) + spacing, 0);
+    };
+    if (textMeasurers.size >= 12) textMeasurers.delete(textMeasurers.keys().next().value);
+    textMeasurers.set(key, measure);
+    return measure;
+  }
+  const CaptionLayout = {paginateText, paginateTimedWords, createTextMeasurer};
   class CaptionPresenter {
     constructor() { this.columns=42; this.live=true; this.reset(); }
     setColumns(columns) {
@@ -77,7 +327,7 @@
       return this.current;
     }
   }
-  const api={CaptionPresenter,pages,lines,readingMs};
+  const api={CaptionPresenter,CaptionLayout,pages,lines,readingMs};
   if (typeof module !== 'undefined' && module.exports) module.exports=api;
   else Object.assign(root,api);
 })(typeof globalThis !== 'undefined' ? globalThis : this);

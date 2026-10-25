@@ -5,12 +5,26 @@ function browser({playerWidth=260,fontSize=30}={}){
  const element=()=>({textContent:'',hidden:true,dataset:{},classList:{contains:()=>false},style:{},remove(){}});
  const current=element(), late=element();
  current.style.fontSize=`${fontSize}px`;const playerWrap={clientWidth:playerWidth};
- const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preserveLiveMedia:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:20000,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontSize:element.style.fontSize||'30px',paddingLeft:'10px',paddingRight:'10px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
+ const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preserveLiveMedia:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:20000,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontStyle:'normal',fontWeight:'600',fontSize:element.style.fontSize||'30px',fontFamily:'Arial, sans-serif',letterSpacing:'normal',paddingLeft:'10px',paddingRight:'10px',borderLeftWidth:'0px',borderRightWidth:'0px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
  const moduleFile=path.join(__dirname,'../tools/webui_static/caption_presenter.js');
- if(fs.existsSync(moduleFile)){context.CaptionPresenter=require(moduleFile).CaptionPresenter;context.lines=()=>[];context.captionPresenter=new context.CaptionPresenter();}
+ if(fs.existsSync(moduleFile)){const module=require(moduleFile);context.CaptionPresenter=module.CaptionPresenter;context.CaptionLayout=module.CaptionLayout;context.lines=()=>[];context.captionPresenter=new context.CaptionPresenter();}
  vm.createContext(context);
- vm.runInContext(html.slice(html.indexOf('function captionSegments('),html.indexOf('function onPreview(')),context);
- return {context,current,late,push:cue=>context.onSubtitle({type:'subtitle',translated:true,sentence_id:1,beg:0,end:2,is_final:true,text:'这句译文必须出现在视频内。',...cue}),tick(ms){context.now=ms;context.syncSubtitle();}};
+ const layoutStart=html.indexOf('const captionSegmentCache = new WeakMap();');
+ const previewStart=html.indexOf('function onPreview(',layoutStart);
+ vm.runInContext(html.slice(layoutStart,previewStart),context);
+ const previewEnd=html.indexOf('\n\n  // Decoder PTS',previewStart);
+ vm.runInContext(html.slice(previewStart,previewEnd),context);
+ return {context,current,late,push:cue=>context.onSubtitle({type:'subtitle',translated:true,sentence_id:1,beg:0,end:2,is_final:true,text:'这句译文必须出现在视频内。',...cue}),preview:msg=>context.onPreview(msg),tick(ms){context.now=ms;context.syncSubtitle();}};
+}
+function assertOriginalPages(b,segments,text){
+ assert.ok(segments.length>1);
+ const layout=b.context.captionLayoutOptions();
+ for(const segment of segments){
+  const rows=segment.text.split('\n');
+  assert.ok(rows.length<=2,segment.text);
+  for(const row of rows)assert.ok(layout.measureText(row)<=layout.maxWidth,row);
+ }
+ assert.equal(segments.map(segment=>segment.text).join('').replace(/\s+/gu,''),text.replace(/\s+/gu,''));
 }
 function loadShareHistoryWarning(html,context){
  const start=html.indexOf('  function showShareHistoryNotice() {');
@@ -291,10 +305,59 @@ test('source timestamps prevent early display and reset clears every old page',(
 test('duplicate final revisions do not requeue a caption',()=>{const p=new CaptionPresenter();const cue={sentence_id:1,beg:0,text:'Hello there.'};p.enqueue(cue);p.enqueue(cue);assert.equal(p.queue.length,1);assert.equal(readingMs('Hi'),2400);});
 
 test('narrow screens reflow complete captions without losing text',()=>{const p=new CaptionPresenter();p.setColumns(20);const text='这是一个用于验证小屏幕下长字幕不会超过两行并且不会丢失任何文字的完整句子。';p.enqueue({sentence_id:1,beg:0,text});const all=[p.tick(0,0),...p.queue];assert.ok(all.every(c=>c.text.split('\n').length<=2));assert.equal(all.map(c=>c.text.replace(/\n/g,'')).join(''),text);});
-test('original captions split to two-line phrases at a narrow player width',()=>{const b=browser({playerWidth:260,fontSize:30});const text='窄屏字幕需要根据播放器实际宽度切分完整原文并确保每一页都不超过两行。'.repeat(2);const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=14),segments);assert.equal(segments.map(s=>s.text).join(''),text);});
-test('large desktop caption settings reduce original phrase width to two lines',()=>{const b=browser({playerWidth:900,fontSize:64});const text='字幕字号调大之后每个原文短句也要按较窄可读行宽拆分以免遮挡画面内容'.repeat(3);const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=24),segments);assert.equal(segments.map(s=>s.text).join(''),text);});
-test('maximum font size still fits two lines on the narrowest player',()=>{const b=browser({playerWidth:260,fontSize:64});const text='窄屏大字号字幕仍需要遵守播放器的真实可用宽度并切成能完整阅读的短句'.repeat(2);const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=7),segments);assert.equal(segments.map(s=>s.text).join(''),text);});
-test('320px captions at maximum font size split at the actual two-line Han capacity',()=>{const b=browser({playerWidth:288,fontSize:64});const text='这是一段用于验证字幕在窄屏和放大字号后仍保持完整短句的原文内容';const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assert.ok(segments.every(s=>s.text.length<=6),segments);assert.equal(segments.map(s=>s.text).join(''),text);});
+test('original captions split to two-line phrases at a narrow player width',()=>{const b=browser({playerWidth:260,fontSize:30});const text='窄屏字幕需要根据播放器实际宽度切分完整原文并确保每一页都不超过两行。'.repeat(2);const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assertOriginalPages(b,segments,text);});
+test('large desktop caption settings reduce original phrase width to two lines',()=>{const b=browser({playerWidth:900,fontSize:64});const text='字幕字号调大之后每个原文短句也要按较窄可读行宽拆分以免遮挡画面内容'.repeat(3);const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assertOriginalPages(b,segments,text);});
+test('maximum font size still fits two lines on the narrowest player',()=>{const b=browser({playerWidth:260,fontSize:64});const text='窄屏大字号字幕仍需要遵守播放器的真实可用宽度并切成能完整阅读的短句'.repeat(2);const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assertOriginalPages(b,segments,text);});
+test('320px captions at maximum font size split at the actual two-line Han capacity',()=>{const b=browser({playerWidth:288,fontSize:64});const text='这是一段用于验证字幕在窄屏和放大字号后仍保持完整短句的原文内容';const segments=b.context.captionSegments({beg:0,end:10,text,words:[]});assertOriginalPages(b,segments,text);});
+test('preview messages use the same timed two-line pagination as final captions',()=>{
+ const b=browser({playerWidth:288,fontSize:30}),c=b.context;
+ const text='Rescuers are searching for people near the station; filters work well, 每天客流量大概在100多组的样子，然后成交率达到25%左右。';
+ c.player.currentTime=1;
+ b.preview({sentence_id:'preview-layout',beg:0,end:20,text});
+ const segments=c.captionSegments(c.previewSubs[0]);
+ assertOriginalPages(b,segments,text);
+ for(const segment of segments){
+  c.player.currentTime=(segment.beg+segment.end)/2;
+  b.tick(0);
+  assert.equal(b.current.textContent,segment.text);
+ }
+ assert.deepEqual(Array.from(segments.flatMap(segment=>segment.text.match(/[\p{Script=Latin}\p{N}]+(?:[-’'][\p{Script=Latin}\p{N}]+)*/gu)||[])),
+  Array.from(text.match(/[\p{Script=Latin}\p{N}]+(?:[-’'][\p{Script=Latin}\p{N}]+)*/gu)||[]));
+});
+test('word-timed original pages retain quotes, punctuation, and symbols outside ASR tokens',()=>{
+ const b=browser({playerWidth:260,fontSize:30});
+ const text='“One very long sentence reached 100% on Friday, then every durable filter passed.”';
+ const words=Array.from(text.matchAll(/[\p{L}\p{N}]+/gu),(match,index)=>[index*.2,index*.2+.15,match[0]]);
+ const segments=b.context.captionSegments({beg:0,end:10,text,words});
+ assertOriginalPages(b,segments,text);
+});
+test('stable caption pages are cached and resize changes the layout key',()=>{
+ const b=browser({playerWidth:260,fontSize:30});
+ const text='Repeated caption layout should reuse measured pages until the player or font size changes.';
+ const cue={beg:0,end:10,text,words:[]};
+ const first=b.context.captionSegments(cue);
+ assert.strictEqual(b.context.captionSegments(cue),first);
+ b.current.style.fontSize='52px';
+ const resized=b.context.captionSegments(cue);
+ assert.notStrictEqual(resized,first);
+ assertOriginalPages(b,resized,text);
+});
+test('long large-font captions do not leave sub-600ms orphan pages',()=>{
+ const b=browser({playerWidth:288,fontSize:64});
+ const text='这是一段用于验证字幕在窄屏和放大字号后仍保持完整短句的原文内容，所有文字都应该在对应语音时间内显示，而不是被裁切或挤成很多行。';
+ const wordDuration=10.8/text.length;
+ const words=Array.from(text,(char,index)=>[index*wordDuration,(index+1)*wordDuration,char]);
+ for(const cue of [
+  {beg:0,end:10.8,text,words},
+  {beg:0,end:10.8,text,words:[]},
+ ]){
+  const segments=b.context.captionSegments(cue);
+  assertOriginalPages(b,segments,text);
+  assert.ok(segments.every(segment=>segment.end-segment.beg>=.6),
+   JSON.stringify(segments.map(segment=>({seconds:+(segment.end-segment.beg).toFixed(3),chars:segment.text.replace(/\s+/gu,'').length}))));
+  assert.ok(segments.every(segment=>segment.beg>=0&&segment.end<=10.8));
+ }
+});
 test('an unfinished local seek inside the prepared range reuses subtitles without reconnecting',()=>{const b=seekBrowser({position:2,playbackLimit:5});b.seek(4);assert.equal(b.context.reconnected,undefined);assert.equal(b.context.confirmMessages.length,0);});
 test('an unfinished local seek outside the prepared range asks before a billed restart',()=>{const b=seekBrowser({position:2,playbackLimit:5});b.seek(8);assert.deepEqual(b.context.ws.messages,['pause']);assert.equal(b.context.reconnected,undefined);b.flushTimers();assert.equal(b.context.confirmMessages.length,1);assert.match(b.context.confirmMessages[0],/可能.*API|API.*计费/);assert.deepEqual(Array.from(b.context.reconnected),['local.mp4',null,8]);});
 test('declining an unprepared seek restores the old position and playback without reconnecting',()=>{const b=seekBrowser({position:2,playbackLimit:5,paused:false,confirmResult:false});b.seek(8);b.flushTimers();assert.equal(b.context.player.currentTime,2);b.finishRestore();assert.equal(b.context.player.paused,false);assert.equal(b.context.skipReconnectOnNextPlay,true);assert.equal(b.context.reconnected,undefined);});
@@ -436,10 +499,10 @@ test('only automatic original-caption recovery on an active live HLS source pres
 test('a long local pause reconnects before reusing a potentially expired ASR socket',()=>{const b=browser();b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),true);assert.deepEqual(Array.from(b.context.reconnected),['test.mp4',null,10]);});
 test('a short local pause continues on the existing open recognition connection',()=>{const b=browser();b.context.pauseStartedAt=0;b.context.now=3000;assert.equal(b.context.resumeClosedCloudAfterPause(),false);assert.equal(b.context.reconnected,undefined);});
 
-test('original captions follow source word times rather than the translated reading queue',()=>{const b=browser();b.context.player.currentTime=.2;b.push({translated:false,beg:0,end:10,text:'别太装。我们还是很期待的。',words:[[0,.2,'别'],[.2,.4,'太'],[.4,.8,'装'],[8,8.2,'我'],[8.2,8.4,'们'],[8.4,8.6,'还'],[8.6,8.8,'是'],[8.8,9,'很'],[9,9.2,'期'],[9.2,9.4,'待'],[9.4,10,'的']]});b.tick(0);assert.equal(b.current.textContent,'别太装。');b.context.player.currentTime=2;b.tick(100);assert.equal(b.current.textContent,'');b.context.player.currentTime=8.5;b.tick(200);assert.equal(b.current.textContent,'我们还是很期待的。');assert.equal(b.context.captionPresenter.queue.length,0);});
+test('original captions follow source word times rather than the translated reading queue',()=>{const b=browser();b.context.player.currentTime=.2;b.push({translated:false,beg:0,end:10,text:'别太装。我们还是很期待的。',words:[[0,.2,'别'],[.2,.4,'太'],[.4,.8,'装'],[8,8.2,'我'],[8.2,8.4,'们'],[8.4,8.6,'还'],[8.6,8.8,'是'],[8.8,9,'很'],[9,9.2,'期'],[9.2,9.4,'待'],[9.4,10,'的']]});b.tick(0);assert.equal(b.current.textContent,'别太装。');b.context.player.currentTime=2;b.tick(100);assert.equal(b.current.textContent,'');b.context.player.currentTime=8.5;b.tick(200);assert.equal(b.current.textContent.replace(/\s+/gu,''),'我们还是很期待的。');assert.equal(b.context.captionPresenter.queue.length,0);});
 test('completed original captions resume locally without opening another billed session',()=>{const b=browser();b.context.originalCaptionsComplete=true;b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),false);assert.equal(b.context.reconnected,undefined);});
 
-function bufferBrowser(){const b=browser(),c=b.context;const {CaptionPlaybackGuard}=require('../tools/webui_static/playback_guard.js');c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live:true});c.showCaptionRecovery=message=>{c.status=message};Object.assign(c,{useCaptionBuffer:true,originalCaptionMode:true,holdingForBuffer:false,uiPaused:false,playbackLimit:10,urlEl:{value:'https://stream.test/live.m3u8'},setStatus(t){c.status=t},audioEl:{pause(){},play(){return Promise.resolve()}},player:{currentTime:10,paused:false,pause(){this.paused=true},play(){this.paused=false;return Promise.resolve()}}});const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');vm.runInContext(html.slice(html.indexOf('function syncPlaybackToBuffer()'),html.indexOf('// 字幕整句快照')),c);return b;}
+function bufferBrowser(){const b=browser(),c=b.context;const {CaptionPlaybackGuard}=require('../tools/webui_static/playback_guard.js');c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live:true});c.showCaptionRecovery=message=>{c.status=message};Object.assign(c,{sourceBufferingSince:null,useCaptionBuffer:true,originalCaptionMode:true,holdingForBuffer:false,uiPaused:false,playbackLimit:10,urlEl:{value:'https://stream.test/live.m3u8'},setStatus(t){c.status=t},audioEl:{pause(){},play(){return Promise.resolve()}},player:{currentTime:10,paused:false,pause(){this.paused=true},play(){this.paused=false;return Promise.resolve()}}});const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');vm.runInContext(html.slice(html.indexOf('function syncPlaybackToBuffer()'),html.indexOf('// 字幕整句快照')),c);return b;}
 test('live original captions release the playback hold after the two-second failure budget',()=>{const b=bufferBrowser();b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,true);b.context.now=2100;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,false);assert.match(b.context.status,/部分缺失|暂不可用/);b.context.now=2400;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,false);});
 test('a live source starts after the bounded wait even when no first caption or ready event arrives',()=>{const b=bufferBrowser(),c=b.context;c.playStarted=false;c.player.currentTime=0;c.player.paused=true;c.playbackLimit=5;c.playbackGuard.reset({now:0,live:true});c.now=0;c.syncPlaybackToBuffer();assert.equal(c.holdingForBuffer,true);assert.equal(c.player.paused,true);c.now=1999;c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);c.now=2000;c.syncPlaybackToBuffer();assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);assert.match(c.status,/部分缺失|暂不可用/);});
 test('an unfinished local file holds at its caption boundary rather than playing ahead',()=>{const b=bufferBrowser();b.context.urlEl.value='test.mp4';b.context.playbackGuard.live=false;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,true);});
@@ -674,4 +737,20 @@ test('switching content cancels an old generation recovery before it can reconne
  c.connectionGeneration++;c.recoveryController.begin();b.advance(5000);
  assert.equal(c.recoveryController.attempts,0);
  assert.equal(b.actions.some(action=>action[0]==='recognition'),false);
+});
+
+test('late first ready never rewinds an already playing live source, but initial alignment remains available',()=>{
+ for(const state of [
+  {live:true,started:true,preserve:false,expected:40.833},
+  {live:true,started:false,preserve:false,expected:35.160},
+  {live:false,started:true,preserve:false,expected:35.160},
+  {live:true,started:true,preserve:true,expected:40.833},
+ ]){
+  const {context:c}=lateHlsClockViewer();
+  c.preserveLiveMedia=state.preserve;c.playStarted=state.started;
+  c.playbackGuard.live=state.live;c.player.currentTime=40.833;
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:35.160});
+  assert.equal(c.player.currentTime,state.expected,JSON.stringify(state));
+  assert.equal(c.playStarted,true);
+ }
 });

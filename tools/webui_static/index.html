@@ -562,23 +562,36 @@
 
   // A finalized ASR event may contain several sentences (or a long monologue).
   // Keep the full result in history, but reveal short timed phrases on video.
+  const captionSegmentCache = new WeakMap();
+
+  function captionLayoutOptions() {
+    const playerWidth = document.getElementById('playerWrap')?.clientWidth || 1200;
+    const style = getComputedStyle(currentEl);
+    const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+    const border = (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+    const maxBoxWidth = playerWidth * (playerWidth <= 720 ? .94 : .90);
+    const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const maxWidth = Math.max(1, (maxBoxWidth - padding - border) * .97);
+    return {maxWidth,
+      measureText:CaptionLayout.createTextMeasurer(font, parseFloat(style.letterSpacing) || 0),
+      maxLines:2, key:`${maxWidth}|${font}|${style.letterSpacing}|2`};
+  }
+
+  function rememberCaptionSegments(source, key, segments) {
+    captionSegmentCache.set(source, {key, segments});
+    return segments;
+  }
+
   function captionSegments(s) {
+    const layout = captionLayoutOptions();
+    const cached = captionSegmentCache.get(s);
+    if (cached?.key === layout.key) return cached.segments;
     const words = (s.words || []).filter(w => Array.isArray(w) && Number.isFinite(w[0])
       && Number.isFinite(w[1]) && typeof w[2] === 'string' && w[2].trim());
     const normalize = value => value.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
     const sourceText = typeof s.text === 'string' ? s.text : '';
     const spokenText = normalize(words.map(w => w[2]).join(''));
     const expectedText = normalize(sourceText);
-    const playerWidth = document.getElementById('playerWrap')?.clientWidth || 1200;
-    const style = getComputedStyle(currentEl);
-    const fontSize = parseFloat(style.fontSize) || 30;
-    const padding = (parseFloat(style.paddingLeft) || 15) + (parseFloat(style.paddingRight) || 15);
-    const maxTextWidth = Math.max(1, playerWidth * (playerWidth <= 720 ? .94 : .90) - padding);
-    // Han glyphs occupy roughly one font-size each. Round each display line
-    // down before doubling: flooring the combined width can fit one extra
-    // glyph that the browser then wraps onto a third line.
-    const maxHanChars = Math.max(4, Math.min(26, Math.floor(maxTextWidth / fontSize) * 2));
-    const maxLatinChars = Math.max(8, Math.min(48, Math.floor(maxTextWidth * 2 / (fontSize * .60))));
     if (words.length >= 2 && expectedText && spokenText === expectedText) {
       // Use the finalized sentence as the text source. ASR word timestamps can
       // split one spelling across adjacent tokens ("wh" + "istles"); adding
@@ -599,7 +612,12 @@
       let aligned = true;
       for (const word of words) {
         const token = normalize(word[2].trim());
-        if (!token) continue;
+        if (!token) {
+          const previous = alignedWords.at(-1);
+          if (previous && /[\p{P}\p{S}]/u.test(word[2].trim()))
+            previous.end = Math.max(previous.end, word[1]);
+          continue;
+        }
         const start = expectedText.indexOf(token, searchFrom);
         const end = start + token.length;
         if (start < 0 || end > sourceRanges.length) {
@@ -607,10 +625,19 @@
           break;
         }
         let rawEnd = sourceRanges[end - 1].end;
-        while (rawEnd < sourceText.length && /[.!?。！？；;，,:]/u.test(sourceText[rawEnd])) rawEnd++;
+        while (rawEnd < sourceText.length) {
+          const punctuation = String.fromCodePoint(sourceText.codePointAt(rawEnd));
+          if (!/[\p{P}\p{S}]/u.test(punctuation) || /[\p{Ps}\p{Pi}]/u.test(punctuation)
+              || /^['"’ʼ‐‑‒–—-]$/u.test(punctuation)) break;
+          rawEnd += punctuation.length;
+        }
         alignedWords.push({beg: word[0], end: word[1], start,
           rawStart: sourceRanges[start].start, rawEnd});
         searchFrom = end;
+      }
+      if (alignedWords.length) {
+        alignedWords[0].rawStart = 0;
+        alignedWords[alignedWords.length - 1].rawEnd = sourceText.length;
       }
 
       // Consecutive Latin/digit fragments with no textual separator belong to
@@ -643,93 +670,33 @@
         };
         const flushClause = () => {
           if (!clause.length) return;
-          const text = sourceText.slice(clause[0].rawStart, clause[clause.length - 1].rawEnd);
-          const hasHan = /\p{Script=Han}/u.test(text);
-          const maxChars = hasHan ? maxHanChars : maxLatinChars;
-          if (text.length <= maxChars) {
-            pushSpan(clause);
-          } else {
-            // Split an overlong clause into balanced pieces at ASR word
-            // boundaries. A fixed 10-token/4s cutoff left "她对" orphaned
-            // before "俺挺好的" even though the final transcript was correct.
-            let from = 0;
-            while (from < clause.length) {
-              const remaining = sourceText.slice(clause[from].rawStart,
-                clause[clause.length - 1].rawEnd).length;
-              if (remaining <= maxChars) {
-                pushSpan(clause.slice(from));
-                break;
-              }
-              const pieces = Math.ceil(remaining / maxChars);
-              const target = remaining / pieces;
-              let best = from + 1;
-              let bestDistance = Infinity;
-              for (let i = from + 1; i < clause.length; i++) {
-                const leftLength = sourceText.slice(clause[from].rawStart, clause[i - 1].rawEnd).length;
-                const rightLength = sourceText.slice(clause[i].rawStart, clause[clause.length - 1].rawEnd).length;
-                if (leftLength > maxChars || rightLength < 4) break;
-                const gap = clause[i].beg - clause[i - 1].end;
-                const distance = Math.abs(leftLength - target) - Math.min(0.8, Math.max(0, gap));
-                if (distance < bestDistance) { bestDistance = distance; best = i; }
-              }
-              pushSpan(clause.slice(from, best));
-              from = best;
-            }
-          }
+          result.push(...CaptionLayout.paginateTimedWords(sourceText, clause, layout));
           clause = [];
         };
         for (const word of displayWords) {
           clause.push(word);
-          if (/[，,。.!?！？；;]$/.test(sourceText.slice(word.rawStart, word.rawEnd)))
+          if (/[。.!?！？]$/.test(sourceText.slice(word.rawStart, word.rawEnd)))
             flushClause();
         }
         flushClause();
-        if (result.length > 1) return result;
+        if (result.length > 1) return rememberCaptionSegments(s, layout.key, result);
       }
     }
 
     const beg = Number.isFinite(s.beg) ? s.beg : null;
     const end = Number.isFinite(s.end) && s.end > beg ? s.end : null;
-    const rawParts = (s.text.match(/[^.!?。！？；;，,]+[.!?。！？；;，,]?/g) || [s.text])
+    const rawParts = (s.text.match(/[^.!?。！？]+[.!?。！？]?/g) || [s.text])
       .map(part => part.trim()).filter(Boolean);
-    const parts = rawParts.flatMap(part => {
-      if (/\p{Script=Han}/u.test(part)) {
-        if (part.length <= maxHanChars) return [part];
-        const count = Math.ceil(part.length / maxHanChars);
-        const size = Math.ceil(part.length / count);
-        return Array.from({length:count}, (_, index) => part.slice(index * size,
-          (index + 1) * size).trim()).filter(Boolean);
-      }
-      if (part.length <= maxLatinChars) return [part];
-      const tokens = part.match(/\S+\s*/g) || [part];
-      const chunks = [];
-      let current = '';
-      for (const token of tokens) {
-        const word = token.trim();
-        if (word.length > maxLatinChars) {
-          if (current.trim()) chunks.push(current.trim());
-          for (let offset = 0; offset < word.length; offset += maxLatinChars)
-            chunks.push(word.slice(offset, offset + maxLatinChars));
-          current = '';
-        } else if (current && (current + token).trim().length > maxLatinChars) {
-          chunks.push(current.trim());
-          current = token;
-        } else {
-          current += token;
-        }
-      }
-      if (current.trim()) chunks.push(current.trim());
-      return chunks;
-    });
+    const parts = rawParts.flatMap(part => CaptionLayout.paginateText(part, layout));
     if (!Number.isFinite(beg) || !Number.isFinite(end) || parts.length <= 1)
-      return [{beg, end, text: s.text.trim()}];
-    const total = parts.reduce((sum, part) => sum + part.length, 0);
+      return rememberCaptionSegments(s, layout.key, [{beg, end, text: parts[0]?.text || s.text.trim()}]);
+    const total = parts.reduce((sum, part) => sum + part.weight, 0);
     let offset = beg;
-    return parts.map((part, index) => {
+    return rememberCaptionSegments(s, layout.key, parts.map((part, index) => {
       const segmentBeg = offset;
-      offset = index === parts.length - 1 ? end : offset + (end - beg) * part.length / total;
-      return {beg: segmentBeg, end: offset, text: part};
-    });
+      offset = index === parts.length - 1 ? end : offset + (end - beg) * part.weight / total;
+      return {beg: segmentBeg, end: offset, text: part.text};
+    }));
   }
 
   function syncSubtitle() {
@@ -772,7 +739,15 @@
       nextBegBySubtitle.set(item, nextBeg);
       if (item.beg < nextBeg) nextBeg = item.beg;
     }
-    let candidates = subs.filter(s => s.translated ? Number.isFinite(s.end) : s.isFinal !== false).flatMap(s =>
+    const activeSubs = subs.filter(s => {
+      if (s.beg > t) return false;
+      if (s.translated) return Number.isFinite(s.end) && s.end > t;
+      if (s.isFinal === false) return false;
+      const sentenceEnd = Number.isFinite(s.end) && s.end > s.beg
+        ? s.end : Math.min(nextBegBySubtitle.get(s) ?? Infinity, s.beg + 60);
+      return sentenceEnd > t;
+    });
+    let candidates = activeSubs.flatMap(s =>
       (s.translated ? [{beg:s.beg, end:s.end, text:s.text}] : captionSegments(s)).map((segment, segmentIndex) => {
         const sentenceBeg = Number.isFinite(segment.beg) ? segment.beg : s.beg;
         // Some final entries omit a sentence end. Keep that caption visible until
@@ -795,8 +770,12 @@
         .sort((a, b) => a.captionBeg - b.captionBeg);
     if (!candidates.length) {
       candidates = previewSubs.filter(s => s.beg <= t && s.end > t)
-        .map((s, index) => ({...s, captionBeg:s.beg, captionEnd:s.end,
-          sourceId:`preview-${index}`, segmentIndex:0}));
+        .flatMap((s, index) => captionSegments(s).map((segment, segmentIndex) => ({
+          ...s, text:segment.text,
+          sourceId:`preview-${s.sentenceId ?? index}`, segmentIndex,
+          captionBeg:Number.isFinite(segment.beg) ? segment.beg : s.beg,
+          captionEnd:Number.isFinite(segment.end) ? segment.end : s.end,
+        }))).filter(s => s.captionBeg <= t && s.captionEnd > t);
     }
     // A seek can land inside finalized history already received from ASR. Show
     // that timed caption immediately; wait only when the destination is unknown.
@@ -997,6 +976,7 @@
       matched.isFinal = msg.is_final !== false;
       matched.sentenceId = msg.sentence_id ?? matched.sentenceId;
       if (msg.words) matched.words = msg.words;
+      captionSegmentCache.delete(matched);
       updateHistory(matched.historyItem, msg);
       for (let i = subs.length - 1; i >= 0; i--) {
         if (i !== idx && sameSubtitle(matched, subs[i])) {
@@ -1457,7 +1437,8 @@
           setStatus('播放已开始，正在识别并翻译；当前句可能修订');
         }
         // 音视频一起从输入进度前方 delay 秒启动；后续 buffer 消息持续控制播放上限。
-        if (!preserveLiveMedia && !sharedViewerActive && isHls && Number.isFinite(msg.start_at)) {
+        if (!preserveLiveMedia && !sharedViewerActive && isHls
+            && !(playbackGuard.live && playStarted) && Number.isFinite(msg.start_at)) {
           aligningInitialPlayback = true;
           try { player.currentTime = Math.max(0, msg.start_at); }
           catch (e) { logEvent('sync_seek_error', String(e)); }
@@ -1597,7 +1578,7 @@
     if (cloudPlayback && originalCaptionMode) {
       const action = playbackGuard.tick({now:performance.now(), time:player.currentTime,
         limit:(useCaptionBuffer || playbackGuard.live) ? playbackLimit : null,
-        ready:playStarted, userPaused:uiPaused});
+        ready:playStarted, userPaused:uiPaused, sourceBuffering:sourceBufferingSince != null});
       if (action === 'timeout') { showRecognitionFailure('识别 15 秒没有进展，已停止新音频处理。可重试或仅播放。'); return; }
       if (action === 'hold') {
         holdingForBuffer = true;

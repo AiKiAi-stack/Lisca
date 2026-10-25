@@ -1,6 +1,7 @@
 (function (root) {
   'use strict';
   const COVERAGE_GAP_TOLERANCE = 0.15;
+  const MAX_LIVE_HOLD_MS = 2000; // Bound application-induced live lag across recovered faults.
   class CaptionPlaybackGuard {
     constructor() { this.reset({now: 0, live: false}); }
     reset({now, live}) {
@@ -12,6 +13,7 @@
       this.nextAnonymousSpan = 0;
       this.holdAt = null;
       this.heldForFaultMs = 0;
+      this.heldForSessionMs = 0;
       this.faultActive = false;
       this.degraded = false;
       this.recoveryCandidate = null;
@@ -19,7 +21,7 @@
       this.uncoveredSince = null;
       this.done = false;
       this.failed = false;
-      this.pausedAt = null;
+      this.externalPauseAt = null;
     }
     progress(through, now) {
       this.noteProgress(through, now);
@@ -60,17 +62,17 @@
         this.lastProgress = now;
       }
     }
-    tick({now, time, limit, ready, userPaused}) {
+    tick({now, time, limit, ready, userPaused, sourceBuffering = false}) {
       if (this.done || this.failed) return 'none';
-      if (userPaused) {
-        if (this.pausedAt == null) this.pausedAt = now;
+      if (userPaused || sourceBuffering) {
+        if (this.externalPauseAt == null) this.externalPauseAt = now;
         return 'none';
       }
-      if (this.pausedAt != null) {
-        this.lastProgress += now - this.pausedAt;
-        if (this.holdAt != null) this.holdAt += now - this.pausedAt;
+      if (this.externalPauseAt != null) {
+        this.lastProgress += now - this.externalPauseAt;
+        if (this.holdAt != null) this.holdAt += now - this.externalPauseAt;
         this.recoveryCandidate = null;
-        this.pausedAt = null;
+        this.externalPauseAt = null;
       }
       if (!ready || !this.live) {
         if (now - this.lastProgress >= 15000) {
@@ -109,14 +111,20 @@
           this.faultActive = true;
           this.heldForFaultMs = 0;
         }
+        if (this.liveWaitBudgetSpent()) {
+          this.degraded = true;
+          this.recoveryCandidate = null;
+          return 'degrade';
+        }
         this.holdAt = now;
         this.recoveryCandidate = null;
         return 'hold';
       }
       if (this.holdAt != null) {
         const currentHoldMs = Math.max(0, now - this.holdAt);
-        if (this.live && this.heldForFaultMs + currentHoldMs >= 2000) {
+        if (this.live && this.heldForSessionMs + this.heldForFaultMs + currentHoldMs >= MAX_LIVE_HOLD_MS) {
           this.heldForFaultMs += currentHoldMs;
+          this.commitFaultWait();
           this.holdAt = null;
           this.degraded = true;
           this.recoveryCandidate = null;
@@ -142,6 +150,11 @@
         if (!this.faultActive) {
           this.faultActive = true;
           this.heldForFaultMs = 0;
+        }
+        if (this.liveWaitBudgetSpent()) {
+          this.degraded = true;
+          this.recoveryCandidate = null;
+          return 'degrade';
         }
         this.holdAt = now;
         this.recoveryCandidate = null;
@@ -232,6 +245,7 @@
         && now - candidate.lastMediaAdvanceAt <= 500;
     }
     clearFault() {
+      this.commitFaultWait();
       this.faultActive = false;
       this.heldForFaultMs = 0;
       this.holdAt = null;
@@ -239,6 +253,13 @@
       this.recoveryCandidate = null;
       this.watchingCoverage = this.live;
       this.uncoveredSince = null;
+    }
+    liveWaitBudgetSpent() {
+      return this.heldForSessionMs + this.heldForFaultMs >= MAX_LIVE_HOLD_MS;
+    }
+    commitFaultWait() {
+      this.heldForSessionMs += this.heldForFaultMs;
+      this.heldForFaultMs = 0;
     }
   }
   if (typeof module !== 'undefined' && module.exports) module.exports = {CaptionPlaybackGuard};
