@@ -44,7 +44,7 @@ from engines import create_engine  # noqa: E402
 from caption_preview import StableCaptionPreview, TranslationClauses  # noqa: E402
 from input_resolver import classify, resolve_stream_url  # noqa: E402
 from platform_resolver import resolve_platform_url  # noqa: E402
-from stream_source import DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
+from stream_source import AudioTimelineError, DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
 from live_share import LiveShare, MAX_VIEWERS  # noqa: E402
 from cloud_translation import (CloudConfigStore, CloudError, QwenTranslator, RequestStop,
                                TranslationSession, validate_pair)  # noqa: E402
@@ -1256,9 +1256,14 @@ async def ws_endpoint(ws: WebSocket):
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
             worker_failed = True
             terminal_reason = "error"
+            audio_timeline_error = isinstance(exc, AudioTimelineError)
+            if audio_timeline_error:
+                stop.set()
             provider_details = (classify_provider_failure(exc)
                                 if provider_exception is exc else None)
-            if phase == "input_validation":
+            if audio_timeline_error:
+                message = "音频时间轴存在过大间隙或跳变，已停止识别；可更换来源或仅播放"
+            elif phase == "input_validation":
                 message = "输入地址无法识别：请提供有效 URL 或本机已存在的文件路径"
             elif phase == "platform_resolution":
                 message = "平台页面解析失败：请检查链接、访问权限和解析器支持情况"
@@ -1296,7 +1301,9 @@ async def ws_endpoint(ws: WebSocket):
             error_event = {"type": "error", "message": message}
             if provider_details is not None:
                 error_event.update(provider_details)
-            if phase == "no_progress":
+            if audio_timeline_error:
+                error_event.update(failure_category="media_timeline", retryable=False)
+            elif phase == "no_progress":
                 error_event.update(failure_category="no_progress", retryable=False)
             elif phase == "capacity":
                 error_event.update(failure_category="capacity", retryable=False)

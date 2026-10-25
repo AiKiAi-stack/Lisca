@@ -152,6 +152,7 @@ def rolling_redirect_https_hls(local_tls_material):
                         f"#EXTINF:0.13,\n/rolling/seg{item}.ts\n"
                         for item in range(sequence, sequence + 3)
                     )
+                    + ("#EXT-X-ENDLIST\n" if sequence >= 1 else "")
                 ).encode()
                 self._respond(
                     200, "application/vnd.apple.mpegurl", body,

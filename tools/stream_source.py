@@ -15,6 +15,7 @@ import re
 import ssl
 import tempfile
 import urllib.request
+from fractions import Fraction
 from urllib.parse import urljoin, urlparse, urlsplit
 
 import av
@@ -24,6 +25,15 @@ SAMPLING_RATE = 16000
 OPEN_TIMEOUT_SEC = 5.0
 READ_TIMEOUT_SEC = 5.0
 MAX_REDIRECTED_HLS_BYTES = 1024 * 1024
+# Only repair small timestamp discontinuities. Larger jumps and clock resets
+# are unsupported because the byte-stream interface cannot map them safely.
+MAX_REPAIRED_PTS_GAP_SEC = 1.0
+MAX_TOTAL_REPAIRED_PTS_GAP_SEC = 60.0
+
+
+class AudioTimelineError(ValueError):
+    """Raised when audio PTS discontinuities exceed supported repair limits."""
+
 
 _HLS_CONTENT_TYPES = {
     "application/vnd.apple.mpegurl",
@@ -114,6 +124,9 @@ class StreamSource:
             self.resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLING_RATE)
             self.chunk_samples = int(chunk_sec * SAMPLING_RATE)
             self._buf = b""
+            self._pts_origin_sec = None
+            self._pts_cursor_samples = 0
+            self._inserted_pts_gap_samples = 0
             self._exhausted = False
         except Exception:
             self.close()
@@ -126,27 +139,79 @@ class StreamSource:
         try:
             for frame in self.container.decode(self.stream):
                 for rf in self.resampler.resample(frame):
-                    frame_start = float(rf.pts * rf.time_base) if rf.pts is not None else None
-                    samples = rf.to_ndarray()[0]
-                    if self._start_sec and frame_start is not None:
-                        skip = max(0, int(round((self._start_sec - frame_start) * SAMPLING_RATE)))
-                        if skip >= len(samples):
-                            continue
-                        samples = samples[skip:]
-                        self._start_sec = 0
-                    if self.first_pts_sec is None and rf.pts is not None and rf.time_base is not None:
-                        self.first_pts_sec = float(rf.pts * rf.time_base)
-                    self._buf += samples.tobytes()
-                    while len(self._buf) >= self.chunk_samples * 2:
-                        chunk = self._buf[: self.chunk_samples * 2]
-                        self._buf = self._buf[self.chunk_samples * 2:]
-                        yield chunk
+                    yield from self._append_resampled_frame(rf)
+            # A normal EOF can leave a short delayed tail in the resampler.
+            for rf in self.resampler.resample(None):
+                yield from self._append_resampled_frame(rf)
         finally:
             self.close()
         # 正常耗尽：吐出不足一块的尾部数据（调用方提前 break 时不会走到这里）
         if self._buf:
             yield self._buf
             self._buf = b""
+
+    def _append_resampled_frame(self, frame):
+        frame_start = None
+        if frame.pts is not None and frame.time_base is not None:
+            frame_start = Fraction(frame.pts) * Fraction(frame.time_base)
+
+        samples = frame.to_ndarray()[0]
+        sample_rate = frame.sample_rate or SAMPLING_RATE
+        if self._start_sec and frame_start is not None:
+            skip = max(0, int(round((self._start_sec - float(frame_start)) * sample_rate)))
+            if skip >= len(samples):
+                return []
+            if self.first_pts_sec is None:
+                self.first_pts_sec = float(frame_start)
+            samples = samples[skip:]
+            frame_start += Fraction(skip, sample_rate)
+            self._start_sec = 0
+        elif self.first_pts_sec is None and frame_start is not None:
+            self.first_pts_sec = float(frame_start)
+
+        if not len(samples):
+            return []
+
+        max_gap_samples = int(MAX_REPAIRED_PTS_GAP_SEC * SAMPLING_RATE)
+        if frame_start is not None:
+            if self._pts_origin_sec is None:
+                self._pts_origin_sec = frame_start
+            pts_start_samples = int(
+                round(float((frame_start - self._pts_origin_sec) * SAMPLING_RATE))
+            )
+            pts_delta_samples = pts_start_samples - self._pts_cursor_samples
+            if pts_delta_samples > max_gap_samples:
+                raise AudioTimelineError(
+                    f"音频 PTS 正向间隙 {pts_delta_samples / SAMPLING_RATE:.3f}s "
+                    f"超过自动补齐上限 {MAX_REPAIRED_PTS_GAP_SEC:.1f}s"
+                )
+            if pts_delta_samples < -max_gap_samples:
+                raise AudioTimelineError(
+                    f"音频 PTS 向后跳变 {-pts_delta_samples / SAMPLING_RATE:.3f}s "
+                    f"超过可裁剪重叠上限 {MAX_REPAIRED_PTS_GAP_SEC:.1f}s"
+                )
+            if pts_delta_samples > 0:
+                total_limit = int(MAX_TOTAL_REPAIRED_PTS_GAP_SEC * SAMPLING_RATE)
+                if self._inserted_pts_gap_samples + pts_delta_samples > total_limit:
+                    raise AudioTimelineError(
+                        "音频 PTS 正向间隙修复累计超过 "
+                        f"{MAX_TOTAL_REPAIRED_PTS_GAP_SEC:.1f}s 上限"
+                    )
+                self._buf += b"\x00" * (pts_delta_samples * 2)
+                self._pts_cursor_samples += pts_delta_samples
+                self._inserted_pts_gap_samples += pts_delta_samples
+            elif pts_delta_samples < 0:
+                samples = samples[min(-pts_delta_samples, len(samples)):]
+
+        self._buf += samples.tobytes()
+        if self._pts_origin_sec is not None:
+            self._pts_cursor_samples += len(samples)
+
+        chunks = []
+        while len(self._buf) >= self.chunk_samples * 2:
+            chunks.append(self._buf[: self.chunk_samples * 2])
+            self._buf = self._buf[self.chunk_samples * 2:]
+        return chunks
 
     def close(self):
         if self._closed:

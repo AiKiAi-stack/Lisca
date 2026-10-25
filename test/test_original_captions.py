@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import webui
 from cloud_translation import CloudConfigStore
+from stream_source import AudioTimelineError
 
 
 @pytest.mark.parametrize("text,request_data,hints", [
@@ -1027,3 +1028,79 @@ def test_only_a_forward_caption_range_refreshes_server_progress_budget(tmp_path,
     assert [event['end'] for event in events if event['type'] == 'subtitle'] == [0.2, 0.2]
     assert any(event['type'] == 'error' and '15 秒' in event['message'] for event in events)
     assert events[-1] == {'type': 'end', 'reason': 'error'}
+
+
+@pytest.mark.parametrize('raise_after_first', [False, True])
+def test_audio_timeline_error_is_terminal_and_stops_source(
+    tmp_path, monkeypatch, raise_after_first
+):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    monkeypatch.setattr(webui, '_session_wait', lambda *_args: False)
+    calls = {'source_created': 0, 'source_closed': 0, 'engine_created': 0,
+             'audio_sent': 0, 'engine_closed': 0}
+    audio = b'\x00\x10' * 1600
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            calls['source_created'] += 1
+
+        def iter_chunks(self):
+            if raise_after_first:
+                yield audio
+            raise AudioTimelineError('private decoder detail must not reach the UI')
+
+        def close(self):
+            calls['source_closed'] += 1
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            calls['audio_sent'] += 1
+            return (None, None, '', None)
+
+        def poll(self):
+            return (None, None, '', None)
+
+        def finish(self):
+            return self.poll()
+
+        def close(self):
+            calls['engine_closed'] += 1
+
+    def create_engine(*_args, **_kwargs):
+        calls['engine_created'] += 1
+        return Engine()
+
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', create_engine)
+
+    with TestClient(webui.app) as client:
+        client.put('/api/cloud', json={'api_key': 'test-private-key'})
+        ticket = client.post('/api/cloud/sessions', json={
+            'url': 'https://media.test/unsupported-pts.mp4',
+        }).json()
+        session_stop = webui._CLOUD_JOBS[ticket['session']]['stop']
+        with client.websocket_connect('/ws?session=' + ticket['session']) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event['type'] == 'end':
+                    break
+            assert session_stop.is_set()
+
+    errors = [event for event in events if event['type'] == 'error']
+    assert errors == [{
+        'type': 'error',
+        'message': '音频时间轴存在过大间隙或跳变，已停止识别；可更换来源或仅播放',
+        'failure_category': 'media_timeline',
+        'retryable': False,
+    }]
+    assert events[-1] == {'type': 'end', 'reason': 'error'}
+    assert calls == {
+        'source_created': 1,
+        'source_closed': 1,
+        'engine_created': int(raise_after_first),
+        'audio_sent': int(raise_after_first),
+        'engine_closed': int(raise_after_first),
+    }
