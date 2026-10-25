@@ -27,7 +27,10 @@ def _start_share(client):
 
 def test_lan_viewer_receives_captions_from_the_host_asr_session(monkeypatch):
     source_started = threading.Event()
+    release_first_chunk = threading.Event()
     release_source = threading.Event()
+    source_closed = threading.Event()
+    viewer_unsubscribed = threading.Event()
     engine_creations = []
 
     class FakeStreamSource:
@@ -38,11 +41,13 @@ def test_lan_viewer_receives_captions_from_the_host_asr_session(monkeypatch):
 
         def iter_chunks(self):
             source_started.set()
+            if not release_first_chunk.wait(timeout=5):
+                return
             yield b"\x00" * 3200
-            release_source.wait(timeout=2)
+            release_source.wait(timeout=5)
 
         def close(self):
-            pass
+            source_closed.set()
 
     class FakeEngine:
         batch_mode = False
@@ -66,15 +71,27 @@ def test_lan_viewer_receives_captions_from_the_host_asr_session(monkeypatch):
         engine_creations.append(True)
         return FakeEngine()
 
+    unsubscribe = live_share.LiveShare.unsubscribe
+
+    def track_unsubscribe(share, viewer_id):
+        unsubscribe(share, viewer_id)
+        viewer_unsubscribed.set()
+
     monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
     monkeypatch.setattr(webui, "StreamSource", FakeStreamSource)
     monkeypatch.setattr(webui, "create_engine", make_engine)
+    monkeypatch.setattr(live_share.LiveShare, "unsubscribe", track_unsubscribe)
 
-    try:
-        with TestClient(webui.app) as host, TestClient(
-            webui.app, client=("192.168.1.20", 50000)
-        ) as viewer:
+    share = None
+    share_state = None
+    with TestClient(webui.app) as host:
+        viewer = TestClient(webui.app, client=("192.168.1.20", 50000))
+        # Both peers use Uvicorn's single ASGI event loop while keeping distinct client IPs.
+        viewer.portal = host.portal
+        try:
+            assert viewer.portal is host.portal
             share = _start_share(host)
+            share_state = webui._SHARES[share["token"]]
             with host.websocket_connect(
                 "/ws?" + urlencode({
                     "url": SOURCE_URL,
@@ -83,27 +100,48 @@ def test_lan_viewer_receives_captions_from_the_host_asr_session(monkeypatch):
                 })
             ) as host_socket:
                 assert source_started.wait(timeout=1)
-                host_events = []
-                while not any(event.get("type") == "subtitle" for event in host_events):
-                    host_events.append(host_socket.receive_json())
-
                 joined = viewer.post(f"/share/{share['token']}/join")
                 assert joined.status_code == 200
                 with viewer.websocket_connect(
                     f"/share/{share['token']}/ws?viewer_id={joined.json()['viewer_id']}"
                 ) as viewer_socket:
-                    viewer_events = []
-                    while not any(event.get("type") == "subtitle" for event in viewer_events):
-                        viewer_events.append(viewer_socket.receive_json())
+                    release_first_chunk.set()
+                    host_events = []
+                    while not any(
+                        event.get("type") == "subtitle" for event in host_events
+                    ):
+                        host_events.append(host_socket.receive_json())
 
-                assert any(event.get("text") == "shared caption" for event in viewer_events)
-                assert len(engine_creations) == 1
+                    viewer_events = []
+                    while not any(
+                        event.get("type") == "subtitle" for event in viewer_events
+                    ):
+                        viewer_events.append(viewer_socket.receive_json())
+                    assert any(
+                        event.get("text") == "shared caption" for event in viewer_events
+                    )
+                    assert len(engine_creations) == 1
+
+                assert viewer_unsubscribed.wait(timeout=1)
+                assert not source_closed.is_set()
                 release_source.set()
                 while not any(event.get("type") == "end" for event in host_events):
                     host_events.append(host_socket.receive_json())
             assert host.get(f"/share/{share['token']}").status_code == 404
-    finally:
-        release_source.set()
+        finally:
+            release_first_chunk.set()
+            release_source.set()
+            if share_state is not None:
+                share_state.stop_event.set()
+                share_state.active = False
+            if share is not None:
+                with webui._SHARE_LOCK:
+                    webui._SHARES.pop(share["token"], None)
+            try:
+                if source_started.is_set():
+                    assert source_closed.wait(timeout=1)
+            finally:
+                viewer.close()
 
 
 def test_departed_viewer_releases_capacity_without_interrupting_others(monkeypatch):
