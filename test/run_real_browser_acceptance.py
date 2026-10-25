@@ -177,6 +177,7 @@ SAMPLER_START = r"""() => {
     const caption = document.querySelector('#current');
     const status = document.querySelector('#status');
     const retry = document.querySelector('#retryCaptions');
+    const stop = document.querySelector('#stop');
     if (!video || !caption || !status) return;
     const css = getComputedStyle(caption);
     const lineHeight = parseFloat(css.lineHeight) || parseFloat(css.fontSize) * 1.3;
@@ -208,6 +209,8 @@ SAMPLER_START = r"""() => {
       status: status.innerText || '',
       status_is_error: status.classList.contains('err') || caption.classList.contains('err'),
       retry_visible: !!retry && !retry.hidden && retry.getClientRects().length > 0,
+      stop_visible: !!stop && !stop.hidden && getComputedStyle(stop).display !== 'none'
+        && stop.getClientRects().length > 0,
       line_count: text.trim() ? (caption.scrollHeight - padding) / lineHeight : 0,
       clipped: caption.scrollWidth > caption.clientWidth + 1,
       height_clipped: caption.scrollHeight > caption.clientHeight + 1
@@ -437,7 +440,7 @@ def collect(args):
         elif request.method.upper() == "DELETE" and re.fullmatch(
                 r"/api/cloud/sessions/[^/]+", path):
             # Record only the status; the request URL contains the opaque capability.
-            delete_responses.append(response.status)
+            delete_responses.append(int(response.status))
 
     def on_request_failed(request):
         path = urlsplit(request.url).path
@@ -586,9 +589,16 @@ def collect(args):
                             and time.monotonic() - latest_retryable_error["at"]
                             >= RECOVERY_BACKOFF_GRACE_SECONDS
                         )
+                        ui_recovery_exhausted = (
+                            observe_recovery
+                            and latest_sample.get("retry_visible") is True
+                            and latest_sample.get("stop_visible") is False
+                        )
+                        if ui_recovery_exhausted:
+                            errors.append({"type": "ui_recovery_exhausted"})
                         if (page_errors or websocket_errors or player_failure
                                 or session_post_failures or fatal_event_error
-                                or retry_ui_exhausted):
+                                or retry_ui_exhausted or ui_recovery_exhausted):
                             errors.extend(session_post_failures)
                             break
                         if not posts["count"]:
@@ -685,6 +695,7 @@ def collect(args):
                 "operator_stop": stop_state.copy()}
     if observe_recovery:
         metadata["observe_recovery"] = True
+    metadata["session_delete_statuses"] = delete_responses.copy()
     recording = write_browser_recording(media_path, recording_path, events, status, signal, reason,
                                         errors, started_at, started, metadata, source_before)
     errors = recording.get("errors", errors)
@@ -721,6 +732,7 @@ def collect(args):
         "source_verified_from": "score_original_acceptance.score" if score_result else None,
         "score_path": str(score_path) if score_result else None,
         "session_post_start_count": posts["count"], "operator_stop": stop_state.copy(),
+        "session_delete_statuses": delete_responses.copy(),
         "session_post_starts_during_completed_seek": checkpoint_post_delta,
         "video_eof_observed": video_eof, "live_seconds_cap_reached": live_cap,
         "sampling": {"requested_interval_ms": 50, "tolerance_ms": 100,

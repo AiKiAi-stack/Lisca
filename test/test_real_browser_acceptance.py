@@ -226,6 +226,7 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                 "status": self.status,
                 "status_is_error": self.status_is_error,
                 "retry_visible": self.retry_visible,
+                "stop_visible": self.active,
                 "line_count": 1 if self.caption else 0,
                 "clipped": False,
                 "height_clipped": False,
@@ -294,7 +295,12 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
     monkeypatch.setattr(acceptance.time, "monotonic", lambda: clock["now"])
     monkeypatch.setattr(acceptance, "sync_playwright", Playwright)
     monkeypatch.setattr(acceptance, "launch_browser", lambda _playwright: Browser())
-    monkeypatch.setattr(acceptance, "stop_if_active", lambda active_page: active_page.stop())
+
+    def stop_if_active(active_page):
+        if active_page.locator("#stop").is_visible():
+            active_page.locator("#stop").click()
+
+    monkeypatch.setattr(acceptance, "stop_if_active", stop_if_active)
     argv = ["--media", "https://media.test/live.m3u8?token=TEST_ONLY_MEDIA_CAPABILITY",
             "--label", label, "--output", str(tmp_path), "--seconds", str(seconds)]
     if observe_recovery:
@@ -410,6 +416,38 @@ def test_opt_in_observation_stops_when_manual_retry_ui_persists_after_recovery_b
     assert len([error for error in recording["errors"]
                 if error.get("type") == "recognition_error"]) == 3
     assert clock["now"] - 100.0 < 7.0
+
+
+def test_opt_in_observation_stops_on_media_only_ui_exhaustion_and_keeps_delete_evidence(
+        tmp_path, monkeypatch):
+    def on_start(page):
+        page.open_session()
+        page.schedule(0.2, lambda: media_recovery_exhausted(page))
+
+    def media_recovery_exhausted(page):
+        # showCaptionRecovery cancels the session, awaits its DELETE, then hides Stop.
+        page._post("DELETE")
+        page.active = False
+        page.retry_visible = True
+        page.status = "media recovery exhausted"
+
+    result, report, recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="media-recovery-exhausted", seconds=5,
+        on_start=on_start)
+
+    assert report["live_seconds_cap_reached"] is False
+    assert report["operator_stop"]["requested"] is False
+    assert report["operator_stop"]["trigger"] is None
+    assert report["session_delete_statuses"] == [200]
+    assert recording["metadata"]["session_delete_statuses"] == [200]
+    assert recording["metadata"]["operator_stop"]["requested"] is False
+    assert any(error["type"] == "ui_recovery_exhausted"
+               for error in recording["errors"])
+    assert not any(error["type"] == "live_stop_delete_unconfirmed"
+                   for error in recording["errors"])
+    assert result["recording_status"] == "failed"
+    assert result["exit_ok"] is False
+    assert clock["now"] - 100.0 < 1.0
 
 
 def test_observe_recovery_option_is_remote_only(tmp_path):
