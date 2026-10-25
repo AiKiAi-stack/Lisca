@@ -71,6 +71,13 @@ def install_stream_source_probe(webui_module, output_path):
     def observed_init(self, url_or_path, *args, **kwargs):
         self._fixed_startup_probe_case = startup_case_from_url(url_or_path)
         original_init(self, url_or_path, *args, **kwargs)
+        self._fixed_startup_probe_live_hls = False
+        if self._fixed_startup_probe_case is not None:
+            parsed = urlsplit(str(url_or_path))
+            container = getattr(self, "container", None)
+            self._fixed_startup_probe_live_hls = bool(
+                parsed.scheme in ("http", "https") and parsed.path.lower().endswith(".m3u8")
+                and container is not None and container.format.name == "hls")
 
     def observed_iter_chunks(self, *args, **kwargs):
         case_id = getattr(self, "_fixed_startup_probe_case", None)
@@ -106,6 +113,7 @@ def install_stream_source_probe(webui_module, output_path):
                 "event": "stream_source_pcm_summary",
                 "case_id": case_id,
                 "process_id": os.getpid(),
+                "is_live_hls": self._fixed_startup_probe_live_hls,
                 "stream_status": stream_status,
                 "first_decoded_pcm_utc": first_pcm_utc,
                 "first_decoded_pcm_monotonic_ns": first_pcm_monotonic_ns,

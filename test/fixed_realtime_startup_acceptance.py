@@ -351,7 +351,9 @@ def _process_start_ticks(pid):
     return int(fields[21]) if len(fields) > 21 else None
 
 
-def collect_one(args):
+def collect_one(args, *, media_suffix=".wav"):
+    if media_suffix not in (".wav", ".m3u8"):
+        raise ValueError("unsupported fixed startup media suffix")
     if not args.allow_real_recognition:
         raise ValueError("collect starts real ASR; pass --allow-real-recognition explicitly")
     if not _valid_label(args.label, args.language):
@@ -406,6 +408,8 @@ def collect_one(args):
     run_data = {
         "schema_version": 1, "label": args.label, "language": args.language,
         "startup_class": args.startup_class,
+        "media_suffix": media_suffix,
+        "input_pipeline": "live_hls" if media_suffix == ".m3u8" else "paced_http_wav",
         "startup_class_evidence": ("operator_confirmed_first_session_after_fresh_service_start"
                                    if args.startup_class == "cold"
                                    else "same_service_process_after_cold_case"),
@@ -422,7 +426,7 @@ def collect_one(args):
 
     def run_collector():
         try:
-            media_url = f"{args.origin.rstrip('/')}/{args.language}.wav?startup_case={args.label}"
+            media_url = f"{args.origin.rstrip('/')}/{args.language}{media_suffix}?startup_case={args.label}"
             collector_args = parse_args(["--media", media_url, "--label", args.label,
                                          "--seconds", str(args.seconds),
                                          "--stop-file", str(stop_file),
@@ -551,7 +555,7 @@ def _median(values):
     return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
 
 
-def analyze(args):
+def analyze(args, *, hls_evidence_validated=False):
     output = Path(args.output)
     fixed_sample = prepare_sample(args.language, output)
     runs_dir = output / "runs"
@@ -589,7 +593,8 @@ def analyze(args):
         origin_bound_ms = None
         origin_ns = None
         if len(origins) == 1 and visible_ns is not None:
-            origin_ns = origins[0].get("origin_first_pcm_write_started_monotonic_ns")
+            origin_ns = origins[0].get("origin_first_audio_body_write_started_monotonic_ns",
+                                       origins[0].get("origin_first_pcm_write_started_monotonic_ns"))
             if isinstance(origin_ns, (int, float)):
                 origin_bound_ms = (visible_ns - int(origin_ns)) / 1e6
         uncertainty_ms = calibration.get("uncertainty_ms")
@@ -608,7 +613,8 @@ def analyze(args):
             and decode_ns is not None else None)
         playback_lags = []
         if len(origins) == 1 and isinstance(sampler_origin, (int, float)):
-            origin_ns = origins[0].get("origin_first_pcm_write_started_monotonic_ns")
+            origin_ns = origins[0].get("origin_first_audio_body_write_started_monotonic_ns",
+                                       origins[0].get("origin_first_pcm_write_started_monotonic_ns"))
             if isinstance(origin_ns, (int, float)):
                 for item in samples:
                     elapsed, media_time = item.get("observed_after_ms"), item.get("media_time")
@@ -651,14 +657,19 @@ def analyze(args):
             "service_process_start_ticks": run.get("service_process_start_ticks"),
             "cold_first_session_confirmed": run.get("cold_first_session_confirmed"),
             "case_valid": valid,
+            "hls_live_pipeline_observed": bool(
+                run.get("input_pipeline") == "live_hls" and run.get("media_suffix") == ".m3u8"
+                and len(decodes) == 1 and decodes[0].get("is_live_hls") is True),
             "recording_status": report.get("recording_status"),
             "sampling_status": sampling.get("status"),
             "clock_calibration_uncertainty_ms": uncertainty_ms,
             "first_ready_after_collection_start_ms": report.get("preparation", {}).get("first_ready_after_ms"),
-            "acceptance_latency_upper_bound_from_origin_first_PCM_write_ms": round(latency_ms, 1) if latency_ms is not None else None,
+            "acceptance_latency_upper_bound_from_origin_first_audio_body_write_ms": latency_ms,
+            "acceptance_latency_upper_bound_from_origin_first_PCM_write_ms": (
+                latency_ms if not (len(decodes) == 1 and decodes[0].get("is_live_hls") is True) else None),
             "decoded_PCM_yield_to_visible_ms_diagnostic": round(decoded_latency_ms, 1) if decoded_latency_ms is not None else None,
             "application_arrival_boundary": (
-                "origin pre-write timestamp for the unique exact-UA, no-Referer StreamSource GET; actual app receipt is later or equal"
+                "origin pre-write timestamp for the unique correlated app audio-body observation; actual app receipt is later or equal"
                 if origin_decode_correlation else "unobserved or uncorrelated"),
             "first_playing_after_first_decoded_pcm_ms": round(playing_after_decode, 1) if playing_after_decode is not None else None,
             "configured_ready_delay_seconds": ready.get("delay") if ready else None,
@@ -680,10 +691,11 @@ def analyze(args):
                           and case.get("service_process_start_ticks")
                           == cold[0].get("service_process_start_ticks")
                           and case.get("service_process_start_ticks") is not None for case in warm))
-    valid_latency = [case["acceptance_latency_upper_bound_from_origin_first_PCM_write_ms"]
+    valid_latency = [case["acceptance_latency_upper_bound_from_origin_first_audio_body_write_ms"]
                      for case in cases if case.get("case_valid")]
     p95 = _percentile(valid_latency, .95)
     all_valid = len(cases) == EXPECTED_RUNS and unique and all(case.get("case_valid") for case in cases)
+    live_pipeline = bool(all_valid and all(case["hls_live_pipeline_observed"] for case in cases))
     metrics = all(case.get("configured_ready_delay_seconds") is not None
                   and case.get("first_ready_after_collection_start_ms") is not None
                   and case.get("first_playing_after_first_decoded_pcm_ms") is not None
@@ -692,6 +704,8 @@ def analyze(args):
     blockers = []
     if not all_valid:
         blockers.append("requires exactly 20 valid non-simulated independent starts")
+    if not live_pipeline or not hls_evidence_validated:
+        blockers.append("requires observed HLS live pipeline; paced HTTP WAV is diagnostic only")
     if not classes_ok:
         blockers.append("requires one confirmed cold and 19 same-process warm starts")
     if not metrics:
@@ -709,13 +723,16 @@ def analyze(args):
                        "max": round(max(valid_latency), 1) if valid_latency else None,
                        "n": len(valid_latency), "limit": 3000},
         "latency_endpoint": "third consecutive 50 ms browser sample with identical non-placeholder visible text",
-        "latency_origin": "origin monotonic timestamp immediately before first PCM body write for the unique app-UA, no-Referer GET",
+        "latency_origin": "origin monotonic timestamp immediately before the correlated first app audio-body write",
+        "hls_live_pipeline_observed_for_all_starts": live_pipeline,
+        "hls_evidence_validated": bool(hls_evidence_validated),
         "latency_is_conservative_upper_bound": True,
         "raw_wire_arrival_observed": False,
         "application_delay_reported_separately": metrics, "freeze_reported_separately": metrics,
         "origin_clock_lag_is_proxy": True, "origin_bound_used_for_latency_gate": True,
         "sample": fixed_sample, "acceptance_gate_passed": bool(
-            all_valid and classes_ok and metrics and p95 is not None and p95 <= 3000),
+            all_valid and live_pipeline and hls_evidence_validated
+            and classes_ok and metrics and p95 is not None and p95 <= 3000),
         "gate_blockers": blockers, "cases": cases,
     }
     path = output / f"{args.language}-startup-analysis.json"

@@ -248,6 +248,17 @@ def test_twenty_dummy_cases_measure_delay_but_never_pass_acceptance(tmp_path, mo
     assert result["valid_correlated_upper_bound_starts"] == 0
     assert any("requires exactly 20 valid" in blocker for blocker in result["gate_blockers"])
 
+    # Fast, complete WAV timing must still not qualify the HLS live pipeline.
+    for index in range(1, 21):
+        report_path = output / f"zh-startup-{index:02d}.report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["simulated_recognition"] = False
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+    fast_wav = startup.analyze(args)
+    assert fast_wav["valid_correlated_upper_bound_starts"] == 20
+    assert fast_wav["acceptance_gate_passed"] is False
+    assert any("HLS live pipeline" in blocker for blocker in fast_wav["gate_blockers"])
+
     # Midpoint timing meets 3 s, but its calibrated upper bound does not.
     for index in range(1, 21):
         label = f"zh-startup-{index:02d}"
