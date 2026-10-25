@@ -1,6 +1,6 @@
 # 原文字幕首版：实施状态
 
-更新日期：2026-10-25（Asia/Shanghai）。集成分支：`feat/original-caption-release`；当前产品代码 `4405842`。2026-10-24 的 `fe0ff14` 集成与审查结果保留为历史基线，后续修复和真实观察见本文最新记录。
+更新日期：2026-10-25（Asia/Shanghai）。集成分支：`feat/original-caption-release`；当前产品代码 `0d4fb4d`。2026-10-24 的 `fe0ff14` 集成与审查结果保留为历史基线，后续修复和真实观察见本文最新记录。
 
 依据：[已确认实现规格](2026-10-23-original-caption-release-spec.md)、[正式12项任务](2026-10-23-original-caption-ticket-proposal.md)。根目录 `handoff.md` 保留历史交接；本文件与正式任务文件记录当前状态。
 
@@ -90,3 +90,30 @@ HTTPS HLS `5199507`、构造异常清理 `a8114f`、重定向子清单相对URI 
 用户已明确要求继续Matt流程并更新Issue、commit、PR；此前仅本地保存限制被本次远端授权替代。父规格#34及12个子任务#35–#46已发布，见[GitHub任务映射](2026-10-25-original-caption-github-tracking.md)。不重新访谈、不变更已确认粒度和依赖，也不因迁移而关闭未完成验收。
 
 当前产品`4405842`的两路新直播复测均在30分钟之前报错（英文约127秒，中文约252秒；最大采样间隔59/63ms），失败保留。现有脱敏记录没有足够异常类型证据，根因仍待定位，不直接归因于来源、ASR或模型质量。新采集修复`65a1f04`拒绝零采样有效标签，并在重复脱敏后保留错误消息存在标记；5项采集回归通过。真实长测、20次启动和声学门槛仍未通过。
+
+
+## 2026-10-25 远端PR与恢复分类修复
+
+GitHub补充workflow授权后，集成分支已实际推送并创建[draft PR#47](https://github.com/AiKiAi-stack/stream-with-asr/pull/47)。远端规格/任务/依赖与本地已确认图一致，不合并、不发布，父规格及未完成质量任务保持open。
+
+`5126a48`补齐识别启动后媒体读取错误的结构化分类：有类型证据的超时/断连/DNS及HTTP408/429/5xx使用现有共享恢复预算；403、证书校验和未知解码错误不自动重试，不解析或公开原始错误正文。7种公开HTTP/WebSocket场景先失败后通过，23项恢复回归通过。全量Python231通过/1Windows跳过（68.77秒，1条上游弃用警告）；Node102项通过。普通8002已重启到该产品提交，HTTP检查通过，配置仅内存，fixture404。持久进程与健康旁证为`webui-after-github-process.json` / `webui-after-github-health.json`。
+
+远端CI的Python3.10在HTTPS滚动清单测试发生PyAV17.1.0原生SIGABRT，3.12通过，3.11被fail-fast取消；不能把取消记成版本通过或失败。本地隔离3.10进程已复现相同崩溃，正缩小触发条件，保留矩阵与失败测试。最终复审与CI结论待候选修复后另行追加。
+
+
+## 2026-10-25 原生HLS崩溃修复
+
+`0d4fb4d`仅关闭自定义Python IO下不兼容的FFmpeg HLS HTTP连接复用，保留原TLS校验、自定义网络IO与直播起点选项。已确认原生keepalive要求HTTP URLContext，而Python AVIOContext不提供它；多分片切换触发原生assert。
+
+隔离CPython3.10.12/PyAV17.1.0/NumPy2.2.6复现以原代码`5126a48`退出-6，只有该选项变化后连续3次成功；Python3.12/PyAV19.0.2既有HTTPS模块13项通过。证据在忽略目录`stream-source-hls-native-abort-diagnosis.json`，机制对应[FFmpeg n8.0 HLS源码](https://github.com/FFmpeg/FFmpeg/blob/n8.0/libavformat/hls.c)。
+
+远端该提交的Test矩阵Python3.10/3.11/3.12现均通过，Pylint通过；原失败没有删除或改为跳过。普通8002已由主代理检查旧进程所有权后重启到`0d4fb4d`，页面/API200、fixture404，配置仅内存；进程与健康旁证沿用持久notes的`webui-after-github-process.json` / `webui-after-github-health.json`。
+
+
+## 固定实时启动测量与新一轮审查
+
+已补齐固定两语原速前缀、100ms节奏回环来源、同机单调时钟/浏览器校准与独立解码观察，见[测量说明](2026-10-25-fixed-realtime-startup-harness.md)。采用来源首次PCM写入前的保守时间边界，避免解码预读藏掉启动延迟；错误进程、歧义请求、WAV格式变动、缺失证据或模拟结果均不能放行。7项公开准备/分析与来源检查通过，测试使用合成素材，不依赖忽略的媒体。未执行40次付费启动。
+
+两份实际前缀的无ASR默认解码均需约3.1秒，已超过首稳定字幕3秒目标；两种独立探测选项可降到约2秒并保持全PCM哈希一致，但仅为诊断，未合入产品或计作实时验收。另试直接IO两语均报InvalidDataError，失败保留，不采用。
+
+本轮独立双轴审查针对`main...0d4fb4d`：Standards无硬性违例或新增气味；Spec发现尾部发送失败误报完成、评分来源URL未脱敏、启动媒体临时错误缺少恢复标记三项。它们正在一个隔离实现工作区集中修复，修复后再按相同轴复审；不能沿用上一轮零问题结论放行。
