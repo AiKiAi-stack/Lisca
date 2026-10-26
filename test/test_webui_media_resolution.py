@@ -12,6 +12,7 @@ from collections import Counter
 import httpx
 import pytest
 from fastapi import Response
+from fastapi.testclient import TestClient
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -284,13 +285,15 @@ def test_platform_resolution_caps_processes_and_coalesces_duplicate_requests(
 
 
 @pytest.mark.parametrize("route", ["video", "audio", "shared-media"])
-def test_media_routes_preserve_platform_resolution_failures(monkeypatch, route):
-    source = _page_url(f"failure-{route}")
+def test_media_routes_identify_platform_resolution_failures(monkeypatch, route):
+    source = _page_url(f"failure-{route}") + "?token=private-source-token"
     resolver_calls = []
 
     def failing_run(args, **_kwargs):
         resolver_calls.append(args)
-        return subprocess.CompletedProcess(args, 1, stdout="", stderr="fixture failure")
+        return subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="fixture failure https://cdn.test/media.m3u8?token=private-source-token"
+        )
 
     monkeypatch.setattr(webui, "_lan_ipv4_candidates", lambda: ["192.168.1.2"])
     monkeypatch.setattr(subprocess, "run", failing_run)
@@ -316,8 +319,54 @@ def test_media_routes_preserve_platform_resolution_failures(monkeypatch, route):
     response = asyncio.run(exercise())
 
     assert len(resolver_calls) == 2
-    if route == "shared-media":
-        assert response.status_code == 502
-        assert "fixture failure" in response.json()["detail"]
-    else:
-        assert response.status_code == 500
+    assert response.status_code == 502
+    assert "平台页面解析失败" in response.json()["detail"]
+    assert "private-source-token" not in response.text
+
+
+@pytest.mark.parametrize("route", ["video", "audio"])
+def test_media_pull_failure_has_its_own_http_error(monkeypatch, route):
+    async def fail_to_pull(_request, url, **_kwargs):
+        raise httpx.ConnectError(f"fixture stream failure: {url}")
+
+    monkeypatch.setattr(webui, "_proxy_stream", fail_to_pull)
+    source = "https://media.test/watch.mp4?token=private-pull-token"
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=webui.app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get(f"/{route}", params={"url": source})
+
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 502
+    assert "媒体拉流失败" in response.json()["detail"]
+    assert "private-pull-token" not in response.text
+
+
+def test_channel_list_read_failure_is_distinct_from_parse_failure(monkeypatch, tmp_path):
+    class FailedAsyncClient:
+        def __init__(self, *_args, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): pass
+        async def get(self, url, **_kwargs):
+            request = httpx.Request("GET", url)
+            raise httpx.ConnectError("fixture connection failure", request=request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", FailedAsyncClient)
+    malformed = tmp_path / "not-a-channel-list.m3u"
+    malformed.write_text(
+        "#EXTM3U\n#EXT-X-TARGETDURATION:6\nsegment.ts\n", encoding="utf-8"
+    )
+
+    with TestClient(webui.app, raise_server_exceptions=False) as client:
+        read_response = client.get("/channels", params={
+            "url": "https://channels.test/list.m3u?token=private-channel-token",
+        })
+        parse_response = client.get("/channels", params={"url": str(malformed)})
+
+    assert read_response.status_code == 502
+    assert "频道列表读取失败" in read_response.json()["detail"]
+    assert "private-channel-token" not in read_response.text
+    assert parse_response.status_code == 422
+    assert "频道列表解析失败" in parse_response.json()["detail"]
