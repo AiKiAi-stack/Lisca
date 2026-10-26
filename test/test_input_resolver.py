@@ -29,6 +29,13 @@ class TestClassify:
     def test_b23_short_link(self):
         assert classify("https://b23.tv/abc123")[0] == "page"
 
+    def test_youtube_page(self):
+        assert classify("https://www.youtube.com/watch?v=example")[0] == "page"
+        assert classify("https://youtu.be/example")[0] == "page"
+
+    def test_platform_name_in_query_is_not_a_platform_host(self):
+        assert classify("https://media.example/live.m3u8?name=bilibili.com")[0] == "stream"
+
     def test_douyin_page(self):
         assert classify("https://www.douyin.com/video/123456")[0] == "page"
 

@@ -9,9 +9,11 @@ import os
 import shutil
 import subprocess
 from typing import Tuple
+from urllib.parse import urlparse
 
 # 平台域名映射（与 homeshare-worker 的 PLATFORM_HOSTS 同规则）
 PLATFORM_HOSTS = {
+    "youtube": ("youtube.com", "youtu.be"),
     "douyin": ("douyin.com", "iesdouyin.com"),
     "xiaohongshu": ("xiaohongshu.com", "xhslink.com", "xhslink.cn"),
     "bilibili": ("bilibili.com", "b23.tv"),
@@ -25,9 +27,9 @@ def classify(user_input: str) -> Tuple[InputKind, str]:
     if os.path.exists(user_input):
         return ("file", user_input)
     if user_input.startswith(("http://", "https://", "rtsp://", "rtmp://", "rtp://")):
-        host = user_input.lower()
-        for platform, suffixes in PLATFORM_HOSTS.items():
-            if any(s in host for s in suffixes):
+        host = (urlparse(user_input).hostname or "").lower()
+        for suffixes in PLATFORM_HOSTS.values():
+            if any(host == suffix or host.endswith("." + suffix) for suffix in suffixes):
                 return ("page", user_input)
         return ("stream", user_input)
     raise ValueError(f"无法识别的输入（不是存在的文件，也不是 URL）: {user_input[:80]}")
