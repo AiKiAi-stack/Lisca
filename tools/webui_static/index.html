@@ -424,6 +424,7 @@
           urlEl.value = ch.url;
           for (const [, r] of chRows) r.row.classList.remove('active');
           row.classList.add('active');
+          document.getElementById('channelsDialog').close();
           connect(ch.url);
           logEvent('channel_pick', ch.name);
         };
