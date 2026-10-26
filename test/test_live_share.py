@@ -121,8 +121,12 @@ def test_lan_viewer_receives_captions_from_the_host_asr_session(monkeypatch):
                         event.get("text") == "shared caption" for event in viewer_events
                     )
                     assert len(engine_creations) == 1
+                    # Disconnect while the ASGI task is active; TestClient's context exit
+                    # immediately cancels that task after sending its disconnect message.
+                    viewer_socket.close()
+                    assert viewer_unsubscribed.wait(timeout=1)
+                    assert not source_closed.is_set()
 
-                assert viewer_unsubscribed.wait(timeout=1)
                 assert not source_closed.is_set()
                 release_source.set()
                 while not any(event.get("type") == "end" for event in host_events):
