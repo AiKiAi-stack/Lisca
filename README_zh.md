@@ -1,5 +1,33 @@
 [English](./README.md) | [中文](./README_zh.md)
 
+# 直播与视频原文字幕
+
+在自己的 Windows 电脑运行，通过浏览器观看直播或本地视频，识别音频并显示原语言字幕：中文语音显示中文，英文语音显示英文。当前优先做好原文识别与同步，主界面已暂停跨语言翻译。云端模式使用阿里云百炼 FunASR，用户提供自己的中国内地 API Key。
+
+## Windows 开始使用
+
+1. 安装 64 位 Python 3.10–3.12（推荐 3.12，启用 Python Launcher），将本仓库放到有空间的目录，例如 D 盘。
+2. 双击 `start-windows.cmd`。首次启动会在项目的 `.venv` 安装 WebUI 依赖，不下载本地模型；随后打开 `http://127.0.0.1:8002/`。
+3. 在「设置」填写并应用百炼 Key，确保已开通 `fun-asr-realtime`。当前识别与连接检查均不需要翻译模型。
+4. 输入直播链接或打开本地视频，点击「生成字幕」。默认自动识别语种，也可在设置中指定中文或英文。
+5. 播放器按音频时间显示短句。已完成识别的本地视频可暂停、继续及跳转并复用字幕；识别未完成时跳转可能需要重新建立识别会话。
+
+音频会发送给百炼，费用由用户 API 账户承担。「检查连接」也会连接云端识别服务。Key 默认只在本次运行中使用，可选择通过 Windows DPAPI 加密保存；「删除配置」会删除保存文件并停止云端会话。Key 不存入浏览器 localStorage、URL 或普通日志。
+
+本地视频在当前位置的字幕就绪后即可播放，后续音频继续处理；静音也能放行，无需等待长文件全部识别结束。识别完成后的暂停和跳转复用本次字幕；尚未准备的位置会先提示可能再次调用识别服务。正式字幕按语音时间切成短句，不逐词滚动，也不把迟到的长段字幕排队挤到后续画面。识别仍可能有错字或截断；真实中英文质量、公共直播和长时间稳定性仍需分别验证。详见[当前产品决策](docs/adr/0008-original-language-captions.md)、[实施状态](docs/plans/2026-10-23-original-caption-implementation-status.md)与[发布证据核对](docs/plans/2026-10-24-original-caption-release-evidence.md)。
+
+2026-10-24 的自动回归使用真实播放器和模拟识别，不能当作真实语音准确率通过。干净 Windows 安装及第二台局域网设备验收仍待完成；当前尚未达到 PRD 发布门槛。
+
+2026-10-25追加的Ubuntu真实识别、控制与直播结果见[验收记录](docs/plans/2026-10-24-original-caption-real-acceptance.md)与[逐来源支持边界](docs/research/2026-10-25-original-caption-support-matrix.md)；各项失败、未测同步和外部验收单独保留。
+
+平台页面与公开 IPTV 清单仅是来源候选，不能保证所有地址始终可播；已知网络、账号和地区限制需按来源验证。参见[来源调研](docs/research/2026-10-21-media-source-baseline.md)和[产品需求](docs/plans/2026-10-21-live-translation-prd.md)。
+
+启动诊断：从项目目录运行 `.venv\Scripts\python.exe tools\windows_launcher.py --check`，或直接使用 `.venv\Scripts\python.exe tools\webui.py --port 8002`；依赖清单是 `requirements-webui.txt`。启动日志位于 `logs/webui-windows.log`，配置位于项目的 `.data/`，视频副本位于 `uploads/`。
+
+## 原有流媒体工具包
+
+以下为原有 streamparser 命令行功能与开发接口；WebUI 云端首版不要求本地 GPU 或本地识别模型。
+
 <p align="center">
   <img src="docs/streamparser.svg" alt="streamparser" width="800"/>
 </p>
