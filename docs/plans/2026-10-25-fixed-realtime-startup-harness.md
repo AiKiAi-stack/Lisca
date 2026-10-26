@@ -238,3 +238,15 @@ with zero provider calls before the real pilots. The first actual HLS cold
 pilots measured 10607.4 ms (Chinese) and 6958.6 ms (English) conservative bounds;
 each is one attempt, not a 20-start P95. See the real acceptance log; both miss
 the target, so no automatic remaining 38 calls were made.
+
+
+## Partial-batch evidence reporting
+
+`hls_live_pipeline_observed_for_all_starts` describes the recorded attempts,
+independently of whether the required 20 valid cases have been collected.
+A single independently validated HLS case reports the observed pipeline while
+still failing the count, cold/warm and applicable latency requirements. Missing
+native HLS or WAV input still cannot pass. This corrects the earlier misleading
+“HLS not observed” blocker for incomplete HLS batches; it does not change the
+20-start acceptance gate. Original saved analyses are retained before refreshing
+derived reports, and no recognition call is made by re-analysis.
