@@ -1,3 +1,17 @@
+# Live and video source-language captions
+
+Run on your Windows PC and watch in a browser with original-language subtitles: Chinese speech stays Chinese and English speech stays English. The current UI prioritizes speech recognition and caption timing; cross-language translation is paused. Cloud recognition uses your own mainland-China DashScope API key for FunASR.
+
+Install 64-bit Python 3.10–3.12 (3.12 recommended, including the Python Launcher), place the checkout on a drive with free space, and run `start-windows.cmd`. It creates a project-local environment, installs `requirements-webui.txt`, and opens <http://127.0.0.1:8002/>. Configure your key in Settings, open a live URL or local video, and choose Generate captions. Language detection is automatic by default; Chinese and English hints are optional.
+
+Audio is sent to DashScope and billed to your API account. Keys are in memory by default; optional persistence uses Windows user-bound DPAPI encryption. The connection check uses ASR only. No translation request is made by the current UI or the default session API.
+
+Local audio can be processed ahead of playback. Once recognition completes, pause and seek reuse the captions without another recognition request. Captions follow audio timestamps and appear as short phrases rather than word-by-word drafts. The supplied 30.12-second Chinese video took about 8.1 seconds to recognize on this machine; other files can differ. Recognition errors remain possible. Live-source coverage, other languages and long-running playback require further acceptance testing.
+
+The 2026-10-25 Ubuntu continuation records real corpus scores, control checks and live-source limitations in the [acceptance record](docs/plans/2026-10-24-original-caption-real-acceptance.md) and [source matrix](docs/research/2026-10-25-original-caption-support-matrix.md). Windows and independent timing acceptance remain separate.
+
+See the [Chinese getting-started guide](README_zh.md), [current product decision](docs/adr/0008-original-language-captions.md), [PRD](docs/plans/2026-10-21-live-translation-prd.md), and [UI acceptance record](docs/ui-design.md). The original toolkit documentation follows.
+
 [English](./README.md) | [中文](./README_zh.md)
 
 <p align="center">
