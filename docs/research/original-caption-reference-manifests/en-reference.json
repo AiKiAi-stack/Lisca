@@ -1,0 +1,703 @@
+{
+  "schema_version": 1,
+  "dataset": "openslr/librispeech_asr@71cacbfb7e2354c4226d01e70d77d5fca3d04ba1#test.clean",
+  "config": "language=en; role=reference; speaker_id=61; ordered_source_utterance_sha256=28a24976cbc75f6a15760b222eb8c5485a2b102a54826bf656999200f4e03de7",
+  "sha256": "4b7d55148fed309e1d71d941d75e89a64b1068a1473163f5f6a9ac4ab6fd7523",
+  "seconds": 317.7249375,
+  "items": [
+    {
+      "reference": "HE BEGAN A CONFUSED COMPLAINT AGAINST THE WIZARD WHO HAD VANISHED BEHIND THE CURTAIN ON THE LEFT",
+      "source_id": "61-70968-0000",
+      "source_sha256": "fd3c84146d8b357efc7f0d21de86de770721fc5ddac7e6577688dbf3cdabff5b",
+      "source_path": "test-clean/61/70968/0000.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.905,
+      "asset_start_seconds": 0.0,
+      "asset_end_seconds": 4.905
+    },
+    {
+      "reference": "GIVE NOT SO EARNEST A MIND TO THESE MUMMERIES CHILD",
+      "source_id": "61-70968-0001",
+      "source_sha256": "2f7236fa44f194f03b04571f94fd56cc99253f5d41496bff3476c3390dd20524",
+      "source_path": "test-clean/61/70968/0001.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.61,
+      "asset_start_seconds": 5.155,
+      "asset_end_seconds": 8.765
+    },
+    {
+      "reference": "A GOLDEN FORTUNE AND A HAPPY LIFE",
+      "source_id": "61-70968-0002",
+      "source_sha256": "8676316e531d8c0e496e3677811ed2bf63e5aaf0a12446cde70416fd490b1792",
+      "source_path": "test-clean/61/70968/0002.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.97,
+      "asset_start_seconds": 9.015,
+      "asset_end_seconds": 11.985
+    },
+    {
+      "reference": "HE WAS LIKE UNTO MY FATHER IN A WAY AND YET WAS NOT MY FATHER",
+      "source_id": "61-70968-0003",
+      "source_sha256": "c50e106a06d1603451f1b1a3f145900e83f733f2873deb12fa9838ef5f74655a",
+      "source_path": "test-clean/61/70968/0003.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.315,
+      "asset_start_seconds": 12.235,
+      "asset_end_seconds": 16.55
+    },
+    {
+      "reference": "ALSO THERE WAS A STRIPLING PAGE WHO TURNED INTO A MAID",
+      "source_id": "61-70968-0004",
+      "source_sha256": "2dcfde6a6365ccc73bc196294fe07b874b8c0d0827b6b6b1da1f03375d29f39d",
+      "source_path": "test-clean/61/70968/0004.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.885,
+      "asset_start_seconds": 16.8,
+      "asset_end_seconds": 20.685
+    },
+    {
+      "reference": "THIS WAS SO SWEET A LADY SIR AND IN SOME MANNER I DO THINK SHE DIED",
+      "source_id": "61-70968-0005",
+      "source_sha256": "1022f303c108707548ff8738b7d7f512403b8fa443b9664bab94f740ef412183",
+      "source_path": "test-clean/61/70968/0005.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.07,
+      "asset_start_seconds": 20.935,
+      "asset_end_seconds": 26.005
+    },
+    {
+      "reference": "BUT THEN THE PICTURE WAS GONE AS QUICKLY AS IT CAME",
+      "source_id": "61-70968-0006",
+      "source_sha256": "fb59db90ccbb471e52338b1a298b1b805084576c07abbd904f778eafe798e10d",
+      "source_path": "test-clean/61/70968/0006.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.935,
+      "asset_start_seconds": 26.255,
+      "asset_end_seconds": 29.19
+    },
+    {
+      "reference": "SISTER NELL DO YOU HEAR THESE MARVELS",
+      "source_id": "61-70968-0007",
+      "source_sha256": "83b18d71a6ce8c2231fb1cd01acfd54f4493f30caddb1ac092cfa4fb55ebd1f0",
+      "source_path": "test-clean/61/70968/0007.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.55,
+      "asset_start_seconds": 29.44,
+      "asset_end_seconds": 32.99
+    },
+    {
+      "reference": "TAKE YOUR PLACE AND LET US SEE WHAT THE CRYSTAL CAN SHOW TO YOU",
+      "source_id": "61-70968-0008",
+      "source_sha256": "77cd105fd6b1fa77eb83f641fe3624f3cd8ea224f4696392ba7c627e319324ef",
+      "source_path": "test-clean/61/70968/0008.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.535,
+      "asset_start_seconds": 33.24,
+      "asset_end_seconds": 36.775
+    },
+    {
+      "reference": "LIKE AS NOT YOUNG MASTER THOUGH I AM AN OLD MAN",
+      "source_id": "61-70968-0009",
+      "source_sha256": "4bcc8b7198b6162f26470adcb461a4eb23c77a803c30b7896c4b0a2d011ccfbb",
+      "source_path": "test-clean/61/70968/0009.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.51,
+      "asset_start_seconds": 37.025,
+      "asset_end_seconds": 41.535
+    },
+    {
+      "reference": "FORTHWITH ALL RAN TO THE OPENING OF THE TENT TO SEE WHAT MIGHT BE AMISS BUT MASTER WILL WHO PEEPED OUT FIRST NEEDED NO MORE THAN ONE GLANCE",
+      "source_id": "61-70968-0010",
+      "source_sha256": "d70f1f718ac85ea815adcf8f63f6e90feb8b17c739593fcdffd899c9e215ef1b",
+      "source_path": "test-clean/61/70968/0010.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 8.295,
+      "asset_start_seconds": 41.785,
+      "asset_end_seconds": 50.08
+    },
+    {
+      "reference": "HE GAVE WAY TO THE OTHERS VERY READILY AND RETREATED UNPERCEIVED BY THE SQUIRE AND MISTRESS FITZOOTH TO THE REAR OF THE TENT",
+      "source_id": "61-70968-0011",
+      "source_sha256": "670ebf7f5252665a373e35486d5604c916f4d4ca68441009e458a23f91f60a22",
+      "source_path": "test-clean/61/70968/0011.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 6.375,
+      "asset_start_seconds": 50.33,
+      "asset_end_seconds": 56.705
+    },
+    {
+      "reference": "CRIES OF A NOTTINGHAM A NOTTINGHAM",
+      "source_id": "61-70968-0012",
+      "source_sha256": "980dd86b87c173dc5c0e5395de5619c95523fb59e8dfbece50108afb4ce2277f",
+      "source_path": "test-clean/61/70968/0012.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.61,
+      "asset_start_seconds": 56.955,
+      "asset_end_seconds": 59.565
+    },
+    {
+      "reference": "BEFORE THEM FLED THE STROLLER AND HIS THREE SONS CAPLESS AND TERRIFIED",
+      "source_id": "61-70968-0013",
+      "source_sha256": "38d4d558f31bf01a04f90117cd50361fb4f2d878f5e5719c5c0749fb28a8dc2b",
+      "source_path": "test-clean/61/70968/0013.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.45,
+      "asset_start_seconds": 59.815,
+      "asset_end_seconds": 64.265
+    },
+    {
+      "reference": "WHAT IS THE TUMULT AND RIOTING CRIED OUT THE SQUIRE AUTHORITATIVELY AND HE BLEW TWICE ON A SILVER WHISTLE WHICH HUNG AT HIS BELT",
+      "source_id": "61-70968-0014",
+      "source_sha256": "8717f9bbe94dcf7ee8057c2341f96393fcfa07c3a96e9a9b22a38a95610b80b6",
+      "source_path": "test-clean/61/70968/0014.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 7.485,
+      "asset_start_seconds": 64.515,
+      "asset_end_seconds": 72.0
+    },
+    {
+      "reference": "NAY WE REFUSED THEIR REQUEST MOST POLITELY MOST NOBLE SAID THE LITTLE STROLLER",
+      "source_id": "61-70968-0015",
+      "source_sha256": "7ac00acda3b3174ac3cdcea544799a0824ba1310123c5894b28bbd7871aa3ab8",
+      "source_path": "test-clean/61/70968/0015.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.375,
+      "asset_start_seconds": 72.25,
+      "asset_end_seconds": 77.625
+    },
+    {
+      "reference": "AND THEN THEY BECAME VEXED AND WOULD HAVE SNATCHED YOUR PURSE FROM US",
+      "source_id": "61-70968-0016",
+      "source_sha256": "7997bc1fc9b8a074fff13c98d12cd021f729b7514a0fbeca9ccb8bf423614800",
+      "source_path": "test-clean/61/70968/0016.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.72,
+      "asset_start_seconds": 77.875,
+      "asset_end_seconds": 81.595
+    },
+    {
+      "reference": "I COULD NOT SEE MY BOY INJURED EXCELLENCE FOR BUT DOING HIS DUTY AS ONE OF CUMBERLAND'S SONS",
+      "source_id": "61-70968-0017",
+      "source_sha256": "cf534bf459a1084662d90fc54713322b31333b47fc6fdfd5c0c9f3afdebb561c",
+      "source_path": "test-clean/61/70968/0017.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.11,
+      "asset_start_seconds": 81.845,
+      "asset_end_seconds": 86.955
+    },
+    {
+      "reference": "SO I DID PUSH THIS FELLOW",
+      "source_id": "61-70968-0018",
+      "source_sha256": "2c745d73faa813d8c7f2921d97922175bc1d39f7dd3e5a93ccb7b6a72b79d327",
+      "source_path": "test-clean/61/70968/0018.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.405,
+      "asset_start_seconds": 87.205,
+      "asset_end_seconds": 89.61
+    },
+    {
+      "reference": "IT IS ENOUGH SAID GEORGE GAMEWELL SHARPLY AND HE TURNED UPON THE CROWD",
+      "source_id": "61-70968-0019",
+      "source_sha256": "36e81646216f0a1b7aefe963f54273746f0ba7f85e1d194a7f4d94c21a6071a3",
+      "source_path": "test-clean/61/70968/0019.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.475,
+      "asset_start_seconds": 89.86,
+      "asset_end_seconds": 95.335
+    },
+    {
+      "reference": "SHAME ON YOU CITIZENS CRIED HE I BLUSH FOR MY FELLOWS OF NOTTINGHAM",
+      "source_id": "61-70968-0020",
+      "source_sha256": "e19aad3a183b4c1fb652f8709808718373bc8fd66cf79cee20faf6a0bf2ba161",
+      "source_path": "test-clean/61/70968/0020.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.105,
+      "asset_start_seconds": 95.585,
+      "asset_end_seconds": 100.69
+    },
+    {
+      "reference": "SURELY WE CAN SUBMIT WITH GOOD GRACE",
+      "source_id": "61-70968-0021",
+      "source_sha256": "b3f397ef340a70245a7328ec5ccde7e5c4fbe84f05d37ef1c4ba5394f1610615",
+      "source_path": "test-clean/61/70968/0021.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.69,
+      "asset_start_seconds": 100.94,
+      "asset_end_seconds": 103.63
+    },
+    {
+      "reference": "TIS FINE FOR YOU TO TALK OLD MAN ANSWERED THE LEAN SULLEN APPRENTICE",
+      "source_id": "61-70968-0022",
+      "source_sha256": "dea1dd525d16410bac43b958586f7389545ce042f6fee01e298a80ac44bd46ff",
+      "source_path": "test-clean/61/70968/0022.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.67,
+      "asset_start_seconds": 103.88,
+      "asset_end_seconds": 108.55
+    },
+    {
+      "reference": "BUT I WRESTLED WITH THIS FELLOW AND DO KNOW THAT HE PLAYED UNFAIRLY IN THE SECOND BOUT",
+      "source_id": "61-70968-0023",
+      "source_sha256": "2e018381a6c3ca3257b4edcddf637841a1688cacf9944b922e512acc6f1ffc2a",
+      "source_path": "test-clean/61/70968/0023.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.025,
+      "asset_start_seconds": 108.8,
+      "asset_end_seconds": 113.825
+    },
+    {
+      "reference": "SPOKE THE SQUIRE LOSING ALL PATIENCE AND IT WAS TO YOU THAT I GAVE ANOTHER PURSE IN CONSOLATION",
+      "source_id": "61-70968-0024",
+      "source_sha256": "bedacad0f35cc7921429a8d8c165ee124c287566219da559513e27f1a37da67d",
+      "source_path": "test-clean/61/70968/0024.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 6.025,
+      "asset_start_seconds": 114.075,
+      "asset_end_seconds": 120.1
+    },
+    {
+      "reference": "COME TO ME MEN HERE HERE HE RAISED HIS VOICE STILL LOUDER",
+      "source_id": "61-70968-0025",
+      "source_sha256": "12aff6263572e1e03fc7403dee4d90116a83e05b0eb2466b9722a72d2da2d485",
+      "source_path": "test-clean/61/70968/0025.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.41,
+      "asset_start_seconds": 120.35,
+      "asset_end_seconds": 124.76
+    },
+    {
+      "reference": "THE STROLLERS TOOK THEIR PART IN IT WITH HEARTY ZEST NOW THAT THEY HAD SOME CHANCE OF BEATING OFF THEIR FOES",
+      "source_id": "61-70968-0026",
+      "source_sha256": "d3e8c8a006501e60851b15d13d13c40c620a4c4598306aa65828818e3b796a01",
+      "source_path": "test-clean/61/70968/0026.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.92,
+      "asset_start_seconds": 125.01,
+      "asset_end_seconds": 129.93
+    },
+    {
+      "reference": "ROBIN AND THE LITTLE TUMBLER BETWEEN THEM TRIED TO FORCE THE SQUIRE TO STAND BACK AND VERY VALIANTLY DID THESE TWO COMPORT THEMSELVES",
+      "source_id": "61-70968-0027",
+      "source_sha256": "dd46f8fc38ffa48da18df22f45216305a2e12829c9a51eff000aa20ac44b7c3f",
+      "source_path": "test-clean/61/70968/0027.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 6.87,
+      "asset_start_seconds": 130.18,
+      "asset_end_seconds": 137.05
+    },
+    {
+      "reference": "THE HEAD AND CHIEF OF THE RIOT THE NOTTINGHAM APPRENTICE WITH CLENCHED FISTS THREATENED MONTFICHET",
+      "source_id": "61-70968-0028",
+      "source_sha256": "6a22b26098aaedd48f2fe49f03f8cb025d12b35d50f2a9701ba6be1d74fee1b9",
+      "source_path": "test-clean/61/70968/0028.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.355,
+      "asset_start_seconds": 137.3,
+      "asset_end_seconds": 142.655
+    },
+    {
+      "reference": "THE SQUIRE HELPED TO THRUST THEM ALL IN AND ENTERED SWIFTLY HIMSELF",
+      "source_id": "61-70968-0029",
+      "source_sha256": "1fa25fee20f6352002ff271b35fff4286267708bd77fdf396a3883240731f88f",
+      "source_path": "test-clean/61/70968/0029.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.495,
+      "asset_start_seconds": 142.905,
+      "asset_end_seconds": 146.4
+    },
+    {
+      "reference": "NOW BE SILENT ON YOUR LIVES HE BEGAN BUT THE CAPTURED APPRENTICE SET UP AN INSTANT SHOUT",
+      "source_id": "61-70968-0030",
+      "source_sha256": "6e73d0238ea1be58e2aa0c5bc07db3138d37740259ed046737c9738c05b3c67d",
+      "source_path": "test-clean/61/70968/0030.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.685,
+      "asset_start_seconds": 146.65,
+      "asset_end_seconds": 152.335
+    },
+    {
+      "reference": "SILENCE YOU KNAVE CRIED MONTFICHET",
+      "source_id": "61-70968-0031",
+      "source_sha256": "4267c2f9a77ec78491331013138d0ebd4a8ac2e36361c6516cb477b31fd88409",
+      "source_path": "test-clean/61/70968/0031.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.925,
+      "asset_start_seconds": 152.585,
+      "asset_end_seconds": 155.51
+    },
+    {
+      "reference": "HE FELT FOR AND FOUND THE WIZARD'S BLACK CLOTH THE SQUIRE WAS QUITE OUT OF BREATH",
+      "source_id": "61-70968-0032",
+      "source_sha256": "497006ada4c10096ef6a96908bb6df8374c130125d4ac246eecee2db9fa0a2bd",
+      "source_path": "test-clean/61/70968/0032.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.28,
+      "asset_start_seconds": 155.76,
+      "asset_end_seconds": 160.04
+    },
+    {
+      "reference": "THRUSTING OPEN THE PROPER ENTRANCE OF THE TENT ROBIN SUDDENLY RUSHED FORTH WITH HIS BURDEN WITH A GREAT SHOUT",
+      "source_id": "61-70968-0033",
+      "source_sha256": "4e4d513749cd65dc40a57e0746463841995ccd6e5ec53ab5042116fa82e9a497",
+      "source_path": "test-clean/61/70968/0033.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.685,
+      "asset_start_seconds": 160.29,
+      "asset_end_seconds": 165.975
+    },
+    {
+      "reference": "A MONTFICHET A MONTFICHET GAMEWELL TO THE RESCUE",
+      "source_id": "61-70968-0034",
+      "source_sha256": "c4a0197e97c8f6d4fda6638eefbbd9690948249b1b5e6d5296c97d696a11a973",
+      "source_path": "test-clean/61/70968/0034.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.23,
+      "asset_start_seconds": 166.225,
+      "asset_end_seconds": 170.455
+    },
+    {
+      "reference": "TAKING ADVANTAGE OF THIS THE SQUIRE'S FEW MEN REDOUBLED THEIR EFFORTS AND ENCOURAGED BY ROBIN'S AND THE LITTLE STROLLER'S CRIES FOUGHT THEIR WAY TO HIM",
+      "source_id": "61-70968-0035",
+      "source_sha256": "2bdaf43f44218652132ad0c072b301271171d370428701b071159ed1d593f65f",
+      "source_path": "test-clean/61/70968/0035.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 7.95,
+      "asset_start_seconds": 170.705,
+      "asset_end_seconds": 178.655
+    },
+    {
+      "reference": "GEORGE MONTFICHET WILL NEVER FORGET THIS DAY",
+      "source_id": "61-70968-0036",
+      "source_sha256": "3da5aba391882fe52fcffd1330e4b3c222cbf1f0f271d687a8547fee1ad561e9",
+      "source_path": "test-clean/61/70968/0036.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.9349375,
+      "asset_start_seconds": 178.905,
+      "asset_end_seconds": 181.8399375
+    },
+    {
+      "reference": "WHAT IS YOUR NAME LORDING ASKED THE LITTLE STROLLER PRESENTLY",
+      "source_id": "61-70968-0037",
+      "source_sha256": "e526bf15c677f8ba14a405ac53dc6059995cb54a2696da0e3ce65f8600d332e1",
+      "source_path": "test-clean/61/70968/0037.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.315,
+      "asset_start_seconds": 182.0899375,
+      "asset_end_seconds": 186.4049375
+    },
+    {
+      "reference": "ROBIN FITZOOTH",
+      "source_id": "61-70968-0038",
+      "source_sha256": "91578a1f94fe5eaafb66b6a0ec10929b2b45bcedad24c5f548f993f80be40107",
+      "source_path": "test-clean/61/70968/0038.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.05,
+      "asset_start_seconds": 186.6549375,
+      "asset_end_seconds": 188.7049375
+    },
+    {
+      "reference": "AND MINE IS WILL STUTELEY SHALL WE BE COMRADES",
+      "source_id": "61-70968-0039",
+      "source_sha256": "8b6b273d9b24b2b8c03d290863bd44e73a98124549da280bf6628ebf95cacc42",
+      "source_path": "test-clean/61/70968/0039.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.805,
+      "asset_start_seconds": 188.9549375,
+      "asset_end_seconds": 192.7599375
+    },
+    {
+      "reference": "RIGHT WILLINGLY FOR BETWEEN US WE HAVE WON THE BATTLE ANSWERED ROBIN",
+      "source_id": "61-70968-0040",
+      "source_sha256": "ccb1ff09ddf1d389184616eac772bfc86f75dfd5165943c464146ed45768a4fc",
+      "source_path": "test-clean/61/70968/0040.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.95,
+      "asset_start_seconds": 193.0099375,
+      "asset_end_seconds": 196.9599375
+    },
+    {
+      "reference": "I LIKE YOU WILL YOU ARE THE SECOND WILL THAT I HAVE MET AND LIKED WITHIN TWO DAYS IS THERE A SIGN IN THAT",
+      "source_id": "61-70968-0041",
+      "source_sha256": "55d695433f6184fd26fe10d428ab0401d85f877c1f3c019b40a53876f6b8a3e2",
+      "source_path": "test-clean/61/70968/0041.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 6.825,
+      "asset_start_seconds": 197.2099375,
+      "asset_end_seconds": 204.0349375
+    },
+    {
+      "reference": "MONTFICHET CALLED OUT FOR ROBIN TO GIVE HIM AN ARM",
+      "source_id": "61-70968-0042",
+      "source_sha256": "9aa0aa0746140383c3458b53991ccd9ebfc2c0ded6c6817ec0748aa70e6b8088",
+      "source_path": "test-clean/61/70968/0042.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.785,
+      "asset_start_seconds": 204.2849375,
+      "asset_end_seconds": 207.0699375
+    },
+    {
+      "reference": "FRIENDS SAID MONTFICHET FAINTLY TO THE WRESTLERS BEAR US ESCORT SO FAR AS THE SHERIFF'S HOUSE",
+      "source_id": "61-70968-0043",
+      "source_sha256": "92cde1bfb6bab32cd1428505868f1ca27db04ed17bec9e47e7cbb24e34dc09c3",
+      "source_path": "test-clean/61/70968/0043.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 6.735,
+      "asset_start_seconds": 207.3199375,
+      "asset_end_seconds": 214.0549375
+    },
+    {
+      "reference": "IT WILL NOT BE SAFE FOR YOU TO STAY HERE NOW",
+      "source_id": "61-70968-0044",
+      "source_sha256": "20ce40c41896c64f57506c6254f2627ba5d025f593cd2f148cec346668646b6f",
+      "source_path": "test-clean/61/70968/0044.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.77,
+      "asset_start_seconds": 214.3049375,
+      "asset_end_seconds": 217.0749375
+    },
+    {
+      "reference": "PRAY FOLLOW US WITH MINE AND MY LORD SHERIFF'S MEN",
+      "source_id": "61-70968-0045",
+      "source_sha256": "b29586767fbaa971449fe418eb967541f63d13cdc0b597f606360b97afa8338a",
+      "source_path": "test-clean/61/70968/0045.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.475,
+      "asset_start_seconds": 217.3249375,
+      "asset_end_seconds": 220.7999375
+    },
+    {
+      "reference": "NOTTINGHAM CASTLE WAS REACHED AND ADMITTANCE WAS DEMANDED",
+      "source_id": "61-70968-0046",
+      "source_sha256": "f877c313f18d96dbd5e4d509fbc1d9cdac9ebaa949e3e01eaaf89a7f18e60a6b",
+      "source_path": "test-clean/61/70968/0046.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.55,
+      "asset_start_seconds": 221.0499375,
+      "asset_end_seconds": 224.5999375
+    },
+    {
+      "reference": "MASTER MONCEUX THE SHERIFF OF NOTTINGHAM WAS MIGHTILY PUT ABOUT WHEN TOLD OF THE RIOTING",
+      "source_id": "61-70968-0047",
+      "source_sha256": "3cbc43d7a36eb9284aed2197178261493b3a7df2c9defed4e7966f633a658324",
+      "source_path": "test-clean/61/70968/0047.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.775,
+      "asset_start_seconds": 224.8499375,
+      "asset_end_seconds": 229.6249375
+    },
+    {
+      "reference": "AND HENRY MIGHT RETURN TO ENGLAND AT ANY MOMENT",
+      "source_id": "61-70968-0048",
+      "source_sha256": "d0f7a51ca419d54c5ec4512e9923ddf71cc35e5192570ce8fd38db3a7cd5a0a8",
+      "source_path": "test-clean/61/70968/0048.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.02,
+      "asset_start_seconds": 229.8749375,
+      "asset_end_seconds": 232.8949375
+    },
+    {
+      "reference": "HAVE YOUR WILL CHILD IF THE BOY ALSO WILLS IT MONTFICHET ANSWERED FEELING TOO ILL TO OPPOSE ANYTHING VERY STRONGLY JUST THEN",
+      "source_id": "61-70968-0049",
+      "source_sha256": "d55ec567f9173dd1479768bafc6eae9a637b235aa472a94e9bd770bf2d2514b9",
+      "source_path": "test-clean/61/70968/0049.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 8.25,
+      "asset_start_seconds": 233.1449375,
+      "asset_end_seconds": 241.3949375
+    },
+    {
+      "reference": "HE MADE AN EFFORT TO HIDE HIS CONDITION FROM THEM ALL AND ROBIN FELT HIS FINGERS TIGHTEN UPON HIS ARM",
+      "source_id": "61-70968-0050",
+      "source_sha256": "1c8dc479861b1f972dabe35f3779dc2a71d1ea31edc5400b59398f6a5158eb89",
+      "source_path": "test-clean/61/70968/0050.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.58,
+      "asset_start_seconds": 241.6449375,
+      "asset_end_seconds": 247.2249375
+    },
+    {
+      "reference": "BEG ME A ROOM OF THE SHERIFF CHILD QUICKLY",
+      "source_id": "61-70968-0051",
+      "source_sha256": "ecbaf609e48d256bdabc23e487f28e26b9d829a960dcc05f7c230d50c4b351d1",
+      "source_path": "test-clean/61/70968/0051.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.135,
+      "asset_start_seconds": 247.4749375,
+      "asset_end_seconds": 250.6099375
+    },
+    {
+      "reference": "BUT WHO IS THIS FELLOW PLUCKING AT YOUR SLEEVE",
+      "source_id": "61-70968-0052",
+      "source_sha256": "f7cc6a6f305664a08e84bb871fae6ba6f0db45e44d293de6ccb9a606032f3355",
+      "source_path": "test-clean/61/70968/0052.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.65,
+      "asset_start_seconds": 250.8599375,
+      "asset_end_seconds": 253.5099375
+    },
+    {
+      "reference": "HE IS MY ESQUIRE EXCELLENCY RETURNED ROBIN WITH DIGNITY",
+      "source_id": "61-70968-0053",
+      "source_sha256": "c904aa7e32a677031d27fe628b1db67eec1c2a6a01a3c74e8920421830b49aaa",
+      "source_path": "test-clean/61/70968/0053.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 4.22,
+      "asset_start_seconds": 253.7599375,
+      "asset_end_seconds": 257.9799375
+    },
+    {
+      "reference": "MISTRESS FITZOOTH HAD BEEN CARRIED OFF BY THE SHERIFF'S DAUGHTER AND HER MAIDS AS SOON AS THEY HAD ENTERED THE HOUSE SO THAT ROBIN ALONE HAD THE CARE OF MONTFICHET",
+      "source_id": "61-70968-0054",
+      "source_sha256": "7b58da65dd63a6b09d43ee20c6aa4b5a8853199af7c350a87ab692fb4d0d874c",
+      "source_path": "test-clean/61/70968/0054.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 7.86,
+      "asset_start_seconds": 258.2299375,
+      "asset_end_seconds": 266.0899375
+    },
+    {
+      "reference": "ROBIN WAS GLAD WHEN AT LENGTH THEY WERE LEFT TO THEIR OWN DEVICES",
+      "source_id": "61-70968-0055",
+      "source_sha256": "1e169517449ee2c17ad17dfef0696ca1948fe216c0d46e85fe90d653739948ec",
+      "source_path": "test-clean/61/70968/0055.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.965,
+      "asset_start_seconds": 266.3399375,
+      "asset_end_seconds": 270.3049375
+    },
+    {
+      "reference": "THE WINE DID CERTAINLY BRING BACK THE COLOR TO THE SQUIRE'S CHEEKS",
+      "source_id": "61-70968-0056",
+      "source_sha256": "ad6aa08b1a06e078707b8590ece66a4417b20a49b6fedf90e918e23fca6f93c9",
+      "source_path": "test-clean/61/70968/0056.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.565,
+      "asset_start_seconds": 270.5549375,
+      "asset_end_seconds": 274.1199375
+    },
+    {
+      "reference": "THESE ESCAPADES ARE NOT FOR OLD GAMEWELL LAD HIS DAY HAS COME TO TWILIGHT",
+      "source_id": "61-70968-0057",
+      "source_sha256": "8a8ecfc56260820c8eaf2dfc8ff232d261bfc0a2e4f3de37aaa1b1ff27dc6985",
+      "source_path": "test-clean/61/70968/0057.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.065,
+      "asset_start_seconds": 274.3699375,
+      "asset_end_seconds": 279.4349375
+    },
+    {
+      "reference": "WILL YOU FORGIVE ME NOW",
+      "source_id": "61-70968-0058",
+      "source_sha256": "12b9a1276a8e5fb4f40680a5be4b2a5bec7b6c43fcb9347eaa3ce7adea69e4d7",
+      "source_path": "test-clean/61/70968/0058.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 1.82,
+      "asset_start_seconds": 279.6849375,
+      "asset_end_seconds": 281.5049375
+    },
+    {
+      "reference": "IT WILL BE NO DISAPPOINTMENT TO ME",
+      "source_id": "61-70968-0059",
+      "source_sha256": "fdf4101a3b84f891fed3654601d14ca92d076ec5bc83b593c15a1ee06b93971e",
+      "source_path": "test-clean/61/70968/0059.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.17,
+      "asset_start_seconds": 281.7549375,
+      "asset_end_seconds": 283.9249375
+    },
+    {
+      "reference": "NO THANKS I AM GLAD TO GIVE YOU SUCH EASY HAPPINESS",
+      "source_id": "61-70968-0060",
+      "source_sha256": "63c960559e9ff11e06a57005f213b0f4fe58618244d5d2d2e6771482273c6059",
+      "source_path": "test-clean/61/70968/0060.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 3.735,
+      "asset_start_seconds": 284.1749375,
+      "asset_end_seconds": 287.9099375
+    },
+    {
+      "reference": "YOU ARE A WORTHY LEECH WILL PRESENTLY WHISPERED ROBIN THE WINE HAS WORKED A MARVEL",
+      "source_id": "61-70968-0061",
+      "source_sha256": "ce8c05bd9cd62ff3bf9c8a95686c6e55c63aedf1239b54711ed26f3e5c8fbe77",
+      "source_path": "test-clean/61/70968/0061.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 5.53,
+      "asset_start_seconds": 288.1599375,
+      "asset_end_seconds": 293.6899375
+    },
+    {
+      "reference": "AY AND SHOW YOU SOME PRETTY TRICKS",
+      "source_id": "61-70968-0062",
+      "source_sha256": "e57e041087018a62cefe8e5878f476eda83e55e695b63d86a2c22914786700a4",
+      "source_path": "test-clean/61/70968/0062.flac",
+      "chapter_id": "70968",
+      "source_audio_seconds": 2.555,
+      "asset_start_seconds": 293.9399375,
+      "asset_end_seconds": 296.4949375
+    },
+    {
+      "reference": "YOUNG FITZOOTH HAD BEEN COMMANDED TO HIS MOTHER'S CHAMBER SO SOON AS HE HAD COME OUT FROM HIS CONVERSE WITH THE SQUIRE",
+      "source_id": "61-70970-0000",
+      "source_sha256": "c1bf58a758b46d33c6f2f940fc0b880a0a4a27b1709bb716f38d0919ad408611",
+      "source_path": "test-clean/61/70970/0000.flac",
+      "chapter_id": "70970",
+      "source_audio_seconds": 6.075,
+      "asset_start_seconds": 296.7449375,
+      "asset_end_seconds": 302.8199375
+    },
+    {
+      "reference": "THERE BEFELL AN ANXIOUS INTERVIEW MISTRESS FITZOOTH ARGUING FOR AND AGAINST THE SQUIRE'S PROJECT IN A BREATH",
+      "source_id": "61-70970-0001",
+      "source_sha256": "556e86a9576c3521e8a0f96108f18dc69278886c182d8c8cdb6cc251bf6c4128",
+      "source_path": "test-clean/61/70970/0001.flac",
+      "chapter_id": "70970",
+      "source_audio_seconds": 6.155,
+      "asset_start_seconds": 303.0699375,
+      "asset_end_seconds": 309.2249375
+    },
+    {
+      "reference": "MOST OF ALL ROBIN THOUGHT OF HIS FATHER WHAT WOULD HE COUNSEL",
+      "source_id": "61-70970-0002",
+      "source_sha256": "56b7cc4e191f7190f8093f4135bc6729c10734b09329883d4809a489d9f589f7",
+      "source_path": "test-clean/61/70970/0002.flac",
+      "chapter_id": "70970",
+      "source_audio_seconds": 4.165,
+      "asset_start_seconds": 309.4749375,
+      "asset_end_seconds": 313.6399375
+    },
+    {
+      "reference": "IF FOR A WHIM YOU BEGGAR YOURSELF I CANNOT STAY YOU",
+      "source_id": "61-70970-0003",
+      "source_sha256": "07a9cee74f0d53cd796c458c39b2835c3d997d48cdf0b5cf6dda12a450709768",
+      "source_path": "test-clean/61/70970/0003.flac",
+      "chapter_id": "70970",
+      "source_audio_seconds": 3.835,
+      "asset_start_seconds": 313.8899375,
+      "asset_end_seconds": 317.7249375
+    }
+  ],
+  "asset_file": "uploads/acceptance-media/en-single-speaker-reference.wav",
+  "asset_sha256": "4b7d55148fed309e1d71d941d75e89a64b1068a1473163f5f6a9ac4ab6fd7523",
+  "asset_frame_count": 5083599,
+  "asset_sample_rate_hz": 16000,
+  "source_audio_seconds": 301.2249375,
+  "inserted_silence_seconds": 16.5,
+  "ordered_source_utterance_sha256": "28a24976cbc75f6a15760b222eb8c5485a2b102a54826bf656999200f4e03de7",
+  "ordered_reference_items_sha256": "cd85913e80f326cb0796fdc2d9b8446f6faac54135e9137beaa1db9e26860795",
+  "reference_text_sha256": "82db9d051f4f88a1e7957c9887e256e2f185a0275ef4f192b25d76dbaeae63d4",
+  "manual_review_pending": true,
+  "manual_review_status": "pending",
+  "manual_review_scope": "Verify transcript-to-audio correspondence, language, and single-speaker identity. For a fast-speech listening candidate, separately decide whether the original recording is naturally fast; no synthetic speed change was applied.",
+  "reference_provenance": {
+    "dataset": "openslr/librispeech_asr",
+    "dataset_revision": "71cacbfb7e2354c4226d01e70d77d5fca3d04ba1",
+    "split": "test.clean",
+    "speaker_id": 61,
+    "license": "CC BY 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "source_url": "https://huggingface.co/datasets/openslr/librispeech_asr",
+    "selection_rule": "Lowest numeric speaker_id in test.clean; preserve dataset row order; shortest prefix with at least 300 seconds of decoded source audio. The row catalog is from the pinned repository revision.",
+    "transcript_rule": "Use the corpus test.clean row text verbatim (uppercased as published); no ASR-generated reference text."
+  },
+  "reference_origin": "Pinned corpus transcript; not generated by this application's ASR."
+}

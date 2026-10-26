@@ -1,0 +1,26 @@
+{
+  "review_date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "reviewer": "user",
+  "review_method": "user_listening",
+  "user_feedback": "语言正确，但语速明显慢于正常语速",
+  "samples": [
+    {
+      "asset": "uploads/acceptance-media/zh-fast-speech-listening-candidate.wav",
+      "sha256": "6ac3ae3417bd23ba862fca14288b0c33cb07be73ad24858778589fa7f49a872e",
+      "language_confirmed": "zh",
+      "speed_assessment": "slower_than_normal",
+      "accepted_as_fast_speech": false
+    },
+    {
+      "asset": "uploads/acceptance-media/en-fast-speech-listening-candidate.wav",
+      "sha256": "4ed3d5949fe19567f04e3adfa80a991e73de5db6698845fe23500b99875fdbbe",
+      "language_confirmed": "en",
+      "speed_assessment": "slower_than_normal",
+      "accepted_as_fast_speech": false
+    }
+  ],
+  "single_speaker_independently_confirmed": false,
+  "reference_transcript_review_completed": false,
+  "artificial_speed_adjustment_allowed_for_fast_acceptance": false
+}
