@@ -316,6 +316,11 @@ def test_hls_analyzer_rejects_ambiguous_first_audio_body_and_missing_browser_bra
     assert valid_evidence["acceptance_gate_passed"] is False  # one run cannot satisfy 20.
     assert valid_evidence["cases"][0]["case_valid"] is True
     assert valid_evidence["hls_cases"][0]["first_app_audio_segment_index"] == 0
+    assert valid_evidence["hls_live_pipeline_observed_for_all_starts"] is True
+    assert "requires exactly 20 valid non-simulated independent starts" in (
+        valid_evidence["gate_blockers"])
+    assert not any("requires observed HLS" in blocker
+                   for blocker in valid_evidence["gate_blockers"])
 
     origin_path = tmp_path / "origin-requests.jsonl"
     rows = startup._read_jsonl(origin_path)
@@ -382,6 +387,7 @@ def test_hls_gate_rejects_missing_provenance_and_non_hls_decode_metadata(
     non_hls = hls.analyze(args)
     assert non_hls["hls_evidence_validated"] is False
     assert non_hls["acceptance_gate_passed"] is False
+    assert non_hls["hls_live_pipeline_observed_for_all_starts"] is False
     assert any("not uniquely correlated" in blocker
                for blocker in non_hls["hls_gate_blockers"])
 

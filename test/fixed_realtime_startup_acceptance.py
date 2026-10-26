@@ -695,7 +695,7 @@ def analyze(args, *, hls_evidence_validated=False):
                      for case in cases if case.get("case_valid")]
     p95 = _percentile(valid_latency, .95)
     all_valid = len(cases) == EXPECTED_RUNS and unique and all(case.get("case_valid") for case in cases)
-    live_pipeline = bool(all_valid and all(case["hls_live_pipeline_observed"] for case in cases))
+    live_pipeline = bool(cases) and all(case["hls_live_pipeline_observed"] for case in cases)
     metrics = all(case.get("configured_ready_delay_seconds") is not None
                   and case.get("first_ready_after_collection_start_ms") is not None
                   and case.get("first_playing_after_first_decoded_pcm_ms") is not None
