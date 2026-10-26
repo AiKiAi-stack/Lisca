@@ -176,3 +176,65 @@ visible-caption deadline includes the subsequent provider and display work.
 Actual pilot results and service restarts are recorded separately in the
 [real acceptance log](2026-10-24-original-caption-real-acceptance.md); offline
 option comparisons are never live ASR acceptance evidence.
+
+
+## Genuine fixed-input HLS method (2026-10-26)
+
+`test/fixed_hls_startup_acceptance.py` reuses the calibrated collector and
+statistics while requiring actual native HLS, browser proxy manifests/segments,
+and browser playback. It encodes the same pinned, original-speed WAV prefixes
+as H.264/AAC MPEG-TS. AAC is lossy: hashes preserve provenance, not transcript
+accuracy. The full playlist and every segment are retained; decoded PCM hashes,
+sample counts, initial PTS offsets, and PyAV/libav versions are recorded. Very
+short final TS segments must explicitly use the MPEG-TS demuxer; auto-probing
+can choose MP2. Every AAC packet's PTS, size, payload hash and duration must
+match the full HLS stream, including the tail.
+
+The source clock begins with the application's first manifest GET. A segment
+is revealed only after both its playlist and AAC packet end times have elapsed.
+The origin delivers its body normally, without claiming uniform byte pacing;
+initial segment availability delay is reported separately. No ENDLIST or future
+segments appear. Each nested request retains its case ID. A separate audit
+requires complete manifests, verified segment bodies, the earliest app body
+boundary at segment zero, native-HLS service PID, matching actual service
+PyAV/libav versions, and advancing browser media before permitting HLS statistics.
+
+Use a **fresh** private evidence directory, distinct from historical WAV runs:
+
+    PY=/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python
+    OUT="$(pwd)/logs/fixed-hls-startup/NEW-BATCH"
+    "$PY" test/fixed_hls_startup_acceptance.py prepare --output "$OUT"
+    "$PY" test/fixed_hls_startup_acceptance.py serve --output "$OUT"
+
+After inspecting/stopping the sole 8002 owner and starting the regular WebUI
+with the optional timing hook above, privately restore its memory-only cloud
+configuration. Set `STREAM_ASR_STARTUP_PROBE_LOG` to the new batch's
+`decoded-arrivals.jsonl`. Use the same absolute output path in every command;
+provenance includes file paths and refuses inconsistent spellings. Collecting
+explicitly starts a real provider session:
+
+    "$PY" test/fixed_hls_startup_acceptance.py collect --language zh \
+      --label zh-startup-01 --startup-class cold --service-pid ACTUAL_PID \
+      --cold-first-session-confirmed --allow-real-recognition \
+      --output "$OUT"
+    "$PY" test/fixed_hls_startup_acceptance.py analyze --language zh \
+      --output "$OUT"
+
+Restart before each language's cold pilot. Warm starts 02–20 must use the same
+service process as their language's cold start. One pilot is never a P95
+acceptance set. Do not automatically spend on the remaining cases while the
+pilot or method fails; preserve failed observations. After measurements, stop
+the origin, restore the sole ordinary 8002 service, and check root/assets/API
+responses and disabled fixture route. No source-only check starts recognition.
+
+
+The browser's `/channels` precheck precedes session creation. Before the app
+clock exists, its origin response therefore contains only HLS headers, no
+segments or EOF. This probe is explicitly logged and can never substitute for
+the required post-clock browser manifest, segment bodies, or playback evidence.
+The auditor rejects probe-only, future-segment, and post-clock probe records.
+Actual Chrome reached the single-HLS fallback and an intercepted session POST
+with zero provider calls before the real pilots. The first actual HLS cold
+pilots measured 10607.4 ms (Chinese) and 6958.6 ms (English) conservative bounds;
+each is one attempt, not a 20-start P95. See the real acceptance log; both miss
+the target, so no automatic remaining 38 calls were made.
