@@ -17,6 +17,11 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -e .
-          pip install pytest
+          pip install pytest playwright
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Caption display regressions
+        run: node --test test/*.test.cjs
       - name: Run tests
         run: pytest test/ -v
