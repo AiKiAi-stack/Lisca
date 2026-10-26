@@ -462,8 +462,10 @@ class PacedHLSHandler(BaseHTTPRequestHandler):
         if role == "application_stream_source":
             source_clock_ns = self.server.start_case(case_id, request_ns)
         else:
-            source_clock_ns = self.server.wait_for_case_start(case_id)
-        if source_clock_ns is None:
+            source_clock_ns = self.server.case_start(case_id)
+        pre_application_probe = (source_clock_ns is None
+                                 and role == "webui_browser_media_proxy")
+        if source_clock_ns is None and not pre_application_probe:
             self.send_error(503, "application HLS source clock did not start")
             self.close_connection = True
             self.server.record(self._request_row(language, case_id, role, "playlist", {
@@ -475,12 +477,14 @@ class PacedHLSHandler(BaseHTTPRequestHandler):
             }))
             return
         sample = self.server.samples[language]
-        first_end_ns = source_clock_ns + int(sample["encoded_segments"][0]["end_seconds"] * 1e9)
-        delay_ns = first_end_ns - time.monotonic_ns()
-        if delay_ns > 0:
-            time.sleep(delay_ns / 1e9)
-        now_ns = time.monotonic_ns()
-        elapsed = max(0.0, (now_ns - source_clock_ns) / 1e9)
+        # /channels checks this manifest before the UI creates its ASR session.
+        elapsed = 0.0
+        if source_clock_ns is not None:
+            first_end_ns = source_clock_ns + int(sample["encoded_segments"][0]["end_seconds"] * 1e9)
+            delay_ns = first_end_ns - time.monotonic_ns()
+            if delay_ns > 0:
+                time.sleep(delay_ns / 1e9)
+            elapsed = max(0.0, (time.monotonic_ns() - source_clock_ns) / 1e9)
         visible = _visible_segments(sample, elapsed)
         body = render_live_playlist(sample, case_id, elapsed).encode("utf-8")
         status = "complete"
@@ -501,6 +505,7 @@ class PacedHLSHandler(BaseHTTPRequestHandler):
                 "method": "GET", "request_started_utc": request_utc,
                 "request_started_monotonic_ns": request_ns,
                 "case_source_clock_started_monotonic_ns": source_clock_ns,
+                "pre_application_manifest_probe": pre_application_probe,
                 "source_elapsed_seconds": round(elapsed, 6),
                 "response_finished_monotonic_ns": time.monotonic_ns(),
                 "visible_segment_indices": [item["index"] for item in visible],
@@ -672,6 +677,11 @@ def _valid_manifest_observation(row, provenance, case_id):
     expected = [item["index"] for item in provenance["encoded_segments"]
                 if item["end_seconds"] <= elapsed + 0.001]
     expected_body = render_live_playlist(provenance, case_id, elapsed).encode("utf-8")
+    if row.get("pre_application_manifest_probe") is True:
+        return (row.get("requester_role") == "webui_browser_media_proxy"
+                and row.get("case_source_clock_started_monotonic_ns") is None
+                and elapsed == 0 and visible == []
+                and row.get("playlist_sha256") == _sha256_bytes(expected_body))
     return (visible == expected and bool(visible)
             and row.get("playlist_sha256") == _sha256_bytes(expected_body))
 
@@ -724,7 +734,11 @@ def _validate_case_hls(label, run, output, provenance, requests, decode_rows):
     browser_playlists = [row for row in browser if row.get("resource_kind") == "playlist"]
     app_segments = [row for row in app if row.get("resource_kind") == "audio_video_segment"]
     browser_segments = [row for row in browser if row.get("resource_kind") == "audio_video_segment"]
-    if not app_playlists or not browser_playlists:
+    browser_probes = [row for row in browser_playlists
+                      if row.get("pre_application_manifest_probe") is True]
+    browser_media_playlists = [row for row in browser_playlists
+                              if row.get("pre_application_manifest_probe") is not True]
+    if not app_playlists or not browser_media_playlists:
         blockers.append(f"{label}: both application and browser-proxy HLS manifests are required")
     for row in app_playlists + browser_playlists:
         if not _valid_manifest_observation(row, provenance, label):
@@ -754,8 +768,12 @@ def _validate_case_hls(label, run, output, provenance, requests, decode_rows):
     if manifest_bad:
         blockers.append(f"{label}: application HLS manifest clock evidence is inconsistent")
     if any(row.get("case_source_clock_started_monotonic_ns") != source_clock_ns
-           for row in browser_playlists if row.get("method") == "GET"):
+           for row in browser_media_playlists if row.get("method") == "GET"):
         blockers.append(f"{label}: browser proxy manifest did not share the application source clock")
+    if any(source_clock_ns is None
+           or not isinstance(row.get("request_started_monotonic_ns"), int)
+           or row["request_started_monotonic_ns"] >= source_clock_ns for row in browser_probes):
+        blockers.append(f"{label}: browser precheck did not precede the application source clock")
 
     first_app_bodies = [row for row in app_segments if row.get("first_app_audio_body") is True]
     if len(first_app_bodies) != 1:
@@ -849,6 +867,7 @@ def _validate_case_hls(label, run, output, provenance, requests, decode_rows):
 
     summary["application_manifest_gets"] = len(app_playlists)
     summary["browser_proxy_manifest_gets"] = len(browser_playlists)
+    summary["browser_pre_application_manifest_probes"] = len(browser_probes)
     summary["application_audio_video_segment_gets"] = len(app_segments)
     summary["browser_proxy_audio_video_segment_gets"] = len(browser_segments)
     summary["source_clock_started_monotonic_ns"] = source_clock_ns

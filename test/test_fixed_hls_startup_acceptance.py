@@ -151,6 +151,39 @@ def test_live_playlist_exposes_only_source_clock_segments_and_never_endlist(
     assert "seg001.ts?startup_case=zh-startup-01" in second_complete
 
 
+def test_browser_precheck_does_not_wait_for_or_start_application_clock(
+        tmp_path, synthetic_hls_samples):
+    del synthetic_hls_samples
+    provenance = hls.prepare_hls_sample("zh", tmp_path)
+    log_path = tmp_path / "origin-requests.jsonl"
+    server = hls.PacedHLSOrigin(("127.0.0.1", 0), {"zh": provenance}, log_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    case = "zh-startup-01"
+    url = f"http://127.0.0.1:{server.server_port}/zh.m3u8?startup_case={case}"
+    try:
+        with urlopen(Request(url, headers={"User-Agent": startup.APP_UA,
+                     "Referer": "https://www.bilibili.com"}), timeout=1) as response:
+            body = response.read().decode("utf-8")
+        assert "#EXT-X-TARGETDURATION" in body
+        assert "#EXTINF" not in body and "#EXT-X-ENDLIST" not in body
+        assert server.case_start(case) is None
+        with urlopen(Request(url, headers={"User-Agent": startup.APP_UA}),
+                     timeout=2) as response:
+            assert "#EXTINF" in response.read().decode("utf-8")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    rows = startup._read_jsonl(log_path)
+    probe = next(row for row in rows if row.get("pre_application_manifest_probe"))
+    assert hls._valid_manifest_observation(probe, provenance, case)
+    assert probe["case_source_clock_started_monotonic_ns"] is None
+    assert probe["visible_segment_indices"] == []
+    changed = dict(probe, visible_segment_indices=[0])
+    assert not hls._valid_manifest_observation(changed, provenance, case)
+
+
 def test_origin_paces_real_mpegts_body_and_records_app_vs_browser_proxy(
         tmp_path, synthetic_hls_samples):
     del synthetic_hls_samples
@@ -553,3 +586,33 @@ def test_hls_audit_rejects_wrong_server_runtime_or_incomplete_manifest(
     assert result["acceptance_gate_passed"] is False
     assert any(("runtime" if problem.startswith("server_") else "manifest") in blocker
                for blocker in result["hls_gate_blockers"])
+
+
+@pytest.mark.parametrize("problem", ["none", "only_probe", "after_app", "future_segment"])
+def test_manifest_precheck_cannot_replace_actual_browser_hls_evidence(
+        tmp_path, synthetic_hls_samples, problem):
+    del synthetic_hls_samples
+    provenance = hls.prepare_hls_sample("zh", tmp_path)
+    _write_one_valid_hls_case(tmp_path, provenance)
+    path = tmp_path / "origin-requests.jsonl"
+    rows = startup._read_jsonl(path)
+    browser = next(row for row in rows if row["resource_kind"] == "playlist"
+                   and row["requester_role"] == "webui_browser_media_proxy")
+    probe = dict(browser, pre_application_manifest_probe=True,
+                 case_source_clock_started_monotonic_ns=None,
+                 request_started_monotonic_ns=browser["request_started_monotonic_ns"] - 1,
+                 visible_segment_indices=[], source_elapsed_seconds=0,
+                 playlist_sha256=hashlib.sha256(hls.render_live_playlist(
+                     provenance, "zh-startup-01", 0).encode()).hexdigest())
+    if problem == "only_probe":
+        rows.remove(browser)
+    elif problem == "after_app":
+        probe["request_started_monotonic_ns"] = browser["request_started_monotonic_ns"] + 1
+    elif problem == "future_segment":
+        probe["visible_segment_indices"] = [0]
+    rows.append(probe)
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    result = hls.analyze(SimpleNamespace(language="zh", output=tmp_path,
+                                       origin_log=None, decoded_log=None))
+    assert result["hls_evidence_validated"] is (problem == "none")
+    assert result["acceptance_gate_passed"] is False  # A single case is never 20 starts.
