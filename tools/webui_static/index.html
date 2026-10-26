@@ -4,95 +4,35 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>实时字幕</title>
-<style>
-  :root { --bg: #111418; --panel: #1c2128; --fg: #e6edf3; --accent: #4c8bf5; --err: #f85149; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--fg); font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; height: 100vh; display: flex; flex-direction: column; }
-  header { padding: 14px 24px; background: var(--panel); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid #2d333b; }
-  header h1 { font-size: 17px; margin-right: 6px; }
-  #url { flex: 1; min-width: 260px; padding: 9px 12px; font-size: 14px; background: #0d1117; color: var(--fg); border: 1px solid #30363d; border-radius: 6px; }
-  #url::placeholder { color: #6e7681; }
-  select, button { padding: 9px 14px; font-size: 14px; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: var(--fg); cursor: pointer; }
-  button#start { background: var(--accent); border-color: var(--accent); font-weight: 600; }
-  button#stop { background: var(--panel); display: none; }
-  button#shareCopy { background: #238636; border-color: #238636; display: none; }
-  #status { width: 100%; color: #8b949e; font-size: 13px; }
-  main { flex: 1; display: flex; flex-direction: column; padding: 16px 24px; gap: 12px; min-height: 0; }
-  #playerWrap { position: relative; flex: 1; min-height: 0; background: #000; border-radius: 12px; overflow: hidden; }
-  video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
-  #current { position: absolute; left: 0; right: 0; bottom: 12%; padding: 10px 32px; text-align: center;
-    font-size: clamp(26px, 3.4vw, 38px); line-height: 1.4; font-weight: 600; letter-spacing: 1px;
-    color: #fff; text-shadow: 2px 2px 4px #000, 0 0 12px #000; pointer-events: none;
-    display: block; white-space: normal; overflow: visible; }
-  #history { height: 18%; background: var(--panel); border-radius: 10px; padding: 10px 14px; overflow-y: auto; font-size: 14px; color: #9da7b3; }
-  #history div { padding: 2px 0; }
-  #history div span { color: #6e7681; margin-right: 8px; font-size: 12px; }
-  #logPanel { display: flex; flex-direction: column; gap: 8px; }
-  /* hidden 属性必须生效：作者 CSS 的 display:flex 会覆盖 UA 的 [hidden]{display:none}，
-     需显式声明，否则面板常驻显示、日志按钮失去作用 */
-  #logPanel[hidden] { display: none; }
-  /* 字幕样式面板（ticket-18）：header 内整行；hidden 同日志面板需显式 display:none */
-  #stylePanel { width: 100%; display: flex; gap: 20px; align-items: center; flex-wrap: wrap; padding: 4px 0 2px; }
-  #stylePanel[hidden] { display: none; }
-  #stylePanel label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #9da7b3; }
-  #stylePanel input[type="range"] { width: 150px; accent-color: var(--accent); }
-  #stylePanel .val { min-width: 46px; color: var(--fg); font-variant-numeric: tabular-nums; }
-  #styleReset { padding: 5px 12px; font-size: 13px; }
-  /* 直播频道面板（ticket-19）：m3u 频道列表 + 连通性检测标注 */
-  #chPanel { width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 4px 0 2px; }
-  #chPanel[hidden] { display: none; }
-  .ch-head { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #9da7b3; }
-  #chProbeBtn { padding: 5px 12px; font-size: 13px; }
-  #chList { max-height: 300px; overflow-y: auto; border: 1px solid #30363d; border-radius: 8px; background: #0d1117; }
-  .ch-group { padding: 6px 10px 2px; font-size: 12px; color: #6e7681; font-weight: 600; }
-  .ch-row { display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer; font-size: 13px; }
-  .ch-row:hover { background: #21262d; }
-  .ch-row .ch-status { min-width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
-  .ch-row.ok .ch-status { color: #3fb950; }
-  .ch-row.fail .ch-status { color: var(--err); }
-  .ch-row .ch-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ch-row button { padding: 2px 8px; font-size: 12px; }
-  .ch-row.active { background: #1f3d5f; }
-  #logText { width: 100%; height: 140px; background: #0d1117; color: #9da7b3; border: 1px solid #30363d;
-    border-radius: 8px; padding: 10px 12px; font-family: monospace; font-size: 12px; resize: vertical; }
-  .err { color: var(--err) !important; }
-  video::-webkit-media-controls { opacity: 0.6; }
-</style>
+<link rel="stylesheet" href="/player.css">
 </head>
 <body>
 <header>
-  <h1>🎙 实时字幕</h1>
-  <input id="url" placeholder="输入流地址 / 视频链接 / 本地文件路径，如 B站链接 或 /path/to/video.mp4">
-  <select id="engine">
-    <option value="faster-whisper">本地 faster-whisper</option>
-    <option value="aliyun-funasr">阿里云 FunASR API（推荐）</option>
-    <option value="funasr-gguf">FunASR Vulkan（文件模式）</option>
-    <option value="demo">演示字幕（无识别，仅验证链路）</option>
-  </select>
-  <select id="silence" title="断句灵敏度：语音后静音多久判定一句结束（越小切句越频繁，仅 API 引擎生效）">
-    <option value="200">断句：极灵敏 200ms</option>
-    <option value="400" selected>断句：灵敏 400ms</option>
-    <option value="800">断句：标准 800ms</option>
-    <option value="1300">断句：宽松 1300ms（服务端默认）</option>
-  </select>
-  <select id="delay" title="HLS 音视频相对直播源的整体延迟；延迟期间音频持续送给 ASR，5 秒更有利于完整断句">
-    <option value="0.1">音视频延迟 100ms</option>
-    <option value="1">音视频延迟 1s</option>
-    <option value="5" selected>音视频延迟 5s</option>
-  </select>
-  <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
-  <button id="uploadBtn" title="上传本地音频/视频文件">📁 上传文件</button>
-  <button id="start">开始</button>
-  <button id="stop">停止</button>
-  <button id="shareCopy" title="复制只读局域网观众链接">🔗复制观众链接</button>
-  <select id="shareAddress" title="选择观众设备所在局域网对应的主机地址" hidden></select>
-  <button id="subToggle" title="开关中间字幕显示">🎬 字幕：开</button>
-  <button id="logBtn" title="查看/复制会话日志，便于反馈问题">📋 日志</button>
-  <button id="styleBtn" title="实时调整叠加字幕的字体、大小、位置（自动记住）">🎨 字幕样式</button>
-  <button id="chBtn" title="加载 .m3u/.m3u8 频道列表并选台播放（先在输入框粘贴频道列表地址）">📺 频道</button>
-  <div id="stylePanel" hidden>
+ <div class="brand-row"><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>原文字幕</h1><small>识别声音，保留原话</small></div></div><button id="settingsBtn" class="quiet"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 3-1 3-3 1-3 3 2 2-1 4 3 3 3-1 2 3 4-1 1-3 3-1 1-4-3-2 1-3-3-3-3 1z"/></svg>设置</button></div>
+ <div class="source-row"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或打开本地视频" autocomplete="off"><button id="uploadBtn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM3 7V4h6l3 3"/></svg>打开文件</button><span id="modeBadge" class="mode-badge">原文字幕 · 自动识别</span><button id="start" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>生成字幕</button><button id="stop">停止识别</button></div>
+ <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
+</header>
+<main>
+ <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开内容，生成原文字幕</h2><p>中文语音出中文字幕，英文语音出英文字幕</p></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
+ <div class="player-footer"><div><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div id="shareHistoryNotice" role="status" hidden></div><div id="sourceBufferStatus" role="status" hidden></div></div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关原文字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
+ <div id="captionActions" hidden><button id="retryCaptions">重试字幕</button><button id="playOnly">仅播放（停止识别）</button></div>
+ <div id="lateCaption" hidden></div>
+</main>
+<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle"><div class="dialog-head"><h2 id="settingsDialogTitle">设置</h2><button class="quiet" data-close="settingsDialog" aria-label="关闭设置">关闭</button></div><div class="dialog-body"><div class="tabs" role="tablist" aria-label="设置分类"><button role="tab" aria-selected="true" aria-controls="cloudSettings" data-pane="cloudSettings">云端服务</button><button role="tab" aria-selected="false" aria-controls="captionSettings" data-pane="captionSettings">字幕</button><button role="tab" aria-selected="false" aria-controls="moreSettings" data-pane="moreSettings">更多</button></div><section id="cloudSettings" class="setting-section">  <section id="cloudPanel">
+    <h3>阿里云百炼（中国内地）</h3>
+    <p>使用 FunASR 识别音频，字幕保留语音原文。音频会发送给百炼，费用由你的 API 账户承担；本模式不调用翻译服务。</p>
+    <label>API Key <input id="apiKey" type="password" autocomplete="off" placeholder="填写百炼 API Key，不会放入链接或日志"></label>
+    <label><input id="saveKey" type="checkbox"> 通过 Windows 加密保存到本机（默认仅本次运行）</label>
+    <button id="saveCloud">应用配置</button>
+    <button id="checkCloud">检查连接（会调用云端 API）</button>
+    <button id="clearCloud">删除配置</button>
+    <span id="cloudState" role="status">尚未配置</span>
+    <p style="font-size:12px">请先在百炼开通 fun-asr-realtime。检查连接不代表实际语音效果；费用以服务商账单为准。</p>
+  </section>
+</section><section id="captionSettings" class="setting-section" hidden><input id="bilingual" type="checkbox" hidden>  <div id="stylePanel">
     <label>字号 <input type="range" id="sizeRange" min="16" max="64" step="1" value="30"><span class="val" id="sizeVal">30px</span></label>
     <label>位置 <input type="range" id="posRange" min="0" max="30" step="1" value="12"><span class="val" id="posVal">12%</span></label>
+    <label>对比度 <select id="contrastSel"><option value="default">白字 · 半透明黑底</option><option value="high">白字 · 实黑底</option><option value="yellow">黄字 · 实黑底</option></select></label>
     <label>字体
       <select id="fontSel">
         <option value="default">系统默认</option>
@@ -102,42 +42,158 @@
         <option value="kaiti">楷体</option>
       </select>
     </label>
-    <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 字体系统默认">重置默认</button>
+    <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 白字半透明黑底 / 字体系统默认">重置默认</button>
   </div>
-  <div id="chPanel" hidden>
+<p>字幕按语音时间显示完整短句；长句按时间分段，完整识别内容可在字幕记录查看。</p></section><section id="moreSettings" class="setting-section" hidden><label for="engine">字幕服务</label>  <select id="engine">
+    <option value="aliyun-funasr" selected>云端原文字幕</option>
+    <option value="demo">演示字幕（无识别，仅验证链路）</option>
+  </select>
+<label for="sourceLanguage">语音语言</label><select id="sourceLanguage"><option value="auto" selected>自动识别（原语言输出）</option><option value="zh">中文</option><option value="en">English</option></select><label for="silence">语音断句</label>  <select id="silence" title="断句灵敏度：语音后静音多久判定一句结束（越小切句越频繁，仅 API 引擎生效）">
+    <option value="200">断句：极灵敏 200ms</option>
+    <option value="400" selected>断句：灵敏 400ms</option>
+    <option value="800">断句：标准 800ms</option>
+    <option value="1300">断句：宽松 1300ms（服务端默认）</option>
+  </select>
+  <select id="delay" hidden title="旧演示模式的同步缓冲设置">
+    <option value="0.1">音视频延迟 100ms</option>
+    <option value="1">音视频延迟 1s</option>
+    <option value="5">音视频延迟 5s</option>
+  </select>
+<div><button id="chBtn">频道列表</button><button id="logBtn">诊断日志</button></div><div><button id="shareCopy">复制观众链接</button><select id="shareAddress" aria-label="观众设备所在局域网" hidden></select><p class="help">开始播放后，可将只读链接分享给同一局域网内的设备。</p></div></section></div></dialog>
+<dialog id="historyDialog" aria-labelledby="historyDialogTitle"><div class="dialog-head"><h2 id="historyDialogTitle">字幕记录</h2><button class="quiet" data-close="historyDialog" aria-label="关闭字幕记录">关闭</button></div><div class="dialog-body"><div id="history"></div></div></dialog>
+<dialog id="channelsDialog" aria-labelledby="channelsDialogTitle"><div class="dialog-head"><h2 id="channelsDialogTitle">频道列表</h2><button class="quiet" data-close="channelsDialog" aria-label="关闭频道列表">关闭</button></div><div class="dialog-body"><p class="help">在顶部输入 M3U 频道列表地址，再加载频道。</p><button id="loadChannelsBtn">加载输入的频道列表</button>  <div id="chPanel">
     <div class="ch-head">
       <span id="chInfo">未加载频道列表</span>
       <button id="chProbeBtn" title="批量检测所有频道的连通性与延迟（手动触发，并发 20，逐条显示）">🔍 批量检测</button>
     </div>
     <div id="chList"></div>
   </div>
-  <div id="status">就绪</div>
-</header>
-<main>
-  <div id="playerWrap">
-    <video id="player" controls muted></video>
-    <audio id="audioEl" preload="auto"></audio>
-    <div id="current">输入地址后点「开始」，边看视频边出字幕</div>
-  </div>
-  <div id="history"></div>
-  <div id="logPanel" hidden>
-    <textarea id="logText" readonly spellcheck="false"
-      placeholder="会话日志：connect/play/pause/seek/字幕/状态/错误…"></textarea>
-    <button id="copyLogBtn" style="align-self: flex-end;">📋 复制日志</button>
-  </div>
-</main>
-<script src="hls.min.js"></script>
+</div></dialog>
+<dialog id="logsDialog" aria-labelledby="logsDialogTitle"><div class="dialog-head"><h2 id="logsDialogTitle">诊断日志</h2><button class="quiet" data-close="logsDialog" aria-label="关闭诊断日志">关闭</button></div><div class="dialog-body"><div id="logPanel" hidden><textarea id="logText" aria-label="会话日志" readonly spellcheck="false"></textarea><button id="copyLogBtn">复制日志</button></div></div></dialog>
+<button id="styleBtn" hidden>字幕样式</button>
+<script src="/hls.min.js"></script>
+<script src="/caption_presenter.js"></script>
+<script src="/playback_guard.js"></script>
+<script src="/recovery_controller.js"></script>
 <script>
   const urlEl = document.getElementById('url');
   const engineEl = document.getElementById('engine');
   const silenceEl = document.getElementById('silence');
   const delayEl = document.getElementById('delay');
+  const sourceLanguageEl = document.getElementById('sourceLanguage');
+  sourceLanguageEl.onchange = () => { document.getElementById('modeBadge').textContent = '原文字幕 · ' + ({auto:'自动识别',zh:'中文',en:'English'}[sourceLanguageEl.value]); };
+  const bilingualEl = document.getElementById('bilingual');
+  const cloudStateEl = document.getElementById('cloudState');
+  let activeCloudSession = null;
+  let cloudPlayback = false;
+  let originalCaptionMode = false;
+  let originalCaptionsComplete = false;
+  let useCaptionBuffer = false;
+  const playbackGuard = new CaptionPlaybackGuard();
+  let recognitionOnlyStopped = false;
+  let captionHasSpeech = false;
+  let cloudResumeRequired = false;
+  let pauseStartedAt = null;
+  let connectionGeneration = 0;
+  let hlsVideoClockPts = null;
+  let pendingStartAt = null;
+  let activeInput = '';
+  const recoveryController = new RecoveryController();
+  let activeMediaClockFlush = null;
+  let stoppedHlsLoaderForRecovery = null;
+
+  function resumeStoppedHlsLoaderForRecovery() {
+    const stoppedLoader = stoppedHlsLoaderForRecovery;
+    if (!stoppedLoader || hlsPlayer !== stoppedLoader) return false;
+    stoppedHlsLoaderForRecovery = null;
+    stoppedLoader.startLoad();
+    return true;
+  }
+
+  function scheduleSessionRecovery(kind, retryable, recover, generation = connectionGeneration) {
+    const result = recoveryController.schedule(kind, retryable, info => {
+      if (generation !== connectionGeneration || recognitionOnlyStopped) return;
+      recover(info);
+    });
+    if (result.status === 'scheduled' || result.status === 'waiting') {
+      const attempt = result.attempt;
+      const delaySeconds = result.delayMs / 1000;
+      setStatus(`正在恢复${kind === 'media' ? '直播源' : '识别'}（${attempt}/${result.maxAttempts}，${delaySeconds} 秒后）…`);
+      logEvent('recovery_wait', `${kind} ${attempt}/${result.maxAttempts}; wait=${delaySeconds}s`);
+    }
+    return result;
+  }
+  function markSessionRecoveryProgress(coverageTime) {
+    if (!Number.isFinite(coverageTime) || !Number.isFinite(player.currentTime)) return false;
+    return recoveryController.markProgress(performance.now(), {
+      mediaTime: player.currentTime, coverageTime,
+    });
+  }
+
+  async function cloudRequest(path, method = 'GET', data) {
+    const response = await fetch(path, {method, headers:{'Content-Type':'application/json'},
+      body:data == null ? undefined : JSON.stringify(data)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : '请求失败');
+    return result;
+  }
+  async function refreshCloud() {
+    try {
+      const data = await cloudRequest('/api/cloud');
+      cloudStateEl.textContent = data.configured ? `已配置 · ${data.saved ? 'Windows 加密保存' : '仅本次运行'}` : '尚未配置';
+      document.getElementById('saveKey').disabled = !data.persistent_storage;
+      document.getElementById('saveKey').checked = data.saved;
+      document.getElementById('cloudPanel').open = !data.configured;
+    } catch (error) { cloudStateEl.textContent = error.message; }
+  }
+  document.getElementById('saveCloud').onclick = async () => {
+    try {
+      await cloudRequest('/api/cloud', 'PUT', {api_key:document.getElementById('apiKey').value,
+        save:document.getElementById('saveKey').checked});
+      document.getElementById('apiKey').value = '';
+      await refreshCloud();
+    } catch (error) { cloudStateEl.textContent = error.message; }
+  };
+  document.getElementById('checkCloud').onclick = async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    cloudStateEl.textContent = '检查中…';
+    try { cloudStateEl.textContent = (await cloudRequest('/api/cloud/check', 'POST')).message; }
+    catch (error) { cloudStateEl.textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+  document.getElementById('clearCloud').onclick = async () => {
+    const generation = ++connectionGeneration;
+    recoveryController.cancel();
+    recognitionOnlyStopped = true;
+    cloudResumeRequired = false;
+    cloudPlayback = false;
+    originalCaptionMode = false;
+    const activeSocket = ws;
+    ws = null;
+    activeCloudSession = null;
+    activeShareToken = null;
+    if (activeSocket) {
+      activeSocket.onmessage = null;
+      activeSocket.onclose = null;
+      activeSocket.close();
+    }
+    try {
+      await cloudRequest('/api/cloud', 'DELETE');
+      if (generation !== connectionGeneration) return;
+      document.getElementById('apiKey').value = '';
+      await refreshCloud();
+      if (generation !== connectionGeneration) return;
+      setStatus('配置已删除，云端会话已停止');
+    } catch (error) { cloudStateEl.textContent = error.message; }
+  };
   const subToggleBtn = document.getElementById('subToggle');
   const startBtn = document.getElementById('start');
   const stopBtn = document.getElementById('stop');
   const shareCopyBtn = document.getElementById('shareCopy');
   const shareAddressEl = document.getElementById('shareAddress');
   const statusEl = document.getElementById('status');
+  const sourceBufferStatusEl = document.getElementById('sourceBufferStatus');
   const currentEl = document.getElementById('current');
   const historyEl = document.getElementById('history');
   const fileEl = document.getElementById('file');
@@ -146,15 +202,26 @@
   const audioEl = document.getElementById('audioEl');
   let ws = null;
   let hlsPlayer = null;  // hls.js 实例（HLS 直播，ticket-19）
+  const captionPresenter = new CaptionPresenter();
+  let captionRevisions = new Map();
+  const MAX_RETAINED_CAPTIONS = 20000;
+  let translatedSession = false;
   let subs = [];        // [{beg, end, text, words}] 句子列表（partial 累计，同句原地更新）
   let previewSubs = []; // 连续两个 partial 均未改动的完整短句，等待整句 final 时也能播放
   let historyItems = []; // 与 subs 对应的 history DOM 元素
   let playStarted = false; // 是否已触发视频播放（等字幕就绪）
   let holdingForSync = false; // 字幕未就绪时拦截手动播放产生的 pause，不冻结后端
   let holdingForBuffer = false;
+  let sourceBufferingSince = null;
   let playbackLimit = null;
   let seekPending = false; // seek 后清空当前句显示，等新数据（ADR-0001）
   let aligningInitialPlayback = false;
+  let lastStableMediaPosition = 0;
+  let pendingSeekOrigin = null;
+  let pendingLocalSeek = null;
+  let pendingLocalSeekTimer = null;
+  let restoringSeek = null;
+  let skipReconnectOnNextPlay = false;
   let subEnabled = true; // 中间字幕显示开关（ticket-13）
   let activeShareToken = null;
   let sharedViewerActive = false;
@@ -166,9 +233,23 @@
   const logText = document.getElementById('logText');
   const copyLogBtn = document.getElementById('copyLogBtn');
   const logBuffer = [];
+  function redactDiagnosticDetail(value) {
+    return String(value ?? '').replace(/(?:https?|rtsp|rtmp|rtp):\/\/[^\s"'<>]+/gi, raw => {
+      try {
+        const source = new URL(raw);
+        source.username = '';
+        source.password = '';
+        source.hash = '';
+        for (const key of [...source.searchParams.keys()]) source.searchParams.set(key, '[已隐藏]');
+        return source.toString();
+      } catch (_) {
+        return '[已隐藏 URL]';
+      }
+    });
+  }
   function logEvent(type, detail) {
     const ts = new Date().toISOString().slice(11, 23);
-    logBuffer.push(`[${ts}] ${type}: ${detail}`);
+    logBuffer.push(`[${ts}] ${type}: ${redactDiagnosticDetail(detail)}`);
     if (logBuffer.length > 500) logBuffer.shift();
     if (!logPanel.hidden) logText.value = logBuffer.join('\n');
   }
@@ -190,8 +271,10 @@
   // 字幕开关（ticket-13）：同日志按钮，可关可开，默认开
   subToggleBtn.onclick = () => {
     subEnabled = !subEnabled;
-    subToggleBtn.textContent = subEnabled ? '🎬 字幕：开' : '🎬 字幕：关';
+    subToggleBtn.textContent = subEnabled ? '字幕 开' : '字幕 关';
+    subToggleBtn.setAttribute('aria-pressed', String(subEnabled));
     if (!subEnabled) currentEl.textContent = '';
+    else syncSubtitle();
     logEvent('sub_toggle', subEnabled ? '开' : '关');
   };
 
@@ -202,10 +285,11 @@
   const sizeVal = document.getElementById('sizeVal');
   const posRange = document.getElementById('posRange');
   const posVal = document.getElementById('posVal');
+  const contrastSel = document.getElementById('contrastSel');
   const fontSel = document.getElementById('fontSel');
   const styleReset = document.getElementById('styleReset');
   const STYLE_KEY = 'subtitleStyle';
-  const STYLE_DEFAULTS = { size: 30, pos: 12, font: 'default' };
+  const STYLE_DEFAULTS = { size: 30, pos: 12, font: 'default', contrast: 'default' };
   // 字体预设按本机已装中文字体（fc-list :lang=zh）定；楷体本机未装，走回退链
   const FONTS = {
     default: null,  // 系统默认：继承 body 字体
@@ -221,8 +305,9 @@
       if (raw) s = { ...s, ...JSON.parse(raw) };
     } catch (e) { /* 损坏值回默认 */ }
     if (!Object.prototype.hasOwnProperty.call(FONTS, s.font)) s.font = STYLE_DEFAULTS.font;
+    if (!['default', 'high', 'yellow'].includes(s.contrast)) s.contrast = STYLE_DEFAULTS.contrast;
     s.size = Math.min(64, Math.max(16, Number(s.size) || STYLE_DEFAULTS.size));
-    s.pos = Math.min(30, Math.max(0, Number(s.pos) || STYLE_DEFAULTS.pos));
+    s.pos = Math.min(30, Math.max(0, Number.isFinite(Number(s.pos)) ? Number(s.pos) : STYLE_DEFAULTS.pos));
     return s;
   }
   function saveStyle() {
@@ -233,13 +318,17 @@
     const s = styleState;
     currentEl.style.fontSize = `${s.size}px`;
     currentEl.style.bottom = `${s.pos}%`;
+    currentEl.style.backgroundColor = s.contrast === 'default' ? 'rgba(0,0,0,.72)' : '#000';
+    currentEl.style.color = s.contrast === 'yellow' ? '#ffe766' : '#fff';
     if (FONTS[s.font]) currentEl.style.fontFamily = FONTS[s.font];
     else currentEl.style.removeProperty('font-family');
     sizeRange.value = s.size;
     sizeVal.textContent = `${s.size}px`;
     posRange.value = s.pos;
     posVal.textContent = `${s.pos}%`;
+    contrastSel.value = s.contrast;
     fontSel.value = s.font;
+    fitCaptionWidth();
   }
   styleBtn.onclick = () => {
     stylePanel.hidden = !stylePanel.hidden;
@@ -248,6 +337,7 @@
   // input 事件：拖动中即时生效（实时调整）；change 事件：下拉选择生效
   sizeRange.oninput = () => { styleState.size = parseInt(sizeRange.value, 10); applyStyle(); saveStyle(); };
   posRange.oninput = () => { styleState.pos = parseInt(posRange.value, 10); applyStyle(); saveStyle(); };
+  contrastSel.onchange = () => { styleState.contrast = contrastSel.value; applyStyle(); saveStyle(); };
   fontSel.onchange = () => { styleState.font = fontSel.value; applyStyle(); saveStyle(); };
   styleReset.onclick = () => {
     styleState = { ...STYLE_DEFAULTS };
@@ -255,6 +345,12 @@
     saveStyle();
     logEvent('style_reset', '字号30px 位置12% 字体系统默认');
   };
+  function fitCaptionWidth() {
+    const fontSize = parseFloat(getComputedStyle(currentEl).fontSize) || styleState.size;
+    captionPresenter.setColumns(Math.floor(document.getElementById('playerWrap').clientWidth * .86 / (fontSize * .6)));
+  }
+  window.addEventListener('resize', fitCaptionWidth);
+  document.addEventListener('fullscreenchange', fitCaptionWidth);
   applyStyle();  // 页面加载即固定应用（覆盖 clamp 响应式），含 localStorage 恢复
 
   // 直播频道（ticket-19）：m3u 列表解析 + 连通性检测 + 选台播放
@@ -290,6 +386,7 @@
     loadedChannelListUrl = m3uUrl;
     renderChannels();
     chPanel.hidden = false;
+    openDialog('channelsDialog');
     setStatus(`频道列表 ${channels.length} 个，点击频道开始观看`);
   }
 
@@ -327,6 +424,7 @@
           urlEl.value = ch.url;
           for (const [, r] of chRows) r.row.classList.remove('active');
           row.classList.add('active');
+          document.getElementById('channelsDialog').close();
           connect(ch.url);
           logEvent('channel_pick', ch.name);
         };
@@ -422,13 +520,28 @@
     logEvent(isErr ? 'error' : 'status', msg);
   }
 
-  function appendHistory(beg, end, text) {
+  function showShareHistoryNotice() {
+    const notice = document.getElementById('shareHistoryNotice');
+    if (!notice) return;
+    notice.textContent = '较早字幕记录未保留，当前直播继续';
+    notice.hidden = false;
+  }
+
+  function showShareHistoryWarning(message) {
+    if (message.failure_category !== 'share_history_truncated') return false;
+    showShareHistoryNotice();
+    setStatus('较早字幕记录未保留，当前直播继续');
+    return true;
+  }
+
+  function appendHistory(beg, end, text, sourceText = '') {
     const div = document.createElement('div');
     const time = document.createElement('span');
     const endLabel = Number.isFinite(end) && end > beg ? `${end.toFixed(1)}s` : '…';
     time.textContent = `${beg.toFixed(1)}s-${endLabel}`;
     div.appendChild(time);
     div.appendChild(document.createTextNode(text));
+    if (sourceText) { const source = document.createElement('small'); source.textContent = sourceText; div.appendChild(source); }
     historyEl.appendChild(div);
     historyItems.push(div);
     while (historyItems.length > 200) historyEl.removeChild(historyItems.shift());
@@ -441,11 +554,43 @@
     const endLabel = Number.isFinite(msg.end) && msg.end > msg.beg ? `${msg.end.toFixed(1)}s` : '…';
     div.childNodes[0].textContent = `${msg.beg.toFixed(1)}s-${endLabel}`;
     div.childNodes[1].textContent = msg.text;
+    if (msg.source_text) {
+      let source = div.querySelector('small');
+      if (!source) { source = document.createElement('small'); div.appendChild(source); }
+      source.textContent = msg.source_text;
+    }
   }
 
   // A finalized ASR event may contain several sentences (or a long monologue).
   // Keep the full result in history, but reveal short timed phrases on video.
+  const captionSegmentCache = new WeakMap();
+
+  function captionLayoutOptions() {
+    const playerWidth = document.getElementById('playerWrap')?.clientWidth || 1200;
+    const style = getComputedStyle(currentEl);
+    const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+    const border = (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+    const cssMaxWidth = String(style.maxWidth || '').trim();
+    const percentMaxWidth = cssMaxWidth.endsWith('%') ? Number.parseFloat(cssMaxWidth) / 100 : null;
+    const pixelMaxWidth = cssMaxWidth.endsWith('px') ? Number.parseFloat(cssMaxWidth) : null;
+    const maxBoxWidth = Number.isFinite(percentMaxWidth) ? playerWidth * percentMaxWidth
+      : Number.isFinite(pixelMaxWidth) ? Math.min(playerWidth, pixelMaxWidth) : playerWidth * .90;
+    const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const maxWidth = Math.max(1, (maxBoxWidth - padding - border) * .97);
+    return {maxWidth,
+      measureText:CaptionLayout.createTextMeasurer(font, parseFloat(style.letterSpacing) || 0),
+      maxLines:2, key:`${maxWidth}|${font}|${style.letterSpacing}|2`};
+  }
+
+  function rememberCaptionSegments(source, key, segments) {
+    captionSegmentCache.set(source, {key, segments});
+    return segments;
+  }
+
   function captionSegments(s) {
+    const layout = captionLayoutOptions();
+    const cached = captionSegmentCache.get(s);
+    if (cached?.key === layout.key) return cached.segments;
     const words = (s.words || []).filter(w => Array.isArray(w) && Number.isFinite(w[0])
       && Number.isFinite(w[1]) && typeof w[2] === 'string' && w[2].trim());
     const normalize = value => value.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
@@ -472,7 +617,12 @@
       let aligned = true;
       for (const word of words) {
         const token = normalize(word[2].trim());
-        if (!token) continue;
+        if (!token) {
+          const previous = alignedWords.at(-1);
+          if (previous && /[\p{P}\p{S}]/u.test(word[2].trim()))
+            previous.end = Math.max(previous.end, word[1]);
+          continue;
+        }
         const start = expectedText.indexOf(token, searchFrom);
         const end = start + token.length;
         if (start < 0 || end > sourceRanges.length) {
@@ -480,10 +630,19 @@
           break;
         }
         let rawEnd = sourceRanges[end - 1].end;
-        while (rawEnd < sourceText.length && /[.!?。！？；;，,:]/u.test(sourceText[rawEnd])) rawEnd++;
+        while (rawEnd < sourceText.length) {
+          const punctuation = String.fromCodePoint(sourceText.codePointAt(rawEnd));
+          if (!/[\p{P}\p{S}]/u.test(punctuation) || /[\p{Ps}\p{Pi}]/u.test(punctuation)
+              || /^['"’ʼ‐‑‒–—-]$/u.test(punctuation)) break;
+          rawEnd += punctuation.length;
+        }
         alignedWords.push({beg: word[0], end: word[1], start,
           rawStart: sourceRanges[start].start, rawEnd});
         searchFrom = end;
+      }
+      if (alignedWords.length) {
+        alignedWords[0].rawStart = 0;
+        alignedWords[alignedWords.length - 1].rawEnd = sourceText.length;
       }
 
       // Consecutive Latin/digit fragments with no textual separator belong to
@@ -516,85 +675,38 @@
         };
         const flushClause = () => {
           if (!clause.length) return;
-          const text = sourceText.slice(clause[0].rawStart, clause[clause.length - 1].rawEnd);
-          const hasHan = /\p{Script=Han}/u.test(text);
-          const maxChars = hasHan ? 26 : 48;
-          if (text.length <= maxChars) {
-            pushSpan(clause);
-          } else {
-            // Split an overlong clause into balanced pieces at ASR word
-            // boundaries. A fixed 10-token/4s cutoff left "她对" orphaned
-            // before "俺挺好的" even though the final transcript was correct.
-            let from = 0;
-            while (from < clause.length) {
-              const remaining = sourceText.slice(clause[from].rawStart,
-                clause[clause.length - 1].rawEnd).length;
-              if (remaining <= maxChars) {
-                pushSpan(clause.slice(from));
-                break;
-              }
-              const pieces = Math.ceil(remaining / maxChars);
-              const target = remaining / pieces;
-              let best = from + 1;
-              let bestDistance = Infinity;
-              for (let i = from + 1; i < clause.length; i++) {
-                const leftLength = sourceText.slice(clause[from].rawStart, clause[i - 1].rawEnd).length;
-                const rightLength = sourceText.slice(clause[i].rawStart, clause[clause.length - 1].rawEnd).length;
-                if (leftLength > maxChars || rightLength < 4) break;
-                const gap = clause[i].beg - clause[i - 1].end;
-                const distance = Math.abs(leftLength - target) - Math.min(0.8, Math.max(0, gap));
-                if (distance < bestDistance) { bestDistance = distance; best = i; }
-              }
-              pushSpan(clause.slice(from, best));
-              from = best;
-            }
-          }
+          result.push(...CaptionLayout.paginateTimedWords(sourceText, clause, layout));
           clause = [];
         };
         for (const word of displayWords) {
           clause.push(word);
-          if (/[，,。.!?！？；;]$/.test(sourceText.slice(word.rawStart, word.rawEnd)))
+          if (/[。.!?！？]$/.test(sourceText.slice(word.rawStart, word.rawEnd)))
             flushClause();
         }
         flushClause();
-        if (result.length > 1) return result;
+        if (result.length > 1) return rememberCaptionSegments(s, layout.key, result);
       }
     }
 
     const beg = Number.isFinite(s.beg) ? s.beg : null;
     const end = Number.isFinite(s.end) && s.end > beg ? s.end : null;
-    const rawParts = (s.text.match(/[^.!?。！？；;，,]+[.!?。！？；;，,]?/g) || [s.text])
+    const rawParts = (s.text.match(/[^.!?。！？]+[.!?。！？]?/g) || [s.text])
       .map(part => part.trim()).filter(Boolean);
-    const parts = rawParts.flatMap(part => {
-      if (/\p{Script=Han}/u.test(part)) {
-        if (part.length <= 26) return [part];
-        const count = Math.ceil(part.length / 26);
-        const size = Math.ceil(part.length / count);
-        return Array.from({length:count}, (_, index) => part.slice(index * size,
-          (index + 1) * size).trim()).filter(Boolean);
-      }
-      if (part.length <= 48) return [part];
-      const tokens = part.match(/\S+\s*/g) || [part];
-      return tokens.reduce((chunks, token) => {
-        const current = chunks[chunks.length - 1] || '';
-        if (current.length && (current + token).trim().length > 44) chunks.push(token.trim());
-        else chunks[chunks.length - 1] = current + token;
-        return chunks;
-      }, ['']).map(chunk => chunk.trim()).filter(Boolean);
-    });
+    const parts = rawParts.flatMap(part => CaptionLayout.paginateText(part, layout));
     if (!Number.isFinite(beg) || !Number.isFinite(end) || parts.length <= 1)
-      return [{beg, end, text: s.text.trim()}];
-    const total = parts.reduce((sum, part) => sum + part.length, 0);
+      return rememberCaptionSegments(s, layout.key, [{beg, end, text: parts[0]?.text || s.text.trim()}]);
+    const total = parts.reduce((sum, part) => sum + part.weight, 0);
     let offset = beg;
-    return parts.map((part, index) => {
+    return rememberCaptionSegments(s, layout.key, parts.map((part, index) => {
       const segmentBeg = offset;
-      offset = index === parts.length - 1 ? end : offset + (end - beg) * part.length / total;
-      return {beg: segmentBeg, end: offset, text: part};
-    });
+      offset = index === parts.length - 1 ? end : offset + (end - beg) * part.weight / total;
+      return {beg: segmentBeg, end: offset, text: part.text};
+    }));
   }
 
   function syncSubtitle() {
     const t = player.currentTime;
+    if (!activeInput && !sharedViewerActive) return;
     // 出错态：保留错误提示，不被占位符/字幕覆盖
     if (currentEl.classList.contains('err')) return;
     // 字幕开关（ticket-13）：关闭则中间字幕不显示
@@ -602,9 +714,25 @@
       currentEl.textContent = '';
       return;
     }
+    if (translatedSession) {
+      const cue = captionPresenter.tick(t, performance.now(), player.paused && !player.ended);
+      currentEl.textContent = cue ? cue.text : '';
+      currentEl.dataset.caption = cue ? 'final' : 'empty';
+      if (cue && bilingualEl.checked && cue.source_text) {
+        const source = lines(cue.source_text, captionPresenter.columns - 2)[0];
+        currentEl.textContent = source + (source.length < cue.source_text.length ? '…' : '') + '\n' + cue.text;
+      }
+      const lag = document.getElementById('captionLag');
+      if (lag) {
+        const seconds = cue && Number.isFinite(cue.end) ? Math.max(0,t-cue.end) : 0;
+        lag.textContent = captionPresenter.skipped ? '部分字幕积压，完整内容见记录' : seconds > 2 ? '译文滞后 ' + seconds.toFixed(1) + 's' : '';
+        lag.hidden = !lag.textContent;
+      }
+      return;
+    }
     // 视频未开始播放时不显示字幕（避免"字幕提前"的错觉）
     if (!playStarted && player.paused && t < 0.5) {
-      currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
+      currentEl.textContent = '正在准备字幕…';
       return;
     }
     // 按识别句真实时间范围显示整句：句子开始时出现，结束时自然消失。
@@ -616,7 +744,16 @@
       nextBegBySubtitle.set(item, nextBeg);
       if (item.beg < nextBeg) nextBeg = item.beg;
     }
-    let candidates = subs.filter(s => s.isFinal !== false).flatMap(s => captionSegments(s).map((segment, segmentIndex) => {
+    const activeSubs = subs.filter(s => {
+      if (s.beg > t) return false;
+      if (s.translated) return Number.isFinite(s.end) && s.end > t;
+      if (s.isFinal === false) return false;
+      const sentenceEnd = Number.isFinite(s.end) && s.end > s.beg
+        ? s.end : Math.min(nextBegBySubtitle.get(s) ?? Infinity, s.beg + 60);
+      return sentenceEnd > t;
+    });
+    let candidates = activeSubs.flatMap(s =>
+      (s.translated ? [{beg:s.beg, end:s.end, text:s.text}] : captionSegments(s)).map((segment, segmentIndex) => {
         const sentenceBeg = Number.isFinite(segment.beg) ? segment.beg : s.beg;
         // Some final entries omit a sentence end. Keep that caption visible until
         // the next sentence begins instead of
@@ -638,8 +775,12 @@
         .sort((a, b) => a.captionBeg - b.captionBeg);
     if (!candidates.length) {
       candidates = previewSubs.filter(s => s.beg <= t && s.end > t)
-        .map((s, index) => ({...s, captionBeg:s.beg, captionEnd:s.end,
-          sourceId:`preview-${index}`, segmentIndex:0}));
+        .flatMap((s, index) => captionSegments(s).map((segment, segmentIndex) => ({
+          ...s, text:segment.text,
+          sourceId:`preview-${s.sentenceId ?? index}`, segmentIndex,
+          captionBeg:Number.isFinite(segment.beg) ? segment.beg : s.beg,
+          captionEnd:Number.isFinite(segment.end) ? segment.end : s.end,
+        }))).filter(s => s.captionBeg <= t && s.captionEnd > t);
     }
     // A seek can land inside finalized history already received from ASR. Show
     // that timed caption immediately; wait only when the destination is unknown.
@@ -662,11 +803,108 @@
         }
       }
     currentEl.textContent = groups.map(g => g.text).join(' ');
+    if (bilingualEl.checked) {
+      const sourceText = [...new Set(candidates.map(c => c.sourceText).filter(Boolean))].join(' ');
+      if (sourceText) currentEl.textContent = sourceText + '\n' + currentEl.textContent;
+    }
     return;
   }
 
   // 历史原地修订 partial；视频叠层只显示 API 已确认的完整句子。
   let uiPaused = false;  // 前端暂停标志：暂停期间忽略新数据（后端同时停止解析）
+
+  function cancelPendingLocalSeek() {
+    if (pendingLocalSeekTimer != null) clearTimeout(pendingLocalSeekTimer);
+    pendingLocalSeekTimer = null;
+    pendingLocalSeek = null;
+  }
+
+  function preparedLocalPosition(time) {
+    if (originalCaptionsComplete) return true;
+    if (Number.isFinite(playbackLimit) && time <= playbackLimit + 0.05) return true;
+    return subs.some(s => s.isFinal !== false && Number.isFinite(s.beg)
+      && Number.isFinite(s.end) && s.end > s.beg && s.beg <= time && s.end > time)
+      || previewSubs.some(s => Number.isFinite(s.beg) && Number.isFinite(s.end)
+        && s.beg <= time && s.end > time);
+  }
+
+  function finishLocalSeekRestore() {
+    const restore = restoringSeek;
+    if (!restore) return;
+    restoringSeek = null;
+    pendingSeekOrigin = null;
+    lastStableMediaPosition = restore.position;
+    seekPending = false;
+    holdingForSync = false;
+    syncSubtitle();
+    if (restore.resume && player.paused) {
+      // Dismissing the dialog resumes on the existing session; dialog time is not a user pause.
+      pauseStartedAt = performance.now();
+      skipReconnectOnNextPlay = true;
+      player.play().catch(() => {});
+    }
+  }
+
+  function requestLocalSeekRestart(destination, origin, resumeAfterCancel) {
+    if (!pendingLocalSeek) {
+      pendingLocalSeek = {destination, origin, resumeAfterCancel};
+      holdingForSync = true;
+      holdingForBuffer = false;
+      if (!uiPaused) {
+        pauseStartedAt = performance.now();
+        uiPaused = true;
+        if (ws && ws.readyState === 1) ws.send('pause');
+      }
+      audioEl.pause();
+      player.pause();
+    } else {
+      pendingLocalSeek.destination = destination;
+    }
+    if (pendingLocalSeekTimer != null) clearTimeout(pendingLocalSeekTimer);
+    pendingLocalSeekTimer = setTimeout(() => {
+      pendingLocalSeekTimer = null;
+      const pending = pendingLocalSeek;
+      if (!pending) return;
+      if (window.confirm('该位置还没有准备好字幕。继续会从目标位置重建识别，并可能再次调用 API/产生费用。是否继续？')) {
+        cancelPendingLocalSeek();
+        connect(activeInput, null, pending.destination);
+        return;
+      }
+      cancelPendingLocalSeek();
+      restoringSeek = {position:pending.origin, resume:pending.resumeAfterCancel};
+      if (Math.abs(player.currentTime - pending.origin) < 0.05) {
+        finishLocalSeekRestore();
+      } else {
+        player.currentTime = pending.origin;
+        audioEl.currentTime = pending.origin;
+      }
+    }, 300);
+  }
+
+  function holdCaptionForCloudReconnect() {
+    if (!uiPaused || !cloudPlayback || sharedViewerActive || !activeInput || /^https?:/i.test(activeInput)) return false;
+    cloudResumeRequired = true;
+    setStatus('识别连接已关闭；继续播放时将从暂停位置重新连接');
+    return true;
+  }
+  function resumeClosedCloudAfterPause() {
+    if (originalCaptionsComplete) { cloudResumeRequired = false; pauseStartedAt = null; return false; }
+    const localCloud = cloudPlayback && !sharedViewerActive && activeInput && !/^https?:/i.test(activeInput);
+    const longPause = pauseStartedAt != null && performance.now() - pauseStartedAt >= 15000;
+    const disconnected = !ws || ws.readyState > 1;
+    if (!cloudResumeRequired && !(localCloud && pauseStartedAt != null && (longPause || disconnected))) return false;
+    const retryResume = cloudResumeRequired;
+    cloudResumeRequired = false;
+    pauseStartedAt = null;
+    const position = player.currentTime;
+    playStarted = false;
+    holdingForSync = true;
+    player.pause();
+    if (retryResume) connect(activeInput, null, position, {automaticRecovery:true});
+    else connect(activeInput, null, position);
+    return true;
+  }
+
   function sharedWordRatio(a, b) {
     if (!a || !a.length || !b || !b.length) return 0;
     let shared = 0;
@@ -692,22 +930,58 @@
     return false;
   }
 
+  function stopAtCaptionCapacity() {
+    void cancelCaptionProcessing(
+      '字幕记录达到安全容量上限，识别已停止；现有字幕已保留', true, true);
+  }
+
+  function reserveCaptionIdentity(id) {
+    if (!captionRevisions.has(id) && captionRevisions.size >= MAX_RETAINED_CAPTIONS) {
+      stopAtCaptionCapacity();
+      return false;
+    }
+    return true;
+  }
+
   function onSubtitle(msg) {
+    if (msg.sentence_id != null && Number.isFinite(msg.revision)) {
+      const id = String(msg.sentence_id);
+      if (!reserveCaptionIdentity(id)) return false;
+      const revision = msg.revision;
+      const latestRevision = captionRevisions.get(id);
+      if (latestRevision != null && revision <= latestRevision) return false;
+      captionRevisions.set(id, revision);
+    }
     // In-flight final revisions remain valid while the user has paused.
     // Preserve them for playback instead of dropping transcript data.
-    seekPending = false;  // 新数据到达，解除 seek 等待
-    if (!msg.text) return;
+    if (msg.translated && seekPending && (msg.end ?? msg.beg) < player.currentTime - .25) return false;
+    seekPending = false;  // 仅目的地相关的新数据解除 seek 等待
+    if (!msg.text) return false;
+    if (msg.translated) {
+      translatedSession = true;
+      if (msg.is_final === false) return false;
+      const knownRevision = captionPresenter.seen.get(String(msg.sentence_id));
+      if (knownRevision != null && (msg.revision || 0) <= knownRevision) return false;
+      fitCaptionWidth();
+      captionPresenter.enqueue(msg);
+    }
     let idx = subs.findIndex(s => sameSubtitle(s, msg));
     if (idx >= 0) {
       // Partial may move its begin timestamp slightly; matching shared word times
       // keeps that revision in one history row and prevents duplicate overlay text.
       const matched = subs[idx];
+      if (matched.isFinal && matched.translated && (msg.revision || 0) <= (matched.revision || 0)) return false;
+      if ((msg.revision || 0) < (matched.revision || 0)) return false;
       matched.beg = msg.beg;
       matched.end = msg.end;
       matched.text = msg.text;
+      matched.sourceText = msg.source_text;
+      matched.revision = msg.revision;
+      matched.translated = msg.translated;
       matched.isFinal = msg.is_final !== false;
       matched.sentenceId = msg.sentence_id ?? matched.sentenceId;
       if (msg.words) matched.words = msg.words;
+      captionSegmentCache.delete(matched);
       updateHistory(matched.historyItem, msg);
       for (let i = subs.length - 1; i >= 0; i--) {
         if (i !== idx && sameSubtitle(matched, subs[i])) {
@@ -720,8 +994,13 @@
       }
     } else {
       // 新句：加入列表与历史
-      const historyItem = appendHistory(msg.beg, msg.end, msg.text);
+      if (subs.length >= MAX_RETAINED_CAPTIONS) {
+        stopAtCaptionCapacity();
+        return false;
+      }
+      const historyItem = appendHistory(msg.beg, msg.end, msg.text, msg.source_text);
       subs.push({ beg: msg.beg, end: msg.end, text: msg.text, words: msg.words || null,
+        sourceText:msg.source_text, translated:msg.translated, revision:msg.revision,
         isFinal: msg.is_final !== false, sentenceId: msg.sentence_id, historyItem });
       logEvent('sub', `beg=${msg.beg.toFixed(1)} ${msg.text.slice(0, 24)}`);
     }
@@ -731,6 +1010,7 @@
         : s.end < msg.beg || (Number.isFinite(msg.end) && s.beg > msg.end));
     }
     syncSubtitle();
+    return true;
   }
 
   function onPreview(msg) {
@@ -749,13 +1029,68 @@
       end: Number.isFinite(msg.end) ? msg.end + offset : msg.end,
       words: msg.words?.map(([beg, end, text]) => [beg + offset,
         Number.isFinite(end) ? end + offset : end, text])};
-    if (msg.type === 'buffer') return {...msg, play_at: msg.play_at + offset};
+    if (msg.type === 'buffer') return {...msg, play_at: msg.play_at + offset,
+      local_silence_from: Number.isFinite(msg.local_silence_from)
+        ? msg.local_silence_from + offset : msg.local_silence_from,
+      local_silence_through: Number.isFinite(msg.local_silence_through)
+        ? msg.local_silence_through + offset : msg.local_silence_through};
     if (msg.type === 'ready' && Number.isFinite(msg.start_at))
       return {...msg, start_at: msg.start_at + offset};
     return msg;
   }
 
-  async function connect(forceUrl, shareToken = null) {
+  function shouldPreserveLiveMedia({automaticRecovery, live, originalCaptionMode,
+                                   sharedViewerActive, hlsPlayer}) {
+    return automaticRecovery === true && live === true && originalCaptionMode === true
+      && sharedViewerActive !== true && !!hlsPlayer;
+  }
+
+  function scopeSessionCaptionIdentity(msg, generation) {
+    if (!msg || !['subtitle', 'caption_remove', 'preview'].includes(msg.type)
+        || msg.sentence_id == null) return msg;
+    return {...msg, sentence_id: `session-${generation}:${String(msg.sentence_id)}`};
+  }
+
+  async function connect(forceUrl, shareToken = null, startAt = 0, options = {}) {
+    const automaticRecovery = options.automaticRecovery === true;
+    const preserveLiveMedia = shouldPreserveLiveMedia({automaticRecovery, live:playbackGuard.live,
+      originalCaptionMode, sharedViewerActive, hlsPlayer});
+    recoveryController.begin({preserveAttempts: automaticRecovery});
+    const generation = ++connectionGeneration;
+    activeMediaClockFlush = null;
+    const historyNotice = document.getElementById('shareHistoryNotice');
+    if (historyNotice) { historyNotice.hidden = true; historyNotice.textContent = ''; }
+    if (!preserveLiveMedia) stoppedHlsLoaderForRecovery = null;
+    if (!preserveLiveMedia) setSourceBuffering(false, 'session_change');
+    cancelPendingLocalSeek();
+    pendingSeekOrigin = null;
+    restoringSeek = null;
+    lastStableMediaPosition = preserveLiveMedia ? player.currentTime
+      : Number.isFinite(startAt) ? startAt : 0;
+    skipReconnectOnNextPlay = false;
+    if (hlsPlayer && !preserveLiveMedia) { const previous = hlsPlayer; hlsPlayer = null; previous.destroy(); }
+    if (!preserveLiveMedia) hlsVideoClockPts = null;
+    cloudResumeRequired = false;
+    pauseStartedAt = null;
+    originalCaptionsComplete = false;
+    if (!preserveLiveMedia) originalCaptionMode = false;
+    if (!preserveLiveMedia) useCaptionBuffer = false;
+    recognitionOnlyStopped = false;
+    if (!preserveLiveMedia) captionHasSpeech = false;
+    document.getElementById('captionActions').hidden = true;
+    document.getElementById('playOnly').hidden = false;
+    const previousCloud = activeCloudSession;
+    const previousShare = activeShareToken;
+    activeCloudSession = null;
+    activeShareToken = null;
+    if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); ws = null; }
+    if (previousCloud) {
+      await cloudRequest('/api/cloud/sessions/' + encodeURIComponent(previousCloud), 'DELETE').catch(() => {});
+    }
+    if (previousShare) {
+      await fetch('/share/stop/' + encodeURIComponent(previousShare), {method:'POST'}).catch(() => {});
+    }
+    if (generation !== connectionGeneration) return;
     sharedViewerActive = !!shareToken;
     viewerInfo = null;
     if (shareToken) {
@@ -774,32 +1109,65 @@
     const url = sharedViewerActive ? (viewerInfo.is_hls ? 'shared.m3u8' : 'shared.mp4')
       : ((typeof forceUrl === 'string' && forceUrl) || urlEl.value).trim();
     if (!url) { setStatus('请输入流地址', true); return; }
+    activeInput = url;
+    cloudPlayback = !sharedViewerActive && engineEl.value === 'aliyun-funasr';
+    originalCaptionMode = cloudPlayback;
+    if (!preserveLiveMedia)
+      playbackGuard.reset({now:performance.now(),live:/\.m3u8/i.test(url) && /^https?:/i.test(url)});
+    pendingStartAt = startAt > 0 ? startAt : null;
     if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
     // m3u 频道列表（ticket-19）：识别为列表则加载频道面板，不直接拉流
     if (/\.m3u($|\?)/i.test(url)) { loadChannels(url); return; }
+    if (/^https?:/i.test(url) && /\.m3u8($|\?)/i.test(url)) {
+      try {
+        const response = await fetch('/channels?url=' + encodeURIComponent(url));
+        if (generation !== connectionGeneration) return;
+        if (response.ok) { loadChannels(url); return; }
+        const result = await response.json();
+        if (!String(result.detail).includes('单路 HLS')) {
+          setStatus(result.detail || '无法读取播放列表', true);
+          return;
+        }
+      } catch (error) { setStatus('来源检查失败：' + error.message, true); return; }
+    }
     logEvent('connect', url.slice(0, 120));
     // 旧会话清理：不关旧 WS 则旧 worker 继续推流串字幕；
     // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
     if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); }
-    subs = [];
-    previewSubs = [];
-    historyItems = [];
-    historyEl.innerHTML = '';
-    playStarted = false;
-    holdingForSync = false;
-    holdingForBuffer = false;
-    playbackLimit = null;
-    uiPaused = false;
+    if (!preserveLiveMedia) captionRevisions = new Map();
+    translatedSession = false;
+    if (!preserveLiveMedia) {
+      captionPresenter.reset();
+      currentEl.dataset.caption = 'empty';
+      subs = [];
+      previewSubs = [];
+      historyItems = [];
+      historyEl.innerHTML = '';
+      document.getElementById('lateCaption').hidden = true;
+      document.getElementById('captionLag').hidden = true;
+      playStarted = false;
+      uiPaused = false;
+      currentEl.textContent = '正在准备字幕…';
+      lastBlockEnd = -1;
+    } else {
+      playStarted = true;
+    }
+    if (!preserveLiveMedia) {
+      holdingForSync = false;
+      holdingForBuffer = false;
+      playbackLimit = null;
+    }
     seekPending = false;
     currentEl.classList.remove('err');
-    currentEl.textContent = '⏳ 字幕准备中，就绪后自动播放（无需点击）';
-    lastBlockEnd = -1;
     const isHls = /\.m3u8/i.test(url);
-    let audioClockPts = null, videoClockPts = null;
+    captionPresenter.live = isHls && (sharedViewerActive || /^https?:/i.test(url));
+    let audioClockPts = null, videoClockPts = preserveLiveMedia ? hlsVideoClockPts : null;
     let timelineMapped = false;
     let mediaOffset = 0;
     const queuedMediaMessages = [];
     function flushMediaClock() {
+      if (preserveLiveMedia && videoClockPts == null && Number.isFinite(hlsVideoClockPts))
+        videoClockPts = hlsVideoClockPts;
       if (audioClockPts == null || videoClockPts == null) return;
       mediaOffset = audioClockPts - videoClockPts;
       // MPEG-TS timestamps wrap after 2^33 ticks at 90 kHz.
@@ -810,12 +1178,36 @@
       logEvent('media_clock', `offset=${mediaOffset.toFixed(3)}s`);
       for (const msg of queuedMediaMessages.splice(0)) receiveMessage(msg);
     }
+    activeMediaClockFlush = flushMediaClock;
     delayEl.disabled = !isHls;
     delayEl.title = isHls
       ? 'HLS 画面和声音相对直播源的整体延迟；延迟期间音频持续送给 ASR'
       : '音视频整体延迟仅适用于 HLS 直播流';
     let params;
     if (!sharedViewerActive) {
+      if (cloudPlayback) {
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        setStatus('正在建立云端识别会话…');
+        try {
+          const ticket = await cloudRequest('/api/cloud/sessions', 'POST', {url, mode:'transcribe', source:sourceLanguageEl.value, start_at:startAt});
+          if (generation !== connectionGeneration) {
+            await cloudRequest('/api/cloud/sessions/' + ticket.session, 'DELETE');
+            return;
+          }
+          activeCloudSession = ticket.session;
+        } catch (error) {
+          if (generation !== connectionGeneration) return;
+          startBtn.style.display = 'inline-block';
+          stopBtn.style.display = 'none';
+          setStatus(error.message, true);
+          currentEl.textContent = error.message;
+          currentEl.classList.add('err');
+          document.getElementById('cloudPanel').open = true;
+          openDialog('settingsDialog');
+          return;
+        }
+      }
       try {
         const response = await fetch('/share/start', {method:'POST',
           headers:{'Content-Type':'application/json'},
@@ -823,6 +1215,10 @@
             delay:isHls ? delayEl.value : '0.1'})});
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        if (generation !== connectionGeneration) {
+          await fetch('/share/stop/' + encodeURIComponent(data.token), {method:'POST'}).catch(() => {});
+          return;
+        }
         activeShareToken = data.token;
         shareAddressEl.replaceChildren();
         (data.urls || [data.url]).forEach(url => {
@@ -835,20 +1231,24 @@
         shareCopyBtn.dataset.url = data.url;
         shareCopyBtn.style.display = 'inline-block';
       } catch (error) {
-        setStatus('无法创建观众链接：' + error.message, true);
-        return;
+        if (!cloudPlayback) { setStatus('无法创建观众链接：' + error.message, true); return; }
+        shareCopyBtn.style.display = 'none';
       }
-      params = new URLSearchParams({url, engine:engineEl.value,
+      if (generation !== connectionGeneration) return;
+      params = cloudPlayback ? new URLSearchParams({session:activeCloudSession, share:activeShareToken || ''})
+        : new URLSearchParams({url, engine:engineEl.value,
         silence:silenceEl.value, delay:isHls ? delayEl.value : '0.1',
         share:activeShareToken});
     }
     ws = new WebSocket(sharedViewerActive
-      ? `ws://${location.host}/share/${encodeURIComponent(shareToken)}/ws?viewer_id=${encodeURIComponent(viewerInfo.viewer_id)}`
-      : `ws://${location.host}/ws?${params}`);
+      ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/share/${encodeURIComponent(shareToken)}/ws?viewer_id=${encodeURIComponent(viewerInfo.viewer_id)}`
+      : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?${params}`);
     startBtn.style.display = 'none';
     stopBtn.style.display = sharedViewerActive ? 'none' : 'inline-block';
     currentEl.classList.remove('err');
-    setStatus('连接中…');
+    if (!preserveLiveMedia) setStatus(cloudPlayback ? '正在识别音频，原文字幕就绪后播放…' : '连接中…');
+    document.getElementById('captionActions').hidden = !cloudPlayback;
+    document.getElementById('retryCaptions').hidden = true;
     // 画面走 video，声音按源类型分流（ticket-19）：HLS 音视频混在 TS 流里，
     // 视频元素直接出声；B站 DASH / 本地文件走隐藏 audio（音视频分离）。
     // 不立即播放：等待后端按所选 HLS 延迟对齐好时间轴。
@@ -861,42 +1261,93 @@
       // HLS（ticket-19）：hls.js 播放——Chrome 原生 HLS 只支持 fMP4 分片，
       // IPTV 直播源几乎全是 MPEG-TS，需 hls.js 转封装成 fMP4 供 MSE 播放；
       // 播放列表/分片均走本地代理（同源，无 CORS/防盗链问题）。
-      if (hlsPlayer) hlsPlayer.destroy();
+      if (!preserveLiveMedia) {
       player.removeAttribute('src');
       player.load();
       // Retain downloaded A/V while ASR finalizes; a ten-second forward buffer
       // and zero back buffer lose media during a long recognition wait.
       hlsPlayer = new Hls({
+        ...disableHlsAutomaticRetries(Hls.DefaultConfig),
         liveSyncDurationCount: 3,
         lowLatencyMode: false,
         maxLiveSyncPlaybackRate: 1,
         maxBufferLength: 120,
         backBufferLength: 120,
         fragLoadingConcurrency: 1,  // 串行拉分片：不与他人（ASR 拉流）抢慢源带宽
-        fragLoadingMaxRetry: 6,
-        manifestLoadingMaxRetry: 6,
-        levelLoadingMaxRetry: 6,
+        fragLoadingMaxRetry: 0,
+        manifestLoadingMaxRetry: 0,
+        levelLoadingMaxRetry: 0,
       });
       hlsPlayer.loadSource(sharedViewerActive ? viewerInfo.video
         : `/video?url=${encodeURIComponent(url)}`);
       hlsPlayer.attachMedia(player);
+      const currentHls = hlsPlayer;
+      const hlsNetworkLoadErrors = new Set([
+        Hls.ErrorDetails.MANIFEST_LOAD_ERROR, Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT,
+        Hls.ErrorDetails.LEVEL_LOAD_ERROR, Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT,
+        Hls.ErrorDetails.FRAG_LOAD_ERROR, Hls.ErrorDetails.FRAG_LOAD_TIMEOUT,
+        Hls.ErrorDetails.KEY_LOAD_ERROR, Hls.ErrorDetails.KEY_LOAD_TIMEOUT,
+        Hls.ErrorDetails.AUDIO_TRACK_LOAD_ERROR, Hls.ErrorDetails.AUDIO_TRACK_LOAD_TIMEOUT,
+        Hls.ErrorDetails.SUBTITLE_LOAD_ERROR, Hls.ErrorDetails.SUBTITLE_TRACK_LOAD_TIMEOUT,
+      ].filter(Boolean));
       hlsPlayer.on(Hls.Events.INIT_PTS_FOUND, (_evt, data) => {
-        if (data.id !== 'main' || videoClockPts != null) return;
+        if (hlsPlayer !== currentHls) return;
+        if (data.id !== 'main' || videoClockPts != null || !Number.isFinite(data.initPTS)
+            || !Number.isFinite(data.timescale) || data.timescale <= 0) return;
         videoClockPts = data.initPTS / data.timescale;
-        flushMediaClock();
+        hlsVideoClockPts = videoClockPts;
+        // A live recovery may keep this HLS instance while replacing the
+        // recognition closure; route late INIT_PTS to the active WS queue.
+        if (typeof activeMediaClockFlush === 'function') activeMediaClockFlush();
       });
       hlsPlayer.on(Hls.Events.ERROR, (_evt, data) => {
-        if (!data.fatal) return;
-        logEvent('hls_error', `${data.type}/${data.details}`);
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && hlsPlayer) {
-          hlsPlayer.startLoad();  // 网络抖动自动重连
-        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hlsPlayer) {
-          hlsPlayer.recoverMediaError();
-        } else {
+        if (hlsPlayer !== currentHls) return;
+        const networkLoadFailure = data.type === Hls.ErrorTypes.NETWORK_ERROR
+          && hlsNetworkLoadErrors.has(data.details);
+        if (!data.fatal && !networkLoadFailure) return;
+        const responseCode = Number.isInteger(data.response?.code) ? ` HTTP ${data.response.code}` : '';
+        logEvent('hls_error', `${data.type}/${data.details}${responseCode}`);
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          currentHls.stopLoad();
+          stoppedHlsLoaderForRecovery = currentHls;
+        }
+        const retryable = data.type === Hls.ErrorTypes.NETWORK_ERROR
+          || data.type === Hls.ErrorTypes.MEDIA_ERROR;
+        const recovery = scheduleSessionRecovery('media', retryable, info => {
+          if (hlsPlayer !== currentHls) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR)
+            resumeStoppedHlsLoaderForRecovery();
+          else currentHls.recoverMediaError();
+        }, connectionGeneration);
+        if (recovery.status === 'scheduled' || recovery.status === 'waiting') return;
+        if (sharedViewerActive) {
+          setStatus(recovery.status === 'exhausted'
+            ? '直播源恢复失败（已重试 2 次），请重新加入或联系主机'
+            : '直播源发生无法自动恢复的错误，请重新加入或联系主机', true);
+          if (hlsPlayer === currentHls) {
+            currentHls.destroy();
+            hlsPlayer = null;
+            stoppedHlsLoaderForRecovery = null;
+          }
+          return;
+        }
+        if (!recognitionOnlyStopped) {
+          showCaptionRecovery(recovery.status === 'exhausted'
+            ? '媒体和识别共用的恢复额度已用完；可重试字幕或仅播放'
+            : '直播源发生无法自动恢复的错误；可重试字幕或仅播放');
+        }
+        if (hlsPlayer === currentHls) {
+          currentHls.destroy();
+          hlsPlayer = null;
+          stoppedHlsLoaderForRecovery = null;
+        }
+        document.getElementById('playOnly').hidden = true;
+        if (!retryable) {
           currentEl.textContent = '⚠ 直播流播放失败（源可能失效，换个频道）';
           currentEl.classList.add('err');
         }
       });
+      }
       player.muted = false;  // HLS 直播：视频元素自带音轨
     } else {
       player.src = sharedViewerActive ? viewerInfo.video
@@ -911,8 +1362,19 @@
       }
     }
 
-    ws.onopen = () => { logEvent('ws_open', ''); setStatus('已连接，引擎加载中…'); };
+    let terminalReceived = false;
+    ws.onopen = () => {
+      logEvent('ws_open', '');
+      if (!preserveLiveMedia) setStatus('已连接，引擎加载中…');
+    };
     function receiveMessage(input) {
+      if (generation !== connectionGeneration || recognitionOnlyStopped) return;
+      // The preserved HLS instance can publish INIT_PTS after this ASR
+      // generation's timeline arrives. Its old connect closure cannot flush
+      // this generation's queue, so let the next message adopt that clock.
+      if (preserveLiveMedia && videoClockPts == null && Number.isFinite(hlsVideoClockPts))
+        flushMediaClock();
+      if (input.type === 'end') terminalReceived = true;
       if (input.type === 'timeline') {
         audioClockPts = input.audio_pts;
         flushMediaClock();
@@ -923,19 +1385,65 @@
         queuedMediaMessages.push(input);
         return;
       }
-      const msg = timelineMapped ? offsetMediaMessage(input, mediaOffset) : input;
-      if (msg.type === 'subtitle') {
-        onSubtitle(msg);
+      let msg = timelineMapped ? offsetMediaMessage(input, mediaOffset) : input;
+      if (preserveLiveMedia) msg = scopeSessionCaptionIdentity(msg, generation);
+      if (msg.type === 'caption_remove') {
+        if (msg.sentence_id != null && Number.isFinite(msg.revision)) {
+          const id = String(msg.sentence_id);
+          if (!reserveCaptionIdentity(id)) return;
+          const revision = msg.revision;
+          const latestRevision = captionRevisions.get(id) ?? -1;
+          if (revision < latestRevision) return;
+          captionRevisions.set(id, Math.max(latestRevision, revision));
+        }
+        const revision = Number.isFinite(msg.revision) ? msg.revision : 0;
+        if ((captionPresenter.seen.get(String(msg.sentence_id)) ?? -1) > revision) return;
+        captionPresenter.remove(msg.sentence_id, revision);
+        playbackGuard.removeCaption(msg.sentence_id);
+        const removed = new Set(subs.filter(s => s.sentenceId === msg.sentence_id).map(s => s.historyItem));
+        removed.forEach(item => item?.remove());
+        historyItems = historyItems.filter(item => !removed.has(item));
+        subs = subs.filter(s => s.sentenceId !== msg.sentence_id);
+        previewSubs = previewSubs.filter(s => s.sentenceId !== msg.sentence_id);
+        syncSubtitle();
+      } else if (msg.type === 'subtitle') {
+        const accepted = onSubtitle(msg);
+        if (accepted) {
+          if (!msg.translated) {
+            const beg = Number.isFinite(msg.beg) ? msg.beg : msg.words?.[0]?.[0];
+            const end = msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg;
+            playbackGuard.captionProgress(msg.sentence_id, beg, end, performance.now());
+            if (originalCaptionMode && msg.is_final !== false) markSessionRecoveryProgress(end);
+          }
+          if (msg.text) {
+            const firstSpeech = !captionHasSpeech;
+            captionHasSpeech = true;
+            if (firstSpeech && originalCaptionMode && playStarted && !playbackGuard.degraded && !holdingForBuffer)
+              setStatus('已识别到语音，原文字幕已就绪');
+          }
+        }
       } else if (msg.type === 'preview') {
         onPreview(msg);
       } else if (msg.type === 'buffer') {
+        if (Number.isFinite(msg.local_silence_from) && Number.isFinite(msg.local_silence_through)) {
+          playbackGuard.verifiedSilence(msg.local_silence_from, msg.local_silence_through, performance.now());
+          markSessionRecoveryProgress(msg.local_silence_through);
+        }
         if (!sharedViewerActive) {
           playbackLimit = Number.isFinite(msg.play_at) ? msg.play_at : playbackLimit;
           syncPlaybackToBuffer();
         }
       } else if (msg.type === 'ready') {
+        originalCaptionMode = !!msg.original;
+        useCaptionBuffer = !!msg.buffered;
+        if (msg.progressive) {
+          cloudPlayback = true;
+          playbackLimit = null;
+          setStatus('播放已开始，正在识别并翻译；当前句可能修订');
+        }
         // 音视频一起从输入进度前方 delay 秒启动；后续 buffer 消息持续控制播放上限。
-        if (!sharedViewerActive && isHls && Number.isFinite(msg.start_at)) {
+        if (!preserveLiveMedia && !sharedViewerActive && isHls
+            && !(playbackGuard.live && playStarted) && Number.isFinite(msg.start_at)) {
           aligningInitialPlayback = true;
           try { player.currentTime = Math.max(0, msg.start_at); }
           catch (e) { logEvent('sync_seek_error', String(e)); }
@@ -944,39 +1452,120 @@
         }
         playStarted = true;
         holdingForSync = false;
-        if (currentEl.textContent.includes('字幕准备中')) currentEl.textContent = '';
-        setStatus('字幕已就绪，开始播放');
-        logEvent('ready', `音视频延迟=${msg.delay}s，开始播放`);
-        player.play().catch(() => {});
+        if (currentEl.textContent.includes('准备字幕')) currentEl.textContent = '';
+        if (!preserveLiveMedia) setStatus(msg.silent ? '暂未识别到语音，继续播放' : msg.original ? '原文字幕已就绪，开始播放' : msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
+        logEvent('ready', `附加播放缓冲=${msg.delay}s，开始播放`);
+        if (!uiPaused && !holdingForBuffer) player.play().catch(() => {});
         // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 时间轴损坏时，
         // 视频可能长时间 waiting/不前进却无 error 事件（无声卡死）——2s 轮询，
         // 就绪后 15s 内 t 从未前进（>0.5s）则判定源不可播，明确提示换源
         stallWatchdog();
       } else if (msg.type === 'status') {
-        setStatus(msg.message);
+        if (!showShareHistoryWarning(msg)) setStatus(msg.message);
       } else if (msg.type === 'log') {
         logEvent('server', msg.line);  // 服务端后台日志（ticket-14）
       } else if (msg.type === 'error') {
+        if (showShareHistoryWarning(msg)) return;
+        if (msg.failure_category === 'capacity') {
+          void cancelCaptionProcessing(msg.message || '字幕记录达到安全容量上限，识别已停止',
+            true, true);
+          return;
+        }
+        if (originalCaptionMode && !sharedViewerActive) {
+          const recovery = scheduleSessionRecovery('recognition', msg.retryable === true, () => {
+            if (uiPaused && !/^https?:/i.test(activeInput)) {
+              cloudResumeRequired = true;
+              setStatus('识别连接暂时中断；继续播放时会按恢复预算重新连接');
+              return;
+            }
+            connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
+              {automaticRecovery:true});
+          }, generation);
+          if (recovery.status === 'scheduled' || recovery.status === 'waiting') {
+            if (playbackGuard.live) setStatus('识别连接暂时中断，直播画面继续播放…');
+            return;
+          }
+          if (recovery.status === 'exhausted') {
+            showRecognitionFailure('媒体和识别共用的恢复额度已用完：' + msg.message);
+            return;
+          }
+          if (msg.retryable === true && holdCaptionForCloudReconnect()) return;
+          showRecognitionFailure('语音识别失败：' + msg.message);
+          return;
+        }
+        if (holdCaptionForCloudReconnect()) return;
         currentEl.textContent = '⚠ ' + msg.message;
         currentEl.classList.add('err');
         setStatus('出错', true);
         playStarted = true;  // 解除播放拦截，允许手动看片（无字幕）
       } else if (msg.type === 'end') {
-        if (!currentEl.classList.contains('err')) setStatus('音频处理结束');
+        const processingComplete = msg.reason === 'completed';
+        playbackGuard.done = processingComplete;
+        document.getElementById('captionActions').hidden = processingComplete;
+        document.getElementById('retryCaptions').hidden = processingComplete;
+        originalCaptionsComplete = processingComplete && originalCaptionMode && !isHls
+          && !currentEl.classList.contains('err');
+        if (cloudResumeRequired) setStatus('识别连接已关闭；继续播放时将从暂停位置重新连接');
+        else if (!currentEl.classList.contains('err')) {
+          setStatus(originalCaptionsComplete ? '原文字幕已生成，可播放或跳转'
+            : processingComplete ? '音频处理结束'
+            : msg.reason === 'cancelled' ? '识别已取消；已准备字幕仍可回看'
+            : msg.reason === 'error' ? '识别未完成，可重试或仅播放'
+            : '识别结束状态未确认，可重试或仅播放');
+        }
+        if (recoveryController.pending) {
+          setStatus(`识别连接已结束，${recoveryController.pending.delayMs / 1000} 秒后继续恢复（${recoveryController.pending.attempt}/${recoveryController.maxAttempts}）…`);
+        }
         playStarted = true;  // 同上（静默视频等零字幕场景）
-        // Source/API 已结束，没有更多 ASR 水位可以更新；播放剩余已缓冲的 A/V。
-        playbackLimit = Infinity;
-        if (holdingForBuffer && !uiPaused) {
+        // Only a successful drain proves there is no more ASR waterline to wait for.
+        if (processingComplete) playbackLimit = Infinity;
+        if (processingComplete && holdingForBuffer && !uiPaused) {
           holdingForBuffer = false;
           player.play().catch(() => {});
         }
-        ws.close();
+        ws.close(1000, 'terminal-end');
       }
     }
     ws.onmessage = (e) => receiveMessage(JSON.parse(e.data));
-    ws.onerror = () => { logEvent('ws_error', '连接失败'); setStatus('连接失败', true); };
+    function scheduleRecognitionSocketRecovery(exhaustedMessage) {
+      const recovery = scheduleSessionRecovery('recognition', true, () => {
+        connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime,
+          {automaticRecovery:true});
+      }, generation);
+      if (recovery.status === 'scheduled' || recovery.status === 'waiting') {
+        if (playbackGuard.live) setStatus('识别连接暂时中断，直播画面继续播放…');
+      } else if (recovery.status === 'exhausted') {
+        showRecognitionFailure(exhaustedMessage);
+      }
+      return recovery;
+    }
+    ws.onerror = () => {
+      if (terminalReceived) return;
+      logEvent('ws_error', '连接失败');
+      if (originalCaptionMode && !sharedViewerActive) {
+        const recovery = scheduleRecognitionSocketRecovery(
+          '识别连接失败，自动恢复额度已用完；可手动重试或仅播放');
+        if (recovery.status === 'scheduled' || recovery.status === 'waiting'
+            || recovery.status === 'exhausted') return;
+        setStatus('连接失败', true);
+        return;
+      }
+      setStatus('连接失败', true);
+    };
     ws.onclose = (event) => {
       logEvent('ws_close', '');
+      if (!terminalReceived && event.code !== 1000 && originalCaptionMode && !sharedViewerActive
+          && !recognitionOnlyStopped && !recoveryController.cancelled) {
+        const recovery = scheduleRecognitionSocketRecovery(
+          '识别连接异常关闭，自动恢复额度已用完；可手动重试或仅播放');
+        if (recovery.status === 'scheduled' || recovery.status === 'waiting'
+            || recovery.status === 'exhausted') return;
+      }
+      // A terminal worker event can close the socket while its already-scheduled
+      // recovery is still waiting. Keep Stop and Only-play available so the user
+      // can cancel that timer before it opens another recognition session.
+      if (!sharedViewerActive && originalCaptionMode && recoveryController.pending
+          && !recoveryController.cancelled && !recognitionOnlyStopped) return;
       if (sharedViewerActive) {
         if (event.code === 4429) setStatus('观众人数已满（最多 3 台设备），请稍后再试', true);
         else if (!currentEl.classList.contains('err')) setStatus('直播已结束或连接已断开');
@@ -991,23 +1580,51 @@
   }
 
   function syncPlaybackToBuffer() {
-    if (!playStarted || playbackLimit == null || !/\.m3u8/i.test(urlEl.value.trim())) return;
+    if (cloudPlayback && originalCaptionMode) {
+      const action = playbackGuard.tick({now:performance.now(), time:player.currentTime,
+        limit:(useCaptionBuffer || playbackGuard.live) ? playbackLimit : null,
+        ready:playStarted, userPaused:uiPaused, sourceBuffering:sourceBufferingSince != null});
+      if (action === 'timeout') { showRecognitionFailure('识别 15 秒没有进展，已停止新音频处理。可重试或仅播放。'); return; }
+      if (action === 'hold') {
+        holdingForBuffer = true;
+        audioEl.pause();
+        player.pause();
+        setStatus('等待当前片段的原文字幕…');
+      } else if (action === 'resume' || action === 'degrade') {
+        holdingForBuffer = false;
+        // Live HLS can have a healthy media buffer before the first ASR `ready`
+        // event. Once its bounded caption wait releases, allow the player event
+        // handler to start the source instead of blocking it on that same event.
+        if (!playStarted && playbackGuard.live) playStarted = true;
+        if (!uiPaused) player.play().catch(() => {});
+        setStatus(action === 'degrade' ? '字幕暂不可用，部分缺失；媒体继续播放，完整结果见记录' : captionHasSpeech ? '字幕已就绪，继续播放' : '暂未识别到语音，继续播放');
+      } else if (action === 'recovered') setStatus('原文字幕已追上当前播放位置');
+      return;
+    }
+    if (cloudPlayback || !playStarted || playbackLimit == null || !/\.m3u8/i.test(urlEl.value.trim())) return;
     const t = player.currentTime;
     if (!player.paused && t >= playbackLimit - 0.03) {
       holdingForBuffer = true;
-      player.pause(); // HLS 音频在同一 video 元素上，一并暂停
+      player.pause();
       setStatus('等待下一段字幕确认…');
-      logEvent('buffer_hold', `t=${t.toFixed(2)} limit=${playbackLimit.toFixed(2)}`);
     } else if (player.paused && holdingForBuffer && playbackLimit - t >= 1.0) {
       holdingForBuffer = false;
       player.play().catch(() => {});
       setStatus('字幕已就绪，继续播放');
-      logEvent('buffer_resume', `t=${t.toFixed(2)} limit=${playbackLimit.toFixed(2)}`);
     }
   }
   // 字幕整句快照 + 连续音视频延迟闸门。
   setInterval(() => { syncSubtitle(); syncPlaybackToBuffer(); }, 100);
   player.addEventListener('seeked', syncSubtitle);
+  player.addEventListener('seeking', () => {
+    if (aligningInitialPlayback || restoringSeek) return;
+    if (pendingSeekOrigin == null)
+      pendingSeekOrigin = pendingLocalSeek?.origin ?? lastStableMediaPosition;
+  });
+  player.addEventListener('timeupdate', () => {
+    if (!player.seeking && !pendingLocalSeek && !restoringSeek)
+      lastStableMediaPosition = player.currentTime;
+  });
   // 本地文件容器/编码不受浏览器支持（如 .mkv）时 <video> 静默失败成黑屏
   // ticket-16：完整错误入日志（code/message/src/状态），code>0 即停会话（音频+API 停）
   player.addEventListener('error', () => {
@@ -1027,17 +1644,51 @@
     }
   });
   // 视频诊断（ticket-11/16）：stalled/waiting 等不触发 error 的状态也写入会话日志
+  function setSourceBuffering(active, eventName) {
+    if (active) {
+      if (sourceBufferingSince != null) return;
+      sourceBufferingSince = performance.now();
+      sourceBufferStatusEl.hidden = false;
+      sourceBufferStatusEl.textContent = '直播源缓冲中…';
+      logEvent('source_buffering_start', `event=${eventName} media_t=${player.currentTime.toFixed(3)}s`);
+      return;
+    }
+    if (sourceBufferingSince == null) return;
+    const durationMs = Math.max(0, performance.now() - sourceBufferingSince);
+    sourceBufferingSince = null;
+    sourceBufferStatusEl.hidden = true;
+    sourceBufferStatusEl.textContent = '';
+    logEvent('source_buffering_end', `event=${eventName} duration_ms=${Math.round(durationMs)} media_t=${player.currentTime.toFixed(3)}s`);
+  }
   ['stalled', 'waiting', 'suspend', 'emptied', 'abort'].forEach((evt) => {
     player.addEventListener(evt, () => {
       const err = player.error ? ` code=${player.error.code}` : '';
       logEvent(`video_${evt}`, `ready=${player.readyState} net=${player.networkState}${err}`);
+      if (evt === 'waiting') setSourceBuffering(true, evt);
     });
   });
+  player.addEventListener('playing', () => setSourceBuffering(false, 'playing'));
+  player.addEventListener('canplay', () => setSourceBuffering(false, 'canplay'));
   player.addEventListener('loadedmetadata', () => {
+    if (pendingStartAt != null) {
+      aligningInitialPlayback = true;
+      player.currentTime = pendingStartAt;
+      audioEl.currentTime = pendingStartAt;
+      pendingStartAt = null;
+    }
+    lastStableMediaPosition = player.currentTime;
     logEvent('video_ok', `dur=${(player.duration || 0).toFixed(1)}s`);
   });
   // 播放联动：video 控制画面与进度，audio 跟随出声；暂停时前后端都冻结（真正停止解析）
   player.addEventListener('play', () => {
+    if (recognitionOnlyStopped && playStarted) { uiPaused = false; pauseStartedAt = null; audioEl.play().catch(() => {}); return; }
+    if (skipReconnectOnNextPlay) {
+      skipReconnectOnNextPlay = false;
+      pauseStartedAt = null;
+    } else {
+      if (resumeClosedCloudAfterPause()) return;
+      pauseStartedAt = null;
+    }
     if (!playStarted) {
       // 字幕未就绪时手动播放会让视频领先 ASR 一段固定偏移，时间窗永远不匹配
       // → 叠加字幕全程空白（用户 bug）。拦截：暂停，等首条字幕后统一自动播放。
@@ -1054,26 +1705,134 @@
     logEvent('play', `t=${player.currentTime.toFixed(1)}`);
   });
   player.addEventListener('pause', () => {
+    if (player.ended) {
+      audioEl.pause();
+      // EOF is not a user pause: let the decoder/API drain its final result.
+      return;
+    }
     if (holdingForSync || holdingForBuffer) return;  // 缓冲闸门暂停不冻结 ASR
+    pauseStartedAt = performance.now();
     uiPaused = true;  // 立即冻结前端显示（丢弃在途 partial）
     audioEl.pause();
     if (ws && ws.readyState === 1) ws.send('pause');
     logEvent('pause', `t=${player.currentTime.toFixed(1)}`);
   });
   player.addEventListener('seeked', () => {
-    audioEl.currentTime = player.currentTime;
+    const destination = player.currentTime;
+    if (restoringSeek && Math.abs(destination - restoringSeek.position) < 0.1) {
+      finishLocalSeekRestore();
+      return;
+    }
+    const origin = pendingLocalSeek?.origin ?? pendingSeekOrigin ?? lastStableMediaPosition;
+    const resumeAfterCancel = pendingLocalSeek?.resumeAfterCancel ?? (!uiPaused && !player.paused);
+    pendingSeekOrigin = null;
+    lastStableMediaPosition = destination;
+    captionPresenter.reset();
+    document.getElementById('lateCaption').hidden = true;
+    audioEl.currentTime = destination;
     if (aligningInitialPlayback) {
       aligningInitialPlayback = false;
       seekPending = false;
-      logEvent('sync_seeked', `t=${player.currentTime.toFixed(1)}`);
+      logEvent('sync_seeked', `t=${destination.toFixed(1)}`);
       syncSubtitle();
+      return;
+    }
+    if (recognitionOnlyStopped || originalCaptionsComplete) {
+      cancelPendingLocalSeek();
+      seekPending = false;
+      syncSubtitle();
+      return;
+    }
+    if (cloudPlayback && !sharedViewerActive && activeInput && !/^https?:/i.test(activeInput)) {
+      if (preparedLocalPosition(destination)) {
+        const resume = pendingLocalSeek?.resumeAfterCancel;
+        cancelPendingLocalSeek();
+        holdingForSync = false;
+        seekPending = false;
+        syncSubtitle();
+        logEvent('seek_reuse', `t=${destination.toFixed(1)}`);
+        if (resume && player.paused) {
+          skipReconnectOnNextPlay = true;
+          player.play().catch(() => {});
+        }
+        return;
+      }
+      seekPending = true;
+      currentEl.textContent = '⏳ 等待确认跳转；原字幕处理已暂停…';
+      requestLocalSeekRestart(destination, origin, resumeAfterCancel);
       return;
     }
     seekPending = true;  // 跳转后清空当前句显示，等新数据（ADR-0001）
     currentEl.textContent = '⏳ 跳转中，字幕将随转写跟进…';
-    logEvent('seek', `t=${player.currentTime.toFixed(1)}`);
+    logEvent('seek', `t=${destination.toFixed(1)}`);
   });
 
+  async function cancelCaptionProcessing(message, onlyPlay = false, preserveCaptions = false) {
+    const generation = ++connectionGeneration;
+    recoveryController.cancel();
+    cancelPendingLocalSeek();
+    pendingSeekOrigin = null;
+    restoringSeek = null;
+    skipReconnectOnNextPlay = false;
+    recognitionOnlyStopped = true;
+    playbackGuard.done = true;
+    cloudResumeRequired = false;
+    pauseStartedAt = null;
+    cloudPlayback = false;
+    originalCaptionsComplete = false;
+    holdingForSync = false;
+    holdingForBuffer = false;
+    playStarted = onlyPlay;
+    playbackLimit = null;
+    const token = activeCloudSession, share = activeShareToken;
+    activeCloudSession = null;
+    activeShareToken = null;
+    if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); ws = null; }
+    player.pause(); audioEl.pause();
+    if (!preserveCaptions) {
+      subs = []; previewSubs = []; captionPresenter.reset();
+      currentEl.textContent = ''; currentEl.classList.remove('err');
+    }
+    if (token) await cloudRequest('/api/cloud/sessions/' + encodeURIComponent(token), 'DELETE').catch(() => {});
+    if (share) await fetch('/share/stop/' + encodeURIComponent(share), {method:'POST'}).catch(() => {});
+    if (generation !== connectionGeneration) return;
+    startBtn.style.display = 'inline-block'; stopBtn.style.display = 'none';
+    shareCopyBtn.style.display = 'none'; shareAddressEl.hidden = true;
+    setStatus(message);
+    if (onlyPlay) { document.getElementById('captionActions').hidden = true; player.play().catch(() => {}); }
+  }
+  function showCaptionRecovery(message) {
+    document.getElementById('captionActions').hidden = false;
+    document.getElementById('retryCaptions').hidden = false;
+    void cancelCaptionProcessing(message);
+  }
+  function showRecognitionFailure(message) {
+    if (!playbackGuard.live || !originalCaptionMode || sharedViewerActive) {
+      showCaptionRecovery(message);
+      return;
+    }
+    document.getElementById('captionActions').hidden = false;
+    document.getElementById('retryCaptions').hidden = false;
+    ++connectionGeneration;
+    recoveryController.cancel();
+    cancelPendingLocalSeek();
+    recognitionOnlyStopped = true;
+    playbackGuard.done = true;
+    cloudResumeRequired = false;
+    pauseStartedAt = null;
+    holdingForSync = false;
+    holdingForBuffer = false;
+    playStarted = true;
+    playbackLimit = null;
+    const token = activeCloudSession;
+    activeCloudSession = null;
+    if (ws) { ws.onmessage = null; ws.onerror = null; ws.onclose = null; ws.close(); ws = null; }
+    setStatus(`原文字幕部分缺失或暂不可用，直播媒体继续播放；${message}`);
+    if (token) void cloudRequest('/api/cloud/sessions/' + encodeURIComponent(token), 'DELETE').catch(() => {});
+    if (!uiPaused && player.paused) player.play().catch(() => {});
+  }
+  document.getElementById('retryCaptions').onclick = () => connect(activeInput, null, /^https?:/i.test(activeInput) ? 0 : player.currentTime);
+  document.getElementById('playOnly').onclick = () => cancelCaptionProcessing('仅播放；字幕暂不可用，识别已停止', true);
   startBtn.onclick = connect;
   shareCopyBtn.onclick = async () => {
     const url = shareCopyBtn.dataset.url;
@@ -1087,26 +1846,64 @@
   };
   shareAddressEl.onchange = () => { shareCopyBtn.dataset.url = shareAddressEl.value; };
   stopBtn.onclick = async () => {
-    if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
-    if (activeShareToken) {
-      await fetch(`/share/stop/${encodeURIComponent(activeShareToken)}`, {method:'POST'}).catch(() => {});
-      activeShareToken = null;
-      shareCopyBtn.style.display = 'none';
-      shareAddressEl.hidden = true;
-    }
-    if (ws) ws.close();
-    if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+    const generation = ++connectionGeneration;
+    recoveryController.cancel();
+    setSourceBuffering(false, 'session_stop');
+    cancelPendingLocalSeek();
+    pendingSeekOrigin = null;
+    restoringSeek = null;
+    skipReconnectOnNextPlay = false;
+    playbackGuard.done = true;
+    cloudPlayback = false;
+    originalCaptionMode = false;
+    recognitionOnlyStopped = true;
+    document.getElementById('captionActions').hidden = true;
+    cloudResumeRequired = false;
+    pauseStartedAt = null;
+    const stoppedCloud = activeCloudSession;
+    const stoppedShare = activeShareToken;
+    activeCloudSession = null;
+    activeShareToken = null;
+    if (ws) { ws.onmessage = null; ws.onclose = null; ws.close(); ws = null; }
     player.pause();
     audioEl.pause();
-    setStatus('已停止');
+    activeInput = '';
+    currentEl.dataset.caption = 'empty';
+    captionPresenter.reset();
+    translatedSession = false;
+    playStarted = false;
+    document.getElementById('lateCaption').hidden = true;
+    currentEl.textContent = '';
+    document.getElementById('emptyState').hidden = true;
+    currentEl.classList.remove('err');
+    startBtn.style.display = 'inline-block';
+    stopBtn.style.display = 'none';
+    shareCopyBtn.style.display = 'none';
+    shareAddressEl.hidden = true;
+    setStatus('正在停止云端处理…');
+    if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
+    activeMediaClockFlush = null;
+    if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+    stoppedHlsLoaderForRecovery = null;
+    player.removeAttribute('src');
+    player.load();
+    audioEl.removeAttribute('src');
+    audioEl.load();
+    if (stoppedCloud) {
+      await cloudRequest('/api/cloud/sessions/' + encodeURIComponent(stoppedCloud), 'DELETE').catch(() => {});
+    }
+    if (stoppedShare) {
+      await fetch(`/share/stop/${encodeURIComponent(stoppedShare)}`, {method:'POST'}).catch(() => {});
+    }
+    if (generation === connectionGeneration) setStatus('已停止');
   };
   const sharedPath = location.pathname.match(/^\/share\/([^/]+)$/);
   if (sharedPath) {
     sharedViewerActive = true;
     document.title = '直播字幕';
-    document.querySelector('header h1').textContent = '📺 直播字幕（观众）';
+    document.querySelector('header h1').textContent = '直播字幕（观众）';
     ['url', 'engine', 'silence', 'delay', 'uploadBtn', 'start', 'stop', 'shareCopy', 'shareAddress',
-      'logBtn', 'chBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
+      'logBtn', 'chBtn', 'cloudPanel', 'sourceLanguage', 'bilingual'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
     document.getElementById('status').textContent = '正在加入直播…';
     connect(null, decodeURIComponent(sharedPath[1]));
   }
@@ -1134,6 +1931,37 @@
     fileEl.value = '';
   });
   urlEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+
+  function openDialog(id) {
+    document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    document.getElementById(id).showModal();
+  }
+  document.getElementById('settingsBtn').onclick = () => openDialog('settingsDialog');
+  document.getElementById('historyBtn').onclick = () => openDialog('historyDialog');
+  document.querySelectorAll('[data-close]').forEach(button => { button.onclick = () => document.getElementById(button.dataset.close).close(); });
+  document.querySelectorAll('[data-pane]').forEach(button => { button.onkeydown = event => {
+    if (!['ArrowLeft','ArrowRight'].includes(event.key)) return;
+    const tabs = [...document.querySelectorAll('[data-pane]')];
+    const next = tabs[(tabs.indexOf(button) + (event.key === 'ArrowRight' ? 1 : 2)) % tabs.length];
+    next.click(); next.focus(); event.preventDefault();
+  }; button.onclick = () => {
+    document.querySelectorAll('[data-pane]').forEach(tab => tab.setAttribute('aria-selected', String(tab === button)));
+    ['cloudSettings','captionSettings','moreSettings'].forEach(id => { document.getElementById(id).hidden = id !== button.dataset.pane; });
+  }; });
+  logBtn.onclick = () => { logPanel.hidden = false; logText.value = logBuffer.join('\n'); openDialog('logsDialog'); };
+  chBtn.onclick = () => openDialog('channelsDialog');
+  document.getElementById('loadChannelsBtn').onclick = () => loadChannels(urlEl.value.trim());
+  document.getElementById('fullscreenBtn').onclick = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.getElementById('playerWrap').requestFullscreen();
+    } catch (_) { setStatus('浏览器未允许全屏，请使用浏览器全屏菜单', true); }
+  };
+  document.getElementById('exitFullscreenBtn').onclick = () => document.exitFullscreen().catch(() => {});
+  player.addEventListener('loadeddata', () => { document.getElementById('emptyState').hidden = true; });
+  document.getElementById('logsDialog').addEventListener('close', () => { logPanel.hidden = true; });
+
+  if (!sharedPath) refreshCloud();
 </script>
 </body>
 </html>
