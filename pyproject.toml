@@ -28,9 +28,11 @@ dependencies = [
     "concurrent-log-handler>=0.9.25",
     "dashscope>=1.25.0",
     "fastapi>=0.110.0",
+    "httpx>=0.27.0",
     "librosa>=0.10.0",
     "numpy>=1.24.0",
     "python-multipart>=0.0.12",
+    "yt-dlp>=2024.10.7",
     "uvicorn[standard]>=0.27.0",
 ]
 

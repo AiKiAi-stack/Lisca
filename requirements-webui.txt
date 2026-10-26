@@ -1,0 +1,9 @@
+# Cloud WebUI only; no local GPU model or system FFmpeg installation required.
+av>=14.0.1
+dashscope>=1.25.0
+numpy>=1.24.0
+httpx>=0.27.0
+fastapi>=0.110.0
+python-multipart>=0.0.12
+uvicorn[standard]>=0.27.0
+yt-dlp>=2024.10.7
