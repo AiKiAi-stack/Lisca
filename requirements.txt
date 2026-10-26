@@ -4,4 +4,7 @@ librosa
 numpy
 concurrent-log-handler
 fastapi
+httpx>=0.27.0
+python-multipart>=0.0.12
+yt-dlp
 uvicorn[standard]
