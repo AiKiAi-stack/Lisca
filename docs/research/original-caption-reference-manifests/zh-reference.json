@@ -1,0 +1,623 @@
+{
+  "schema_version": 1,
+  "dataset": "AISHELL/AISHELL-3@f20d5db4a31fe779ef07bb1af4ea92da5c786622#train",
+  "config": "language=zh; role=reference; speaker_id=SSB0005; ordered_source_utterance_sha256=39865446240193b7737b67d487986b3afe5fd54fe5639ae6f3c28511b78a4653",
+  "sha256": "d40bb3a49d88cf35f52574650d593573048f89f95aba09b704b2fdbe25811317",
+  "seconds": 316.619,
+  "items": [
+    {
+      "reference": "广州女大学生登山失联四天警方找到疑似女尸",
+      "source_id": "SSB00050001",
+      "source_sha256": "bb61e8e29f25fa6ad9702eb42be6fd81b82e7a55df4066e6afde21dadaf8b927",
+      "source_path": "train/wav/SSB0005/SSB00050001.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 9.4443125,
+      "asset_start_seconds": 0.0,
+      "asset_end_seconds": 9.4443125
+    },
+    {
+      "reference": "尊重科学规律的要求",
+      "source_id": "SSB00050002",
+      "source_sha256": "409f5608d8bbc482334836d765458d543a8252d01fe399ec665a0791a61b8700",
+      "source_path": "train/wav/SSB0005/SSB00050002.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.5359375,
+      "asset_start_seconds": 9.6943125,
+      "asset_end_seconds": 13.23025
+    },
+    {
+      "reference": "七路无人售票",
+      "source_id": "SSB00050003",
+      "source_sha256": "b286369e3e3c3d1e98351c60e7ad2bf76e6c83ecc0db722d66c214cdc26b58af",
+      "source_path": "train/wav/SSB0005/SSB00050003.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 2.709,
+      "asset_start_seconds": 13.48025,
+      "asset_end_seconds": 16.18925
+    },
+    {
+      "reference": "黑客宣布只要拨打某一个电话",
+      "source_id": "SSB00050004",
+      "source_sha256": "8ebd213c77adf159ffa19d2da0e5784a74078e694d47a0e250f2267efe76391c",
+      "source_path": "train/wav/SSB0005/SSB00050004.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.438,
+      "asset_start_seconds": 16.43925,
+      "asset_end_seconds": 20.87725
+    },
+    {
+      "reference": "北京万科总经理刘肖的观点极具代表性",
+      "source_id": "SSB00050005",
+      "source_sha256": "f2fea010dd07c994f93e6075fa4599afcbab08f2e6655fcd886c0f303ad58f02",
+      "source_path": "train/wav/SSB0005/SSB00050005.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 6.486,
+      "asset_start_seconds": 21.12725,
+      "asset_end_seconds": 27.61325
+    },
+    {
+      "reference": "五百四十五万七千一百二十二",
+      "source_id": "SSB00050006",
+      "source_sha256": "a1f7bd3433731ddab9cd52abbcceb6f73fefd9b95ffa4251be96f62d39580208",
+      "source_path": "train/wav/SSB0005/SSB00050006.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.027,
+      "asset_start_seconds": 27.86325,
+      "asset_end_seconds": 32.89025
+    },
+    {
+      "reference": "广州大学城女尸案嫌疑犯变供称死者为女友",
+      "source_id": "SSB00050007",
+      "source_sha256": "f7c2e359847af780ebfea6d06a170d38ac5d4cd5e91b51b7cd98216a11d32bc0",
+      "source_path": "train/wav/SSB0005/SSB00050007.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 8.2690625,
+      "asset_start_seconds": 33.14025,
+      "asset_end_seconds": 41.4093125
+    },
+    {
+      "reference": "搜狐娱乐讯据台湾媒体报道",
+      "source_id": "SSB00050008",
+      "source_sha256": "b804d68a8cd5a0b260aa32897f59c94f1aad1df7ed0d81fbfc96b413c2fce75d",
+      "source_path": "train/wav/SSB0005/SSB00050008.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.9050625,
+      "asset_start_seconds": 41.6593125,
+      "asset_end_seconds": 46.564375
+    },
+    {
+      "reference": "北郊",
+      "source_id": "SSB00050009",
+      "source_sha256": "762c18488eb8447d27d477555fc6b9a224bb4daef7323e1bfdcbaa7aa8e10f8a",
+      "source_path": "train/wav/SSB0005/SSB00050009.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 1.68,
+      "asset_start_seconds": 46.814375,
+      "asset_end_seconds": 48.494375
+    },
+    {
+      "reference": "职业联赛该干的让职业联赛干",
+      "source_id": "SSB00050010",
+      "source_sha256": "2f4da532eeda7657f7c2ae2d4889f183bbc7382e5eb84e6975158a235f2d1d9c",
+      "source_path": "train/wav/SSB0005/SSB00050010.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.2490625,
+      "asset_start_seconds": 48.744375,
+      "asset_end_seconds": 53.9934375
+    },
+    {
+      "reference": "娱乐天空",
+      "source_id": "SSB00050011",
+      "source_sha256": "f538458e64bfd2286c1b774a2c5300722ca0e71b2b339c6f04aecc0836f8bc5e",
+      "source_path": "train/wav/SSB0005/SSB00050011.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 2.354,
+      "asset_start_seconds": 54.2434375,
+      "asset_end_seconds": 56.5974375
+    },
+    {
+      "reference": "儿子趁机玩儿爸爸的手机",
+      "source_id": "SSB00050012",
+      "source_sha256": "ff618cb1573fa75f7987c29062f7f73188cb49c3ac027517a5061c89e25aeabd",
+      "source_path": "train/wav/SSB0005/SSB00050012.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.3671875,
+      "asset_start_seconds": 56.8474375,
+      "asset_end_seconds": 61.214625
+    },
+    {
+      "reference": "未来广州将把高铁引进市区",
+      "source_id": "SSB00050013",
+      "source_sha256": "be9b685554387c5c6bfe17fb7af3230f4a096244415ba7cd6be3619ce5461f9c",
+      "source_path": "train/wav/SSB0005/SSB00050013.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.8041875,
+      "asset_start_seconds": 61.464625,
+      "asset_end_seconds": 66.2688125
+    },
+    {
+      "reference": "将于十一月二十一日早七点在东方明珠塔下跑起",
+      "source_id": "SSB00050014",
+      "source_sha256": "01346e01b6bf135b396cab21fa9a2740b1f29ec052042103167e4ccb915b2cf7",
+      "source_path": "train/wav/SSB0005/SSB00050014.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 7.3769375,
+      "asset_start_seconds": 66.5188125,
+      "asset_end_seconds": 73.89575
+    },
+    {
+      "reference": "经广州日报报道后成为了社会热点",
+      "source_id": "SSB00050015",
+      "source_sha256": "a9307af137a1cfb7e6b1312ba60cc9b3466ebd45c0dd563af80c5ec2226ac079",
+      "source_path": "train/wav/SSB0005/SSB00050015.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.4409375,
+      "asset_start_seconds": 74.14575,
+      "asset_end_seconds": 79.5866875
+    },
+    {
+      "reference": "反倒会伤害国家队的长远利益",
+      "source_id": "SSB00050016",
+      "source_sha256": "0f73b83869c0ff2655ee513bda19f3a91acdee3a4c5fd04e4036d5fcfafe19e3",
+      "source_path": "train/wav/SSB0005/SSB00050016.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.266125,
+      "asset_start_seconds": 79.8366875,
+      "asset_end_seconds": 84.1028125
+    },
+    {
+      "reference": "他前天举办粉丝见面会",
+      "source_id": "SSB00050017",
+      "source_sha256": "1ce8dd6761de01fd01899f3969b9c5a4a2aa7391065e9991e7681fc91b6d5d5e",
+      "source_path": "train/wav/SSB0005/SSB00050017.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.861125,
+      "asset_start_seconds": 84.3528125,
+      "asset_end_seconds": 88.2139375
+    },
+    {
+      "reference": "五百五十二万六千零三",
+      "source_id": "SSB00050018",
+      "source_sha256": "2f8b76dea6a8ae3dc67f30eb501349c0f4999a32b8eb64d03a3512cb43c28347",
+      "source_path": "train/wav/SSB0005/SSB00050018.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.2670625,
+      "asset_start_seconds": 88.4639375,
+      "asset_end_seconds": 92.731
+    },
+    {
+      "reference": "带动服务经济社会发展",
+      "source_id": "SSB00050019",
+      "source_sha256": "31d2cc58881ad3b84fab1027873369b0bd2f0ff96ff206e90c74e93434f60744",
+      "source_path": "train/wav/SSB0005/SSB00050019.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.8199375,
+      "asset_start_seconds": 92.981,
+      "asset_end_seconds": 96.8009375
+    },
+    {
+      "reference": "该机场紧急处置一起非法干扰航班事件",
+      "source_id": "SSB00050020",
+      "source_sha256": "3c512e669630ad836caca348addf3b72fad610349023d6eb802cf2e5cf1ae89d",
+      "source_path": "train/wav/SSB0005/SSB00050020.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 6.323,
+      "asset_start_seconds": 97.0509375,
+      "asset_end_seconds": 103.3739375
+    },
+    {
+      "reference": "购买高价项目的客群心态也在发生改变",
+      "source_id": "SSB00050021",
+      "source_sha256": "d7ffa374982350472eed7be34a4988fe3bcb0ad5e388f0a9a6abc8de52b60632",
+      "source_path": "train/wav/SSB0005/SSB00050021.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 7.099,
+      "asset_start_seconds": 103.6239375,
+      "asset_end_seconds": 110.7229375
+    },
+    {
+      "reference": "广州女孩儿失联剧情反转因诈骗被拘一直隐瞒身份",
+      "source_id": "SSB00050022",
+      "source_sha256": "30bbfe43d675533fa5fa023920197e9cc176592d4ddae45f55765b3c9aaf0e75",
+      "source_path": "train/wav/SSB0005/SSB00050022.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 9.6870625,
+      "asset_start_seconds": 110.9729375,
+      "asset_end_seconds": 120.66
+    },
+    {
+      "reference": "一百家新型产业公司平均实现营业收入四亿元",
+      "source_id": "SSB00050023",
+      "source_sha256": "bc93f423b44b047ee97590211941965b9ab020391afcea2b6f05ea91be06913c",
+      "source_path": "train/wav/SSB0005/SSB00050023.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 7.308,
+      "asset_start_seconds": 120.91,
+      "asset_end_seconds": 128.218
+    },
+    {
+      "reference": "除了提高产品品质外",
+      "source_id": "SSB00050024",
+      "source_sha256": "96a434bf83e57e57709025873126180f0be1d5d23504ea00cc2aa9451e691729",
+      "source_path": "train/wav/SSB0005/SSB00050024.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.507,
+      "asset_start_seconds": 128.468,
+      "asset_end_seconds": 131.975
+    },
+    {
+      "reference": "他们的价格大都在二三千万之间",
+      "source_id": "SSB00050025",
+      "source_sha256": "5ee02307cbefa8bd02c9ee981515f933001cd4768a03df30d80f19e3669b4459",
+      "source_path": "train/wav/SSB0005/SSB00050025.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.504,
+      "asset_start_seconds": 132.225,
+      "asset_end_seconds": 137.729
+    },
+    {
+      "reference": "特斯拉官网官微被黑客劫持宣布免费运车搜狐科技",
+      "source_id": "SSB00050027",
+      "source_sha256": "781da576104ab7e62e823e739c38dbadbb87bbd114c17a82fc85777bce2a3e55",
+      "source_path": "train/wav/SSB0005/SSB00050027.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 9.708,
+      "asset_start_seconds": 137.979,
+      "asset_end_seconds": 147.687
+    },
+    {
+      "reference": "十路无人售票第一人民医院站",
+      "source_id": "SSB00050028",
+      "source_sha256": "43e28e53714741eaeb34c1a2ce0c28f1a1b61058c75954404e45d02062030a7d",
+      "source_path": "train/wav/SSB0005/SSB00050028.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.88,
+      "asset_start_seconds": 147.937,
+      "asset_end_seconds": 152.817
+    },
+    {
+      "reference": "龙湖是最早进入孙河板块的企房企",
+      "source_id": "SSB00050029",
+      "source_sha256": "c160eb09581631ca525ecdd631f18c5e1d2ea762b117dec56120d5fad41b6148",
+      "source_path": "train/wav/SSB0005/SSB00050029.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.337,
+      "asset_start_seconds": 153.067,
+      "asset_end_seconds": 158.404
+    },
+    {
+      "reference": "为公益进行一次身体力行的贡献",
+      "source_id": "SSB00050030",
+      "source_sha256": "6965af030d50d68a743c063c3d6bc8276971bb98502287c58f92ec7dedef60a6",
+      "source_path": "train/wav/SSB0005/SSB00050030.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.735125,
+      "asset_start_seconds": 158.654,
+      "asset_end_seconds": 164.389125
+    },
+    {
+      "reference": "能有组织地进行体育锻炼",
+      "source_id": "SSB00050031",
+      "source_sha256": "a0ae4806dd4fc9387739c162ba70ad183b2db5e5a3b6cb6005b29d3c3b3de7fa",
+      "source_path": "train/wav/SSB0005/SSB00050031.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.296125,
+      "asset_start_seconds": 164.639125,
+      "asset_end_seconds": 168.93525
+    },
+    {
+      "reference": "特斯拉将全面支持新国标",
+      "source_id": "SSB00050032",
+      "source_sha256": "5ef384c3fcdfe4425025a622f85acd913de042a3f20f4d311a309aedc144de9c",
+      "source_path": "train/wav/SSB0005/SSB00050032.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.3879375,
+      "asset_start_seconds": 169.18525,
+      "asset_end_seconds": 173.5731875
+    },
+    {
+      "reference": "是众辉体育以服务全国跑者为核心",
+      "source_id": "SSB00050033",
+      "source_sha256": "4a384f8eacf580118ad659102a7770a9b83f62b86573e7c04ff8f5e64fff3019",
+      "source_path": "train/wav/SSB0005/SSB00050033.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 6.475125,
+      "asset_start_seconds": 173.8231875,
+      "asset_end_seconds": 180.2983125
+    },
+    {
+      "reference": "实现社会资源的有效配置",
+      "source_id": "SSB00050034",
+      "source_sha256": "040c2a8d17f8ad3f0f18403046c8219468988ffafe6cba0c4887846e0557e2cd",
+      "source_path": "train/wav/SSB0005/SSB00050034.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.834,
+      "asset_start_seconds": 180.5483125,
+      "asset_end_seconds": 185.3823125
+    },
+    {
+      "reference": "推进信息化与工业化深度融合",
+      "source_id": "SSB00050035",
+      "source_sha256": "5aa8ead6a659b31e0916608c4347c293607895c9d212ff1ed4b8b1ac191b426b",
+      "source_path": "train/wav/SSB0005/SSB00050035.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 6.0289375,
+      "asset_start_seconds": 185.6323125,
+      "asset_end_seconds": 191.66125
+    },
+    {
+      "reference": "深圳创新投董事长靳海涛表示",
+      "source_id": "SSB00050036",
+      "source_sha256": "a551a6fcccce0d8103a99871780e6a11a5bfe18832d64eb740bd69162abf95dc",
+      "source_path": "train/wav/SSB0005/SSB00050036.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 6.131,
+      "asset_start_seconds": 191.91125,
+      "asset_end_seconds": 198.04225
+    },
+    {
+      "reference": "面对何时结婚的问题",
+      "source_id": "SSB00050037",
+      "source_sha256": "91bb6cc7a241bc8b0ca1816e02529e6a0776c86f174b0201855d5b4c2074c97c",
+      "source_path": "train/wav/SSB0005/SSB00050037.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.3940625,
+      "asset_start_seconds": 198.29225,
+      "asset_end_seconds": 201.6863125
+    },
+    {
+      "reference": "价格已基本都在三万到六万之间",
+      "source_id": "SSB00050038",
+      "source_sha256": "eb922337df13f1b9806278ca2ad78d2fade42834d0cc886240156b3c044becff",
+      "source_path": "train/wav/SSB0005/SSB00050038.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.979,
+      "asset_start_seconds": 201.9363125,
+      "asset_end_seconds": 206.9153125
+    },
+    {
+      "reference": "应尽量简化并购重组审核程序",
+      "source_id": "SSB00050039",
+      "source_sha256": "fdfcd6fc606e7b86b5ccf971dea010e677e28d3f141d0ed26575da8f65543472",
+      "source_path": "train/wav/SSB0005/SSB00050039.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 6.181,
+      "asset_start_seconds": 207.1653125,
+      "asset_end_seconds": 213.3463125
+    },
+    {
+      "reference": "预计二零一五年将超过五亿美元",
+      "source_id": "SSB00050040",
+      "source_sha256": "4f2d51d1cc7aa14870d3ec4f471fec14ed08b55325fdba60c3a1c2cfb76032a7",
+      "source_path": "train/wav/SSB0005/SSB00050040.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.2490625,
+      "asset_start_seconds": 213.5963125,
+      "asset_end_seconds": 218.845375
+    },
+    {
+      "reference": "请帮我搜一下爱你一万年这首歌曲",
+      "source_id": "SSB00050041",
+      "source_sha256": "6d11ce85a930d98e39641a8fcccc6cc20e95a6a3939c3ddf29f6901a133d536b",
+      "source_path": "train/wav/SSB0005/SSB00050041.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.333,
+      "asset_start_seconds": 219.095375,
+      "asset_end_seconds": 224.428375
+    },
+    {
+      "reference": "极速",
+      "source_id": "SSB00050042",
+      "source_sha256": "4f908e450f724300cd46078f64221349f791eae16706b5e50e8df1b9420011f2",
+      "source_path": "train/wav/SSB0005/SSB00050042.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 1.668,
+      "asset_start_seconds": 224.678375,
+      "asset_end_seconds": 226.346375
+    },
+    {
+      "reference": "四十八路无人售票",
+      "source_id": "SSB00050043",
+      "source_sha256": "08eadf3a5445011e3aa08f6f718a3be337dbdda554c5d1d2d8dce654af01fb17",
+      "source_path": "train/wav/SSB0005/SSB00050043.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 2.881,
+      "asset_start_seconds": 226.596375,
+      "asset_end_seconds": 229.477375
+    },
+    {
+      "reference": "智慧城市无成熟商业模式",
+      "source_id": "SSB00050044",
+      "source_sha256": "074d00f47f853f2a1685f858901a769a969d3b64870670d4a6a52a16609485d3",
+      "source_path": "train/wav/SSB0005/SSB00050044.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.814,
+      "asset_start_seconds": 229.727375,
+      "asset_end_seconds": 234.541375
+    },
+    {
+      "reference": "确认退出",
+      "source_id": "SSB00050045",
+      "source_sha256": "009d3ae8dc7dac51892f7b1de0f0fd7549d9c7270084661a1d254fa7ed796fc0",
+      "source_path": "train/wav/SSB0005/SSB00050045.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 2.122,
+      "asset_start_seconds": 234.791375,
+      "asset_end_seconds": 236.913375
+    },
+    {
+      "reference": "义乌是电子政与务云的先行者",
+      "source_id": "SSB00050046",
+      "source_sha256": "2a88a6a54fc82ea4499100d768287ca0d6024285edaa4ded9b10f5b88b3dc974",
+      "source_path": "train/wav/SSB0005/SSB00050046.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.4511875,
+      "asset_start_seconds": 237.163375,
+      "asset_end_seconds": 242.6145625
+    },
+    {
+      "reference": "加快规模试验工作",
+      "source_id": "SSB00050047",
+      "source_sha256": "b5e4b5dd92c64898b37e6afd42a6361c7bb7bacbbe204410aeb6f0cb218c7ebc",
+      "source_path": "train/wav/SSB0005/SSB00050047.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.516,
+      "asset_start_seconds": 242.8645625,
+      "asset_end_seconds": 246.3805625
+    },
+    {
+      "reference": "姚明作为品牌的发起人",
+      "source_id": "SSB00050048",
+      "source_sha256": "bcf01753541c04b5f27d4e60a6d73a36991139dd12450d14fa3aaca54269f7e8",
+      "source_path": "train/wav/SSB0005/SSB00050048.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.496125,
+      "asset_start_seconds": 246.6305625,
+      "asset_end_seconds": 250.1266875
+    },
+    {
+      "reference": "五百四十七",
+      "source_id": "SSB00050049",
+      "source_sha256": "7e5aa882212b0ffed22a81371045cb8931317c75e787661b4bfc927d89ea9600",
+      "source_path": "train/wav/SSB0005/SSB00050049.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 2.746,
+      "asset_start_seconds": 250.3766875,
+      "asset_end_seconds": 253.1226875
+    },
+    {
+      "reference": "确认死者为一名女性",
+      "source_id": "SSB00050050",
+      "source_sha256": "7c4aa293232cb9e0fa18ad3a9070e76e8b646a7e231bf1d3e30482942aaf7cb1",
+      "source_path": "train/wav/SSB0005/SSB00050050.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.11425,
+      "asset_start_seconds": 253.3726875,
+      "asset_end_seconds": 257.4869375
+    },
+    {
+      "reference": "一路向北",
+      "source_id": "SSB00050051",
+      "source_sha256": "7bb01b11ac1ade6d1c696a34c98eed8d6d4455fae44dda01321827aaf608525e",
+      "source_path": "train/wav/SSB0005/SSB00050051.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 2.195,
+      "asset_start_seconds": 257.7369375,
+      "asset_end_seconds": 259.9319375
+    },
+    {
+      "reference": "四路无人售票第一人民医院站",
+      "source_id": "SSB00050052",
+      "source_sha256": "439da6710edfcbbc9a843a891f1b3f67a8dad018337e14e7530051dbd4f87f82",
+      "source_path": "train/wav/SSB0005/SSB00050052.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.34,
+      "asset_start_seconds": 260.1819375,
+      "asset_end_seconds": 264.5219375
+    },
+    {
+      "reference": "关于篮球改革就是要各安其位",
+      "source_id": "SSB00050053",
+      "source_sha256": "53a635dc30000a61bddd23cecc7094f52c97d043da7edfdfe67e7525dcf86612",
+      "source_path": "train/wav/SSB0005/SSB00050053.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 4.7829375,
+      "asset_start_seconds": 264.7719375,
+      "asset_end_seconds": 269.554875
+    },
+    {
+      "reference": "也许以后我们也会考虑",
+      "source_id": "SSB00050055",
+      "source_sha256": "4b601574546c50f2ddb9234b910ead281bed56668172b39d6f2a2b985837e9da",
+      "source_path": "train/wav/SSB0005/SSB00050055.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 3.7590625,
+      "asset_start_seconds": 269.804875,
+      "asset_end_seconds": 273.5639375
+    },
+    {
+      "reference": "广州处置一起非法干扰航班事件二人轻伤",
+      "source_id": "SSB00050056",
+      "source_sha256": "e290f2140779199bd6ee2e28c9d0b68064e85fe19dfbafb24197bcb0c2e72cc8",
+      "source_path": "train/wav/SSB0005/SSB00050056.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 7.853,
+      "asset_start_seconds": 273.8139375,
+      "asset_end_seconds": 281.6669375
+    },
+    {
+      "reference": "这几年我与姚基金走访了很多中西部贫困地区",
+      "source_id": "SSB00050057",
+      "source_sha256": "fc27d21ae86f2499821bc3de86914f89ea48a19a5fd8a24b5c17fc33508acc25",
+      "source_path": "train/wav/SSB0005/SSB00050057.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 8.1970625,
+      "asset_start_seconds": 281.9169375,
+      "asset_end_seconds": 290.114
+    },
+    {
+      "reference": "听着会觉得很高大上两年后谈到智慧城市",
+      "source_id": "SSB00050058",
+      "source_sha256": "fda60f1f5cf0796ffbb23a4cab874172b15149863d581d6acda0ad1b5fe749cc",
+      "source_path": "train/wav/SSB0005/SSB00050058.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 7.022,
+      "asset_start_seconds": 290.364,
+      "asset_end_seconds": 297.386
+    },
+    {
+      "reference": "深交所副总经理周明表示",
+      "source_id": "SSB00050059",
+      "source_sha256": "aafb8a7ba2adb52aa53ed428e377512b58b845578e0e02a5b9766fb443fae999",
+      "source_path": "train/wav/SSB0005/SSB00050059.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.9100625,
+      "asset_start_seconds": 297.636,
+      "asset_end_seconds": 303.5460625
+    },
+    {
+      "reference": "自从二零一四年涉足跑步领域以来",
+      "source_id": "SSB00050060",
+      "source_sha256": "b4bf60819eb924d9c880249fccfed53f51ea72449805212760b4a8643ca9561f",
+      "source_path": "train/wav/SSB0005/SSB00050060.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 6.9209375,
+      "asset_start_seconds": 303.7960625,
+      "asset_end_seconds": 310.717
+    },
+    {
+      "reference": "供应的增加会加剧积压的风险",
+      "source_id": "SSB00050061",
+      "source_sha256": "cf70d0b0d9e165455a6b88f1071043a2cc4076906b9a6e35367b83023f8242d9",
+      "source_path": "train/wav/SSB0005/SSB00050061.wav",
+      "chapter_id": null,
+      "source_audio_seconds": 5.652,
+      "asset_start_seconds": 310.967,
+      "asset_end_seconds": 316.619
+    }
+  ],
+  "asset_file": "uploads/acceptance-media/zh-single-speaker-reference.wav",
+  "asset_sha256": "d40bb3a49d88cf35f52574650d593573048f89f95aba09b704b2fdbe25811317",
+  "asset_frame_count": 5065904,
+  "asset_sample_rate_hz": 16000,
+  "source_audio_seconds": 302.119,
+  "inserted_silence_seconds": 14.5,
+  "ordered_source_utterance_sha256": "39865446240193b7737b67d487986b3afe5fd54fe5639ae6f3c28511b78a4653",
+  "ordered_reference_items_sha256": "152a37f6cf5362d238467b4dd928d2e83c9fa1f54029e3f6ec7b51b7c2668f3c",
+  "reference_text_sha256": "51ccaccbce1b503396d81725154fd0bdde825a9c8ae26d9b1dc1aff15d691ec4",
+  "manual_review_pending": true,
+  "manual_review_status": "pending",
+  "manual_review_scope": "Verify transcript-to-audio correspondence, language, and single-speaker identity. For a fast-speech listening candidate, separately decide whether the original recording is naturally fast; no synthetic speed change was applied.",
+  "reference_provenance": {
+    "dataset": "AISHELL/AISHELL-3",
+    "dataset_revision": "f20d5db4a31fe779ef07bb1af4ea92da5c786622",
+    "split": "train",
+    "speaker_id": "SSB0005",
+    "license": "Apache-2.0",
+    "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+    "source_url": "https://huggingface.co/datasets/AISHELL/AISHELL-3",
+    "selection_rule": "First lexicographic speaker ID present in both train/content.txt and spk-info.txt; then numeric utterance suffix order, shortest prefix with at least 300 seconds of decoded source audio.",
+    "transcript_rule": "The source content.txt alternates Chinese character and pinyin tokens; the fixed reference is the even-indexed character token sequence as published."
+  },
+  "reference_origin": "Pinned corpus transcript; not generated by this application's ASR."
+}

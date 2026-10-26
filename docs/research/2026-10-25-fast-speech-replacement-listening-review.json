@@ -1,0 +1,48 @@
+{
+  "review_date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "reviewer": "user",
+  "review_method": "explicit_user_listening_reply",
+  "samples": [
+    {
+      "asset": "uploads/acceptance-media/new-candidates/zh-fast-speech-candidate.wav",
+      "sha256": "dd468065d5771574f0f53e250e1b4d2021ece028d360d75e0c42233d4ed8a12e",
+      "user_feedback": "符合自然快语速",
+      "accepted_as_natural_fast_speech": true,
+      "edited_montage": true,
+      "continuous_original_minute": false,
+      "recognition_quality_assessed": false,
+      "reference_transcript_review_completed": true,
+      "single_speaker_clear_speech_confirmed": true,
+      "single_speaker_confirmed": true,
+      "latest_clarity_assessment": "clear_and_reference_confirmed",
+      "latest_reference_review_feedback": "中文的我核对没有问题",
+      "accepted_as_clear_quality_reference": true,
+      "confirmed_reference_text_sha256": "1cc00986b8ecb5abfd1da9ea980c241ef91222ebb90ce8f403ed8d0c9db1cb69",
+      "confirmed_reference_items": 7,
+      "reference_review_provenance": "Explicit user reply after opening seven per-item audio/reference review links",
+      "asr_hypothesis_audio_review_completed": false
+    },
+    {
+      "asset": "uploads/acceptance-media/new-candidates/en-fast-speech-candidate.wav",
+      "sha256": "73849a5568663e5fa8de4da31141fd32e2c59dcb8888401751436fcd9c5a96de",
+      "user_feedback": "符合自然快语速",
+      "accepted_as_natural_fast_speech": true,
+      "edited_montage": true,
+      "continuous_original_minute": false,
+      "recognition_quality_assessed": false,
+      "reference_transcript_review_completed": false,
+      "single_speaker_clear_speech_confirmed": false,
+      "single_speaker_confirmed": true,
+      "latest_clarity_assessment": "unclear_to_user_during_reference_review",
+      "latest_reference_review_feedback": "英文的speaker吐字含糊，听也听不清，但是感觉大差不差吧",
+      "accepted_as_clear_quality_reference": false
+    }
+  ],
+  "previous_rejected_samples_preserved": true,
+  "single_speaker_review_method": "explicit_user_listening_reply",
+  "single_speaker_user_feedback": "两份都是单人清晰语音",
+  "single_speaker_independently_confirmed": true,
+  "latest_reference_review_feedback": "中文的我核对没有问题，英文的speaker吐字含糊，听也听不清，但是感觉大差不差吧",
+  "clear_speech_global_confirmation_superseded_for_english": true
+}
