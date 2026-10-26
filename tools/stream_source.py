@@ -91,6 +91,8 @@ class StreamSource:
                 # Python io_open provides AVIOContexts without an FFmpeg HTTP
                 # URLContext; HLS keepalive assumes that URLContext exists.
                 options.update(live_start_index="-3", http_persistent="0")
+                # Bound metadata probing so live HLS can yield before later segments arrive.
+                options["analyzeduration"] = "100000"
             else:
                 # libavformat http protocol requires CRLF-terminated headers.
                 options["headers"] = "".join(f"{k}: {v}\r\n" for k, v in hdrs.items())
