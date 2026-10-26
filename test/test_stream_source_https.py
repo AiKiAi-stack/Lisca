@@ -22,6 +22,8 @@ from fastapi.testclient import TestClient
 from tools.stream_source import MAX_REDIRECTED_HLS_BYTES, StreamSource, _rewrite_hls_playlist
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import webui
+from cloud_translation import CloudConfigStore
 
 
 @pytest.fixture(scope="module")
@@ -504,6 +506,40 @@ def test_trusted_https_non_hls_media_still_decodes(
     assert np.frombuffer(pcm, dtype=np.int16).any()
 
 
+def test_untrusted_https_hls_session_stops_before_recognizer(
+    https_hls, local_tls_material, monkeypatch, tmp_path
+):
+    url, _requested = https_hls
+    untrusted_certificate, _ = local_tls_material["untrusted"]
+    monkeypatch.setenv("SSL_CERT_FILE", str(untrusted_certificate))
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
+    monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
+    monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
+    recognizer_calls = []
+
+    def forbidden_recognizer(*_args, **_kwargs):
+        recognizer_calls.append("called")
+        raise AssertionError("untrusted media must fail before recognition starts")
+
+    monkeypatch.setattr(webui, "create_engine", forbidden_recognizer)
+    with TestClient(webui.app) as client:
+        configured = client.put("/api/cloud", json={"api_key": "test-only-placeholder"})
+        assert configured.status_code == 200
+        ticket = client.post("/api/cloud/sessions", json={"url": url})
+        assert ticket.status_code == 200
+        with client.websocket_connect("/ws?session=" + ticket.json()["session"]) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+
+    assert any(event["type"] == "error" for event in events)
+    assert events[-1] == {"type": "end", "reason": "error"}
+    assert recognizer_calls == []
 
 
 def _make_mpegts_segment():

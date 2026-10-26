@@ -1,6 +1,6 @@
 from collections import deque
 from enum import Enum, auto
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 from threading import Event, Thread
 from typing import Optional
 
@@ -14,6 +14,19 @@ class ASRState(Enum):
     IDLE = auto()
     RUNNING = auto()
     STOPPED = auto()
+
+
+class RecognitionFailure(RuntimeError):
+    """SDK callback failure with structured fields and no raw provider message."""
+
+    def __init__(self, status_code=None, code=None):
+        self.status_code = status_code
+        self.code = code
+        super().__init__("DashScope recognition request failed")
+
+
+class ASRTransportFailure(ConnectionError):
+    """Audio transport failed; intentionally does not retain exception text."""
 
 
 class _Callback(RecognitionCallback):
@@ -33,19 +46,8 @@ class _Callback(RecognitionCallback):
         pass
 
     def on_error(self, result: RecognitionResult) -> None:
-        message = ""
-        get_message = getattr(result, "get_message", None)
-        if callable(get_message):
-            try:
-                message = str(get_message() or "")
-            except Exception:  # noqa: BLE001 - SDK callback must not throw
-                message = ""
-        if not message:
-            try:
-                message = str(result)
-            except Exception:  # SDK response stringification can itself fail
-                message = "DashScope recognition failed"
-        self._errors.put(message or "DashScope ASR returned an unspecified error")
+        self._errors.put(RecognitionFailure(getattr(result, "status_code", None),
+                                            getattr(result, "code", None)))
 
     def on_event(self, result: RecognitionResult) -> None:
         sentence = result.get_sentence()
@@ -90,14 +92,17 @@ class ASRClient:
             format="pcm",
             sample_rate=16000,
             callback=callback,
+            api_key=settings.api_key,
             **recognition_kwargs,
         )
-        self._input_queue: Queue = Queue()
+        self._input_queue: Queue = Queue(maxsize=100)
         self._audio_buffer = bytearray()
         self._running = Event()
+        self._cancelled = Event()
         self._worker: Optional[Thread] = None
 
     def start(self) -> None:
+        self._cancelled.clear()
         self.state = ASRState.RUNNING
         self._running.set()
         self._recognition.start()
@@ -116,16 +121,32 @@ class ASRClient:
     def raise_if_error(self) -> None:
         """Raise the next asynchronous SDK error on the caller's thread."""
         try:
-            message = self._errors.get_nowait()
+            failure = self._errors.get_nowait()
         except Empty:
             return
-        raise RuntimeError(f"DashScope ASR error: {message}")
+        if isinstance(failure, BaseException):
+            raise failure
+        raise RuntimeError("DashScope ASR returned an unspecified error")
+
+    def cancel(self) -> None:
+        """Discard unsent audio on user cancellation instead of billing a backlog."""
+        self._cancelled.set()
+        self.stop()
 
     def feed_audio(self, data: bytes) -> None:
-        self._input_queue.put(data)
+        self.raise_if_error()
+        if not self._running.is_set():
+            raise RuntimeError("ASR session is stopped")
+        try:
+            self._input_queue.put(data, timeout=0.5)
+        except Full:
+            raise RuntimeError("ASR audio queue is full; please check the connection") from None
 
     def _worker_loop(self) -> None:
         while True:
+            if self._cancelled.is_set():
+                self._audio_buffer.clear()
+                break
             try:
                 chunk = self._input_queue.get(timeout=0.1)
             except Empty:
@@ -136,7 +157,20 @@ class ASRClient:
             while len(self._audio_buffer) >= self.chunk_size:
                 send_data = bytes(self._audio_buffer[: self.chunk_size])
                 self._audio_buffer = self._audio_buffer[self.chunk_size :]
-                self._recognition.send_audio_frame(send_data)
-        if self._audio_buffer:
-            self._recognition.send_audio_frame(bytes(self._audio_buffer))
+                if not self._send_audio_frame(send_data):
+                    return
+        if self._audio_buffer and not self._cancelled.is_set():
+            if not self._send_audio_frame(bytes(self._audio_buffer)):
+                return
             self._audio_buffer.clear()
+
+    def _send_audio_frame(self, data: bytes) -> bool:
+        try:
+            self._recognition.send_audio_frame(data)
+        except Exception:
+            self._audio_buffer.clear()
+            self._errors.put(ASRTransportFailure())
+            self._running.clear()
+            self._cancelled.set()
+            return False
+        return True

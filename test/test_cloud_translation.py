@@ -10,15 +10,117 @@ import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+import webui  # noqa: E402
 from cloud_translation import CloudConfig, CloudConfigStore, CloudError, QwenTranslator, RequestStop  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
+    monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
 
 
+def test_cloud_configuration_is_redacted_and_language_pairs_are_explicit():
+    with TestClient(webui.app) as client:
+        response = client.put("/api/cloud", json={"api_key": "sk-private-test"})
+        assert response.status_code == 200
+        assert response.json()["configured"] is True
+        assert "sk-private-test" not in response.text
+        config = client.get("/api/cloud").json()
+        assert config["language_pairs"] == [["zh", "en"], ["en", "zh"]]
+        assert "sk-private-test" not in str(config)
+        assert client.delete("/api/cloud").status_code == 200
+        assert client.get("/api/cloud").json()["configured"] is False
 
 
+def test_cloud_session_validates_pair_before_any_media_or_api_request():
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "sk-private-test"})
+        rejected = client.post("/api/cloud/sessions", json={"mode": "translate",
+            "url": "http://media.test/live.m3u8", "source": "fr", "target": "zh"})
+        assert rejected.status_code == 400
+        valid = client.post("/api/cloud/sessions", json={"mode": "translate",
+            "url": "http://media.test/live.m3u8", "source": "en", "target": "zh"})
+        assert valid.status_code == 200
+        assert "sk-private-test" not in valid.text
+        assert valid.json()["session"]
 
 
+def test_cloud_ws_emits_complete_stable_clause_before_sentence_final(monkeypatch):
+    translated = threading.Event()
+    parameters = []
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            yield b"\x00" * 3200
+            yield b"\x00" * 3200
+            assert translated.wait(3), "stable clause translation must arrive before audio ends"
+            yield b"\x00" * 3200
+
+        def close(self):
+            pass
+
+    class Engine:
+        calls = 0
+
+        def transcribe_chunk(self, _audio):
+            self.calls += 1
+            return (0.0, 0.3 if self.calls > 2 else None,
+                    "Hello world. Next." if self.calls > 2 else "Hello world.",
+                    [(0.0, 0.1, "Hello"), (0.1, 0.2, "world"), (0.2, 0.3, "Next")],
+                    self.calls > 2, 7)
+
+        def poll(self):
+            return (None, None, "", None)
+
+        def finish(self):
+            return self.poll()
+
+        def close(self):
+            pass
+
+    class Translator:
+        def __init__(self, _config, source, target):
+            assert (source, target) == ("en", "zh")
+
+        def translate(self, text, cancel):
+            yield "你"
+            yield "你好世界" if text == "Hello world." else "下一句"
+            translated.set()
+
+        def close(self):
+            pass
+
+    def engine_factory(_name, **kwargs):
+        parameters.append(kwargs)
+        return Engine()
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", engine_factory)
+    monkeypatch.setattr(webui, "QwenTranslator", Translator)
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "sk-private-test"})
+        ticket = client.post("/api/cloud/sessions", json={"mode": "translate",
+            "url": "https://media.test/video.mp4", "source": "en", "target": "zh"}).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+    cues = [event for event in events if event["type"] == "subtitle"]
+    assert [event["text"] for event in cues] == ["你好世界", "下一句"]
+    assert all(event["is_final"] is True for event in cues)
+    assert cues[0]["source_text"] == "Hello world."
+    assert cues[-1]["source_text"] == "Next."
+    assert parameters[0]["language_hints"] == ["en"]
+    assert parameters[0]["api_key"] == "sk-private-test"
+    assert all("sk-private-test" not in str(event) for event in events)
+    assert not any(event["type"] == "buffer" for event in events)
 
 
 def test_translator_sends_explicit_language_pair_and_accumulates_flash_deltas():
@@ -66,6 +168,15 @@ def test_truncated_translation_is_not_a_successful_final():
         translator.close()
 
 
+def test_cross_origin_config_and_websocket_cannot_start_billed_work():
+    with TestClient(webui.app) as client:
+        assert client.put("/api/cloud", json={"api_key": "secret"},
+            headers={"Origin": "https://unrelated.example"}).status_code == 403
+        from starlette.websockets import WebSocketDisconnect
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/ws?engine=aliyun-funasr&url=x",
+                    headers={"Origin": "https://unrelated.example"}):
+                pass
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows user-bound DPAPI")
@@ -80,6 +191,14 @@ def test_saved_key_is_encrypted_and_can_be_deleted(tmp_path):
     assert not path.exists() and not reloaded.get().configured
 
 
+def test_stop_invalidates_unstarted_ticket_without_starting_apis():
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "private"})
+        ticket = client.post("/api/cloud/sessions", json={"mode": "translate",
+            "url": "https://media.test/video.mp4", "source": "zh", "target": "en"}).json()
+        client.delete("/api/cloud/sessions/" + ticket["session"])
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            assert ws.receive_json()["type"] == "error"
 
 
 def test_stop_during_request_start_prevents_later_requests():
@@ -163,3 +282,52 @@ def test_withdrawal_prevents_an_inflight_translation_from_returning_after_remova
     assert len(cues) == 1 and cues[0]["type"] == "caption_remove"
 
 
+def test_empty_final_asr_revision_withdraws_a_previously_released_translation(monkeypatch):
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+        def iter_chunks(self):
+            for _ in range(3):
+                yield b"\x00" * 3200
+        def close(self):
+            pass
+
+    class Engine:
+        calls = 0
+        def transcribe_chunk(self, _audio):
+            self.calls += 1
+            return (0.0, 0.3 if self.calls == 3 else None,
+                    "" if self.calls == 3 else "I love cats.", None, self.calls == 3, 7)
+        def poll(self):
+            return (None, None, "", None)
+        def finish(self):
+            return self.poll()
+        def close(self):
+            pass
+
+    class Translator:
+        def __init__(self, *_args):
+            pass
+        def translate(self, _text, _stop):
+            yield "我喜欢猫。"
+        def close(self):
+            pass
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kw: Engine())
+    monkeypatch.setattr(webui, "QwenTranslator", Translator)
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "sk-private-test"})
+        ticket = client.post("/api/cloud/sessions", json={"mode": "translate","url": "https://media.test/video.mp4",
+            "source": "en", "target": "zh"}).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "end":
+                    break
+    removed = [i for i, event in enumerate(events) if event["type"] == "caption_remove"]
+    assert len(removed) == 1
+    assert events[removed[0]]["sentence_id"] == "7:0"
+    assert not any(event["type"] == "subtitle" for event in events[removed[0] + 1:])
