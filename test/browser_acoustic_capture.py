@@ -15,7 +15,7 @@ AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
   if (!media || !start || !window.MediaRecorder) {
     return {status: 'unsupported'};
   }
-  if (media.muted || !Number.isFinite(media.volume) || media.volume <= 0) {
+  if (!Number.isFinite(media.volume) || media.volume <= 0) {
     return {status: 'media_element_muted', media_element_id: media.id || null,
       media_element_muted: media.muted, media_element_volume: media.volume};
   }
@@ -43,6 +43,7 @@ AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
   const signalSamples = new Float32Array(analyser.fftSize);
   let signalObserved = false;
   let status = 'installed';
+  let clockError = false;
   let startPerformanceAfterMs = null;
   let startContextTimeSeconds = null;
   let clockTimer = null;
@@ -52,9 +53,15 @@ AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
     let energy = 0;
     for (const value of signalSamples) energy += value * value;
     if (Math.sqrt(energy / signalSamples.length) > 0.0001) signalObserved = true;
-    if (!sampler() || context.state !== 'running' || !context.getOutputTimestamp) return;
-    const stamp = context.getOutputTimestamp();
-    if (!Number.isFinite(stamp.contextTime) || !Number.isFinite(stamp.performanceTime)) return;
+    if (!sampler() || context.state !== 'running') return;
+    if (typeof context.getOutputTimestamp !== 'function') { clockError = true; return; }
+    let stamp;
+    try { stamp = context.getOutputTimestamp(); }
+    catch { clockError = true; return; }
+    if (!Number.isFinite(stamp.contextTime) || !Number.isFinite(stamp.performanceTime)) {
+      clockError = true;
+      return;
+    }
     outputClockSamples.push({
       performance_time_after_ms: stamp.performanceTime - sampler().started,
       context_time_seconds: stamp.contextTime,
@@ -84,8 +91,11 @@ AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
     installation: {status: 'installed', mime_type: mimeType,
       media_element_id: media.id || null, clock_media_element_id: clockMedia?.id || null,
       sample_rate_hz: context.sampleRate,
+      output_clock_supported: typeof context.getOutputTimestamp === "function",
       base_latency_seconds: Number.isFinite(context.baseLatency) ? context.baseLatency : null,
       output_latency_seconds: Number.isFinite(context.outputLatency) ? context.outputLatency : null},
+    status: () => ['recorder_error', 'audio_context_resume_failed'].includes(status)
+      ? status : (clockError ? 'clock_error' : status),
     save: () => new Promise(resolve => {
       const finish = () => {
         if (clockTimer) clearInterval(clockTimer);

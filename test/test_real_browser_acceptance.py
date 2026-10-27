@@ -186,7 +186,8 @@ def test_error_message_presence_survives_recording_sanitization_without_raw_text
 def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_start,
                                    observe_recovery=True, media=None,
                                    playback_evidence=False, browser_clock_samples=None,
-                                   monotonic_ns_samples=None, captured_audio=None):
+                                   monotonic_ns_samples=None, captured_audio=None, installation=None, pixel_failure=False, runtime_audio_failure=False, runtime_clock_failure=False,
+                                   acoustic_sync=False, save_failure=False, status_sequence=None):
     clock = {"now": 100.0}
 
     class Request:
@@ -237,6 +238,8 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             self.next_sample_at = None
             self.sampler_started_at = None
             self.active = False
+            self.start_clicks = 0
+            self.save_calls = 0
             self.status = "正在识别音频…"
             self.status_is_error = False
             self.retry_visible = False
@@ -264,6 +267,11 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                 self.next_sample_at = clock["now"]
                 self._sample()
                 return None
+            if "__acousticCapture?.status()" in script:
+                if status_sequence is not None:
+                    return status_sequence.pop(0) if status_sequence else "recorder_error"
+                return (("recorder_error" if runtime_audio_failure else "clock_error")
+                        if (runtime_audio_failure or runtime_clock_failure) and self.active else "recording")
             if "performance.now()" in script and "__realAcceptanceSampler" in script:
                 return browser_clock_samples.pop(0) if browser_clock_samples else None
             if "__realAcceptanceSampler?.drain()" in script:
@@ -321,6 +329,7 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             return socket
 
         def start(self):
+            self.start_clicks += 1
             self.active = True
             on_start(self)
 
@@ -374,27 +383,141 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
     def fake_install_audio_capture(target_page, media_element_id="audioEl"):
         target_page.capture_target = media_element_id
         return {"status": "installed", "media_element_id": media_element_id,
-                "media_element_muted": False, "media_element_volume": 1.0}
+                "media_element_muted": False, "media_element_volume": 1.0,
+                "output_clock_supported": True, **(installation or {})}
 
     monkeypatch.setattr(acceptance, "install_audio_capture", fake_install_audio_capture)
     def fake_save_audio_capture(target_page, *_args):
+        target_page.save_calls += 1
+        if save_failure:
+            raise RuntimeError("download failed")
         return {"status": "captured", "media_element_id": target_page.capture_target,
                 "signal_observed": True, "media_element_muted": False, "media_element_volume": 1.0,
                 **(captured_audio or {})}
 
     monkeypatch.setattr(acceptance, "save_audio_capture", fake_save_audio_capture)
+    if pixel_failure:
+        def fail_screenshot(*_args):
+            raise RuntimeError("capture failed")
+        monkeypatch.setattr(acceptance, "capture_visible_screenshot", fail_screenshot)
+    if acoustic_sync:
+        media_file = tmp_path / f"{label}.wav"
+        media_file.write_bytes(b"synthetic fixture")
+        media = str(media_file)
+        observe_recovery = False
     argv = ["--media", media or "https://media.test/live.m3u8?token=TEST_ONLY_MEDIA_CAPABILITY",
             "--label", label, "--output", str(tmp_path), "--seconds", str(seconds)]
     if observe_recovery:
         argv.append("--observe-recovery")
     if playback_evidence:
         argv.append("--capture-playback-evidence")
+    if acoustic_sync:
+        argv.extend(["--capture-acoustic-sync", "--reference", str(tmp_path / "ref.json"),
+                     "--language", "en"])
     args = acceptance.parse_args(argv)
     result = acceptance.collect(args)
     report = json.loads((tmp_path / f"{label}.report.json").read_text(encoding="utf-8"))
     recording = json.loads((tmp_path / f"{label}.recording.json").read_text(encoding="utf-8"))
     return result, report, recording, page, clock
 
+
+
+
+@pytest.mark.parametrize("save_failure", [True, False])
+def test_runtime_audio_error_is_recorded_once_after_cleanup_failure(tmp_path, monkeypatch, save_failure):
+    _result, report, _recording, page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label=f"dedup-{save_failure}", seconds=1,
+        on_start=lambda page: page.open_session(), playback_evidence=True,
+        runtime_audio_failure=True, save_failure=save_failure,
+        captured_audio={"signal_observed": False},
+        browser_clock_samples=[{"now": 5000.0, "started": 5000.0},
+                               {"now": 6000.0, "started": 5000.0}],
+        monotonic_ns_samples=[1_000_000_000, 1_002_000_000, 2_000_000_000, 2_004_000_000])
+    assert page.save_calls == 1
+    assert sum(e["type"] == "playback_audio_capture_unavailable" for e in report["errors"]) == 1
+
+
+@pytest.mark.parametrize("acoustic_sync", [True, False])
+def test_output_clock_unavailable_blocks_both_capture_modes(tmp_path, monkeypatch, acoustic_sync):
+    _result, report, _recording, page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label=f"output-clock-{acoustic_sync}", seconds=1,
+        on_start=lambda page: page.open_session(), playback_evidence=not acoustic_sync,
+        acoustic_sync=acoustic_sync, installation={"output_clock_supported": False},
+        browser_clock_samples=[{"now": 5000.0, "started": 5000.0}],
+        monotonic_ns_samples=[1_000_000_000, 1_002_000_000, 2_000_000_000, 2_004_000_000])
+    assert page.start_clicks == page.save_calls == report["session_post_start_count"] == 0
+    assert any(e["type"] == "playback_capture_clock_unknown" for e in report["errors"])
+
+
+def test_legacy_capture_stops_on_clock_failure_before_later_recorder_failure(tmp_path, monkeypatch):
+    _result, report, _recording, page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="legacy-clock", seconds=30, acoustic_sync=True,
+        on_start=lambda page: page.open_session(), status_sequence=["clock_error", "recorder_error"])
+    assert not page.active and clock["now"] < 105
+    assert report["session_post_start_count"] == 1
+    assert report["session_delete_statuses"] == [200]
+    assert sum(e["type"] == "playback_capture_clock_unknown" for e in report["errors"]) == 1
+
+@pytest.mark.parametrize("failure", ["graph", "clock", "output_clock"])
+def test_preflight_capture_failure_never_starts_or_waits_for_download(tmp_path, monkeypatch, failure):
+    result, report, recording, page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label=f"preflight-{failure}", seconds=1,
+        on_start=lambda page: page.open_session(), playback_evidence=True,
+        installation=({"status": "audio_graph_unavailable"} if failure == "graph" else
+                      {"output_clock_supported": False} if failure == "output_clock" else None),
+        browser_clock_samples=[None] if failure == "clock" else [{"now": 5000.0, "started": 5000.0}],
+        monotonic_ns_samples=[1_000_000_000, 1_002_000_000, 2_000_000_000, 2_004_000_000])
+    assert result["exit_ok"] is False
+    assert page.start_clicks == 0
+    assert page.save_calls == 0
+    assert report["session_post_start_count"] == 0
+    assert any(error["type"] == ("playback_capture_clock_unknown" if failure in ("clock", "output_clock")
+                                  else "playback_audio_capture_unavailable")
+               for error in report["errors"])
+
+
+def test_runtime_pixel_failure_stops_owned_session_once(tmp_path, monkeypatch):
+    def start(page):
+        page.open_session()
+        page.caption = "subtitle"
+
+    result, report, _recording, page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="pixel-failure", seconds=30, on_start=start,
+        playback_evidence=True, pixel_failure=True,
+        browser_clock_samples=[{"now": 5000.0, "started": 5000.0},
+                               {"now": 6000.0, "started": 5000.0}],
+        monotonic_ns_samples=[1_000_000_000, 1_002_000_000, 2_000_000_000, 2_004_000_000])
+    assert result["exit_ok"] is False
+    assert not page.active
+    assert clock["now"] < 105
+    assert sum(e["type"] == "pixel_capture_unavailable" for e in report["errors"]) == 1
+    assert report["operator_stop"]["delete_status"] == 200
+
+
+def test_runtime_audio_failure_stops_owned_session(tmp_path, monkeypatch):
+    result, report, _recording, page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="audio-failure", seconds=30,
+        on_start=lambda page: page.open_session(), playback_evidence=True, runtime_audio_failure=True,
+        browser_clock_samples=[{"now": 5000.0, "started": 5000.0},
+                               {"now": 6000.0, "started": 5000.0}],
+        monotonic_ns_samples=[1_000_000_000, 1_002_000_000, 2_000_000_000, 2_004_000_000])
+    assert result["exit_ok"] is False
+    assert not page.active and clock["now"] < 105
+    assert report["operator_stop"]["delete_status"] == 200
+    assert any(e["type"] == "playback_audio_capture_unavailable" for e in report["errors"])
+
+
+def test_runtime_output_clock_failure_stops_owned_session(tmp_path, monkeypatch):
+    result, report, _recording, page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="clock-failure", seconds=30,
+        on_start=lambda page: page.open_session(), playback_evidence=True, runtime_clock_failure=True,
+        browser_clock_samples=[{"now": 5000.0, "started": 5000.0},
+                               {"now": 6000.0, "started": 5000.0}],
+        monotonic_ns_samples=[1_000_000_000, 1_002_000_000, 2_000_000_000, 2_004_000_000])
+    assert result["exit_ok"] is False
+    assert not page.active and clock["now"] < 105
+    assert report["operator_stop"]["delete_status"] == 200
+    assert any(e["type"] == "playback_capture_clock_unknown" for e in report["errors"])
 
 def test_long_observation_brackets_browser_clock_and_selects_actual_media_element(
         tmp_path, monkeypatch):
@@ -662,3 +785,110 @@ def test_default_collection_still_stops_on_retryable_error(tmp_path, monkeypatch
     assert "observe_recovery" not in recording["metadata"]
     assert "connection_generation" not in recording["events"][0]
     assert clock["now"] - 100.0 < 0.3
+
+
+@pytest.mark.parametrize("unmute", [True, False])
+def test_actual_player_capture_respects_start_unmute_lifecycle(tmp_path, unmute):
+    import functools
+    import math
+    import threading
+    from fractions import Fraction
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    import av
+    import numpy as np
+    from playwright.sync_api import sync_playwright
+    from browser_acoustic_capture import install_audio_capture, save_audio_capture
+    from e2e_original_release import launch_browser
+
+    media = tmp_path / "source.mp4"
+    with av.open(str(media), "w") as output:
+        video = output.add_stream("libx264", rate=10)
+        video.width, video.height, video.pix_fmt = 160, 90, "yuv420p"
+        video.options = {"preset": "ultrafast"}
+        audio = output.add_stream("aac", rate=16000)
+        audio.layout = "mono"
+        for index in range(30):
+            frame = av.VideoFrame.from_ndarray(np.zeros((90, 160, 3), dtype=np.uint8), format="rgb24")
+            frame.pts, frame.time_base = index, Fraction(1, 10)
+            for packet in video.encode(frame):
+                output.mux(packet)
+            signal = .3 * np.sin(2 * math.pi * 440 * (np.arange(1600) + index * 1600) / 16000)
+            frame = av.AudioFrame.from_ndarray(signal.astype(np.float32)[None, :], format="fltp", layout="mono")
+            frame.sample_rate = 16000
+            frame.pts, frame.time_base = index * 1600, Fraction(1, 16000)
+            for packet in audio.encode(frame):
+                output.mux(packet)
+        for stream in (video, audio):
+            for packet in stream.encode(None):
+                output.mux(packet)
+    (tmp_path / "index.html").write_text('''<video id="player" muted src="source.mp4"></video>
+        <audio id="audioEl"></audio><button id="start">Start</button>
+        <script>window.__realAcceptanceSampler = {started: performance.now()};
+        document.querySelector('#start').onclick = async () => {
+          await new Promise(resolve => setTimeout(resolve, 50));
+          if (UNMUTE) document.querySelector('#player').muted = false;
+          await document.querySelector('#player').play();
+        };</script>'''.replace("UNMUTE", "true" if unmute else "false"), encoding="utf-8")
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with sync_playwright() as playwright:
+            browser = launch_browser(playwright)
+            try:
+                page = browser.new_page(accept_downloads=True)
+                page.goto(f"http://127.0.0.1:{server.server_port}/index.html")
+                installation = install_audio_capture(page, "player")
+                assert installation["status"] == "installed"
+                assert installation["media_element_muted"] is True
+                page.locator("#start").click()
+                page.wait_for_timeout(1500)
+                result = save_audio_capture(page, tmp_path / "captured.webm", tmp_path)
+                assert result["status"] == "captured"
+                assert result["media_element_id"] == "player"
+                assert result["media_element_muted"] is (not unmute)
+                assert result["signal_observed"] is unmute
+            finally:
+                browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_audio_capture_reports_recorder_failure_after_clock_failure():
+    from browser_acoustic_capture import install_audio_capture
+    from e2e_original_release import launch_browser
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = launch_browser(playwright)
+        try:
+            page = browser.new_page()
+            page.set_content('<audio id="audioEl"></audio><video id="player"></video>'
+                             '<button id="start">Start</button>')
+            page.evaluate('''() => {
+              window.__realAcceptanceSampler = {started: performance.now()};
+              window.AudioContext = class {
+                constructor() { this.state = 'running'; this.sampleRate = 16000; this.currentTime = 0; }
+                createMediaElementSource() { return {connect() {}}; }
+                createMediaStreamDestination() { return {stream: {}}; }
+                createAnalyser() { return {fftSize: 1024, connect() {}, getFloatTimeDomainData() {}}; }
+                getOutputTimestamp() { throw Error('clock failure'); }
+                resume() { return Promise.resolve(); }
+              };
+              window.MediaRecorder = class extends EventTarget {
+                static isTypeSupported() { return true; }
+                constructor() { super(); window.testRecorder = this; this.state = 'inactive'; }
+                start() { this.state = 'recording'; this.dispatchEvent(new Event('start')); }
+              };
+            }''')
+            assert install_audio_capture(page)["status"] == "installed"
+            page.locator("#start").click()
+            page.wait_for_function("window.__acousticCapture.status() === 'clock_error'")
+            page.evaluate("() => window.testRecorder.dispatchEvent(new Event('error'))")
+            assert page.evaluate("() => window.__acousticCapture.status()") == "recorder_error"
+        finally:
+            browser.close()
