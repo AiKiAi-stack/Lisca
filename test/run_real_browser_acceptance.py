@@ -437,6 +437,7 @@ def collect(args):
     checkpoint_post_delta = None
     browser = page = None
     sampler_started = False
+    start_clicked = False
     sync_capture = bool(getattr(args, "capture_acoustic_sync", False))
     playback_evidence = bool(getattr(args, "capture_playback_evidence", False))
     capture_enabled = sync_capture or playback_evidence
@@ -488,7 +489,8 @@ def collect(args):
             batch = drain_samples(page)
             samples.extend(batch)
             video_eof |= any(sample.get("ended") for sample in batch)
-            if acoustic_capture is not None and batch:
+            if (acoustic_capture is not None and batch
+                    and not any(error.get("type") == "pixel_capture_unavailable" for error in errors)):
                 sample = batch[-1]
                 visible = sample.get("visible") is True
                 state = (sample.get("visible_text", "") if visible else "", visible)
@@ -649,21 +651,25 @@ def collect(args):
             if playback_evidence:
                 acoustic_capture["clock_calibration"] = _calibrate_capture_clock(
                     page, acoustic_capture.get("clock_calibration"), "end")
-                if acoustic_capture["clock_calibration"].get("status") != "calibrated":
+                if (acoustic_capture["clock_calibration"].get("status") != "calibrated"
+                        and not any(error.get("type") == "playback_capture_clock_unknown"
+                                    for error in errors)):
                     errors.append({"type": "playback_capture_clock_unknown"})
             try:
                 page.evaluate("() => window.__realAcceptanceSampler?.stop()")
                 drain()
             except Exception:
                 pass
-            if acoustic_capture is not None:
+            if acoustic_capture is not None and start_clicked:
                 try:
                     acoustic_capture["audio"] = save_audio_capture(
                         page, Path(output_dir).expanduser() / f"{args.label}.playback.webm",
                         Path(output_dir).expanduser().resolve(),
                     )
                     if acoustic_capture["audio"].get("status") != "captured":
-                        errors.append({"type": "playback_audio_capture_unavailable"})
+                        if not any(error.get("type") == "playback_audio_capture_unavailable"
+                                   for error in errors):
+                            errors.append({"type": "playback_audio_capture_unavailable"})
                     elif playback_evidence:
                         audio = acoustic_capture["audio"]
                         volume = audio.get("media_element_volume")
@@ -702,25 +708,45 @@ def collect(args):
                     if playback_evidence:
                         acoustic_capture["clock_calibration"] = _calibrate_capture_clock(
                             page, None, "start")
+                        clock_start = acoustic_capture["clock_calibration"].get("start")
+                        if (not clock_start or clock_start["uncertainty_ms"]
+                                > CAPTURE_CLOCK_MAX_ESTIMATED_UNCERTAINTY_MS):
+                            errors.append({"type": "playback_capture_clock_unknown"})
                     if acoustic_capture is not None:
                         target_id = acoustic_capture.get("media_element_id") or "audioEl"
                         acoustic_capture["installation"] = _safe_value(
                             install_audio_capture(page, media_element_id=target_id))
                         installation = acoustic_capture["installation"]
+                        if (playback_evidence and installation.get("status") == "installed"
+                                and installation.get("output_clock_supported") is not True):
+                            errors.append({"type": "playback_capture_clock_unknown"})
                         if (installation.get("status") != "installed"
                                 or (playback_evidence and (
                                     installation.get("media_element_id") != target_id
-                                    or installation.get("media_element_muted") is not False
                                     or not isinstance(installation.get("media_element_volume"),
                                                       (int, float))
                                     or installation["media_element_volume"] <= 0))):
                             errors.append({"type": "playback_audio_capture_unavailable"})
-                    page.locator("#start").click()
+                    preflight_ok = not errors
+                    if preflight_ok:
+                        page.locator("#start").click()
+                        start_clicked = True
 
                     no_start_deadline = started + 15
-                    while True:
+                    while preflight_ok:
                         drain()
                         write_progress()
+                        if acoustic_capture is not None:
+                            capture_status = page.evaluate("() => window.__acousticCapture?.status()")
+                            if capture_status == "clock_error" and playback_evidence:
+                                errors.append({"type": "playback_capture_clock_unknown"})
+                            elif capture_status not in ("installed", "recording", "clock_error"):
+                                errors.append({"type": "playback_audio_capture_unavailable"})
+                        if any(error.get("type") in (
+                                "pixel_capture_unavailable", "playback_audio_capture_unavailable",
+                                "playback_capture_clock_unknown") for error in errors):
+                            stop_active("capture_failure")
+                            break
                         if args.stop_file and args.stop_file.exists():
                             stop_active("operator_signal")
                             break
