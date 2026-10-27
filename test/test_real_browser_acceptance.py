@@ -129,6 +129,47 @@ def test_acoustic_capture_requires_a_local_reference_bound_input(tmp_path):
     assert args.capture_acoustic_sync is True
 
 
+def test_playback_evidence_cli_accepts_only_unscored_local_or_hls_inputs(tmp_path):
+    local = tmp_path / "long.wav"
+    local.write_bytes(b"synthetic parser-only input")
+    local_args = acceptance.parse_args([
+        "--media", str(local), "--label", "long-local", "--capture-playback-evidence",
+    ])
+    hls_args = acceptance.parse_args([
+        "--media", "https://media.test/live.m3u8?token=fixture", "--label", "long-hls",
+        "--capture-playback-evidence",
+    ])
+
+    assert local_args.capture_playback_evidence is True
+    assert hls_args.capture_playback_evidence is True
+    for media in ("https://media.test/video.mp4", "https://youtube.test/watch?v=1",
+                  "rtsp://media.test/live.m3u8"):
+        with pytest.raises(SystemExit):
+            acceptance.parse_args([
+                "--media", media, "--label", "unsupported", "--capture-playback-evidence",
+            ])
+    with pytest.raises(SystemExit):
+        acceptance.parse_args([
+            "--media", str(local), "--label", "scored", "--reference", "reference.json",
+            "--language", "en", "--capture-playback-evidence",
+        ])
+    with pytest.raises(SystemExit):
+        acceptance.parse_args([
+            "--media", str(local), "--label", "both", "--capture-playback-evidence",
+            "--capture-acoustic-sync",
+        ])
+
+
+@pytest.mark.parametrize("media", [r"C:\media\long.mp4", "C:/media/long.mp4"])
+def test_playback_evidence_cli_treats_absolute_windows_paths_as_local(media):
+    args = acceptance.parse_args([
+        "--media", media, "--label", "windows-local", "--capture-playback-evidence",
+    ])
+
+    assert args.capture_playback_evidence is True
+    assert not args.media.startswith(("http://", "https://"))
+
+
 def test_error_message_presence_survives_recording_sanitization_without_raw_text(tmp_path):
     event = acceptance.sanitize_ws_event({"type": "error",
         "message": "private provider details must not be saved"}, 30)
@@ -143,7 +184,9 @@ def test_error_message_presence_survives_recording_sanitization_without_raw_text
 
 
 def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_start,
-                                   observe_recovery=True):
+                                   observe_recovery=True, media=None,
+                                   playback_evidence=False, browser_clock_samples=None,
+                                   monotonic_ns_samples=None, captured_audio=None):
     clock = {"now": 100.0}
 
     class Request:
@@ -198,6 +241,7 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             self.status_is_error = False
             self.retry_visible = False
             self.caption = ""
+            self.ended = False
 
         def on(self, name, callback):
             self.handlers.setdefault(name, []).append(callback)
@@ -214,12 +258,14 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
         def locator(self, selector):
             return Locator(self, selector)
 
-        def evaluate(self, script):
+        def evaluate(self, script, *_args):
             if script == acceptance.SAMPLER_START:
                 self.sampler_started_at = clock["now"]
                 self.next_sample_at = clock["now"]
                 self._sample()
                 return None
+            if "performance.now()" in script and "__realAcceptanceSampler" in script:
+                return browser_clock_samples.pop(0) if browser_clock_samples else None
             if "__realAcceptanceSampler?.drain()" in script:
                 batch, self.sample_buffer = self.sample_buffer, []
                 return batch
@@ -234,7 +280,7 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                 "observed_after_ms": round(elapsed * 1000),
                 "media_time": elapsed,
                 "duration": None,
-                "ended": False,
+                "ended": self.ended,
                 "paused": False,
                 "seeking": False,
                 "ready_state": 4,
@@ -314,6 +360,9 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             pass
 
     monkeypatch.setattr(acceptance.time, "monotonic", lambda: clock["now"])
+    if monotonic_ns_samples is not None:
+        ns_values = iter(monotonic_ns_samples)
+        monkeypatch.setattr(acceptance.time, "monotonic_ns", lambda: next(ns_values))
     monkeypatch.setattr(acceptance, "sync_playwright", Playwright)
     monkeypatch.setattr(acceptance, "launch_browser", lambda _playwright: Browser())
 
@@ -322,15 +371,125 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             active_page.locator("#stop").click()
 
     monkeypatch.setattr(acceptance, "stop_if_active", stop_if_active)
-    argv = ["--media", "https://media.test/live.m3u8?token=TEST_ONLY_MEDIA_CAPABILITY",
+    def fake_install_audio_capture(target_page, media_element_id="audioEl"):
+        target_page.capture_target = media_element_id
+        return {"status": "installed", "media_element_id": media_element_id,
+                "media_element_muted": False, "media_element_volume": 1.0}
+
+    monkeypatch.setattr(acceptance, "install_audio_capture", fake_install_audio_capture)
+    def fake_save_audio_capture(target_page, *_args):
+        return {"status": "captured", "media_element_id": target_page.capture_target,
+                "signal_observed": True, "media_element_muted": False, "media_element_volume": 1.0,
+                **(captured_audio or {})}
+
+    monkeypatch.setattr(acceptance, "save_audio_capture", fake_save_audio_capture)
+    argv = ["--media", media or "https://media.test/live.m3u8?token=TEST_ONLY_MEDIA_CAPABILITY",
             "--label", label, "--output", str(tmp_path), "--seconds", str(seconds)]
     if observe_recovery:
         argv.append("--observe-recovery")
+    if playback_evidence:
+        argv.append("--capture-playback-evidence")
     args = acceptance.parse_args(argv)
     result = acceptance.collect(args)
     report = json.loads((tmp_path / f"{label}.report.json").read_text(encoding="utf-8"))
     recording = json.loads((tmp_path / f"{label}.recording.json").read_text(encoding="utf-8"))
     return result, report, recording, page, clock
+
+
+def test_long_observation_brackets_browser_clock_and_selects_actual_media_element(
+        tmp_path, monkeypatch):
+    def on_start(page):
+        socket = page.open_session()
+        page.schedule(0.3, lambda: socket.send({"type": "end", "reason": "completed"}))
+
+    result, report, _recording, page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="clock-hls", seconds=0.2, on_start=on_start,
+        playback_evidence=True,
+        browser_clock_samples=[{"now": 5000.0, "started": 5000.0},
+                               {"now": 6000.0, "started": 5000.0}],
+        monotonic_ns_samples=[1_000_000_000, 1_002_000_000,
+                              2_000_000_000, 2_004_000_000])
+    evidence = report["playback_evidence"]
+
+    assert getattr(page, "capture_target") == "player"
+    assert evidence["purpose"] == "long_observation"
+    assert evidence["acceptance_assessed"] is False
+    assert evidence["sync_gate_passed"] is None
+    assert evidence["clock_calibration"]["status"] == "calibrated"
+    assert evidence["clock_calibration"]["sampler_origin_monotonic_ns"] == 1_001_000_000
+    assert evidence["clock_calibration"]["origin_drift_ms"] == 1.0
+    assert result["real_accuracy_tested"] is False
+    assert report["acoustic_sync_assessed"] is False
+
+
+def test_long_observation_fails_closed_when_clock_bracket_is_unknown(tmp_path, monkeypatch):
+    def on_start(page):
+        page.open_session()
+
+    result, report, _recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="clock-unknown", seconds=0.1, on_start=on_start,
+        playback_evidence=True,
+        browser_clock_samples=[{"now": 5000.0, "started": 5000.0}, None],
+        monotonic_ns_samples=[1_000_000_000, 1_002_000_000,
+                              2_000_000_000, 2_004_000_000])
+
+    assert result["exit_ok"] is False
+    assert report["playback_evidence"]["clock_calibration"]["status"] == "capture_clock_unknown"
+    assert any(error["type"] == "playback_capture_clock_unknown" for error in report["errors"])
+
+
+@pytest.mark.parametrize("browser_clock_samples,monotonic_ns_samples", [
+    ([{"now": 5000.0, "started": 5000.0}, {"now": 6000.0, "started": 5000.0}],
+     [1_000_000_000, 1_100_000_000, 2_000_000_000, 2_004_000_000]),
+    ([{"now": 5000.0, "started": 5000.0}, {"now": 5900.0, "started": 5000.0}],
+     [1_000_000_000, 1_002_000_000, 2_000_000_000, 2_004_000_000]),
+])
+def test_long_observation_rejects_wide_clock_brackets_or_excessive_drift(
+        tmp_path, monkeypatch, browser_clock_samples, monotonic_ns_samples):
+    result, report, _recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="clock-invalid", seconds=0.1,
+        on_start=lambda page: page.open_session(), playback_evidence=True,
+        browser_clock_samples=browser_clock_samples,
+        monotonic_ns_samples=monotonic_ns_samples)
+
+    assert result["exit_ok"] is False
+    assert report["playback_evidence"]["clock_calibration"]["status"] == "capture_clock_unknown"
+    assert any(error["type"] == "playback_capture_clock_unknown" for error in report["errors"])
+
+
+def test_long_local_playback_evidence_selects_audio_element(tmp_path, monkeypatch):
+    media = tmp_path / "long.wav"
+    media.write_bytes(b"synthetic local identity")
+
+    def on_start(page):
+        page.ended = True
+        page.open_session().send({"type": "end", "reason": "completed"})
+
+    _result, report, _recording, page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="clock-local", seconds=1, on_start=on_start,
+        observe_recovery=False, media=str(media), playback_evidence=True,
+        browser_clock_samples=[{"now": 5000.0, "started": 5000.0},
+                               {"now": 6000.0, "started": 5000.0}],
+        monotonic_ns_samples=[1_000_000_000, 1_002_000_000,
+                              2_000_000_000, 2_004_000_000])
+
+    assert getattr(page, "capture_target") == "audioEl"
+    assert report["playback_evidence"]["media_element_id"] == "audioEl"
+
+
+def test_long_playback_evidence_rejects_silent_or_wrong_element_capture(tmp_path, monkeypatch):
+    result, report, _recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="silent-capture", seconds=0.1,
+        on_start=lambda page: page.open_session(), playback_evidence=True,
+        browser_clock_samples=[{"now": 5000.0, "started": 5000.0},
+                               {"now": 6000.0, "started": 5000.0}],
+        monotonic_ns_samples=[1_000_000_000, 1_002_000_000,
+                              2_000_000_000, 2_004_000_000],
+        captured_audio={"media_element_id": "audioEl", "signal_observed": False})
+
+    assert result["exit_ok"] is False
+    assert any(error["type"] == "playback_audio_capture_unavailable"
+               for error in report["errors"])
 
 
 def _retry_error(socket):

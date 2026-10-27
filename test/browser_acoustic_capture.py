@@ -4,25 +4,32 @@ from pathlib import Path
 import struct
 
 
-AUDIO_CAPTURE_INSTALL = r"""() => {
+AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
   if (window.__acousticCapture) return window.__acousticCapture.installation;
   // Local WebUI playback uses a muted video clock plus a separate audible audioEl.
-  // Fixed-reference sync captures use that actual audible element. HLS is not
-  // accepted by the opt-in local-reference capture path.
-  const media = document.querySelector('#audioEl') || document.querySelector('#player');
+  // Local sources use audioEl; direct HLS uses the audible player element.
+  if (!['audioEl', 'player'].includes(mediaElementId)) return {status: 'unsupported'};
+  const media = document.getElementById(mediaElementId);
   const clockMedia = document.querySelector('#player');
   const start = document.querySelector('#start');
   if (!media || !start || !window.MediaRecorder) {
     return {status: 'unsupported'};
   }
+  if (media.muted || !Number.isFinite(media.volume) || media.volume <= 0) {
+    return {status: 'media_element_muted', media_element_id: media.id || null,
+      media_element_muted: media.muted, media_element_volume: media.volume};
+  }
   const Context = window.AudioContext || window.webkitAudioContext;
   if (!Context) return {status: 'audio_context_unsupported'};
-  let context, recorder, destination, source;
+  let context, recorder, destination, source, analyser;
   try {
     context = new Context({latencyHint: 'interactive'});
     source = context.createMediaElementSource(media);
     destination = context.createMediaStreamDestination();
-    source.connect(context.destination);
+    analyser = context.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    analyser.connect(context.destination);
     source.connect(destination);
   } catch {
     return {status: 'audio_graph_unavailable'};
@@ -33,12 +40,18 @@ AUDIO_CAPTURE_INSTALL = r"""() => {
   recorder = new MediaRecorder(destination.stream, {mimeType});
   const chunks = [];
   const outputClockSamples = [];
+  const signalSamples = new Float32Array(analyser.fftSize);
+  let signalObserved = false;
   let status = 'installed';
   let startPerformanceAfterMs = null;
   let startContextTimeSeconds = null;
   let clockTimer = null;
   const sampler = () => window.__realAcceptanceSampler;
   const recordOutputTime = () => {
+    analyser.getFloatTimeDomainData(signalSamples);
+    let energy = 0;
+    for (const value of signalSamples) energy += value * value;
+    if (Math.sqrt(energy / signalSamples.length) > 0.0001) signalObserved = true;
     if (!sampler() || context.state !== 'running' || !context.getOutputTimestamp) return;
     const stamp = context.getOutputTimestamp();
     if (!Number.isFinite(stamp.contextTime) || !Number.isFinite(stamp.performanceTime)) return;
@@ -86,6 +99,7 @@ AUDIO_CAPTURE_INSTALL = r"""() => {
         setTimeout(() => URL.revokeObjectURL(url), 5000);
         resolve({status, mime_type: mimeType, sample_rate_hz: context.sampleRate,
           media_element_id: media.id || null, clock_media_element_id: clockMedia?.id || null,
+          signal_observed: signalObserved,
           media_element_muted: media.muted, media_element_volume: media.volume,
           clock_media_element_muted: clockMedia?.muted ?? null,
           start_performance_after_ms: startPerformanceAfterMs,
@@ -103,6 +117,10 @@ AUDIO_CAPTURE_INSTALL = r"""() => {
         finish();
       }
     })
+  };
+  window.__acousticCapture.installation = {
+    ...window.__acousticCapture.installation,
+    media_element_muted: media.muted, media_element_volume: media.volume,
   };
   return window.__acousticCapture.installation;
 }"""
@@ -129,9 +147,11 @@ VISIBLE_STATE = r"""() => {
 }"""
 
 
-def install_audio_capture(page):
+def install_audio_capture(page, media_element_id="audioEl"):
     """Connect a pre-playback audio tap and return capability metadata."""
-    return page.evaluate(AUDIO_CAPTURE_INSTALL)
+    if media_element_id not in ("audioEl", "player"):
+        raise ValueError("unsupported audio capture element")
+    return page.evaluate(AUDIO_CAPTURE_INSTALL, media_element_id)
 
 
 def save_audio_capture(page, output_path, report_root):
