@@ -51,6 +51,12 @@ URL_PATTERN = re.compile(r"(?i)\b(?:https?|wss?)://[^\s<>\"']+")
 BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/-]+=*")
 PROVIDER_KEY_PATTERN = re.compile(r"(?i)\bsk-[a-z0-9_-]{16,}\b")
 RECOVERY_BACKOFF_GRACE_SECONDS = 2.5
+CAPTURE_CLOCK_MAX_ESTIMATED_UNCERTAINTY_MS = 50
+CAPTURE_CLOCK_MAX_ORIGIN_DRIFT_MS = 50
+CAPTURE_CLOCK_READ = r"""() => {
+  const started = window.__realAcceptanceSampler?.started;
+  return {now: performance.now(), started: Number.isFinite(started) ? started : null};
+}"""
 SENSITIVE_NAMES = {
     "api_key", "access_token", "refresh_token", "token", "session", "session_id",
     "session_token", "password", "passwd", "secret", "credential", "authorization",
@@ -71,6 +77,15 @@ def safe_remote_source(value):
     host = f"[{host}]" if ":" in host else host
     authority = f"{host}:{port}" if port else host
     return f"{parts.scheme.lower()}://{authority}/[redacted-media-url]"
+
+
+def _is_remote_hls_source(value):
+    try:
+        parts = urlsplit(str(value))
+        return (parts.scheme.lower() in ("http", "https") and bool(parts.hostname)
+                and parts.path.lower().endswith(".m3u8"))
+    except (TypeError, ValueError):
+        return False
 
 
 def sanitize_text(value):
@@ -347,6 +362,55 @@ def _candidate_identity():
         return None, None
 
 
+def _calibrate_capture_clock(page, calibration, edge):
+    calibration = calibration or {
+        "method": "bracketed_same_host_monotonic_to_browser_performance_clock",
+        "uncertainty_estimate": "ceil((bracket_ms / 2 + 1 ms) to 0.001 ms)",
+        "maximum_estimated_uncertainty_ms": CAPTURE_CLOCK_MAX_ESTIMATED_UNCERTAINTY_MS,
+        "maximum_start_end_origin_drift_ms": CAPTURE_CLOCK_MAX_ORIGIN_DRIFT_MS,
+        "start": None, "end": None,
+    }
+    try:
+        before = time.monotonic_ns()
+        value = page.evaluate(CAPTURE_CLOCK_READ)
+        after = time.monotonic_ns()
+        if (not isinstance(value, dict) or not isinstance(value.get("now"), (int, float))
+                or not isinstance(value.get("started"), (int, float))
+                or not math.isfinite(value["now"]) or not math.isfinite(value["started"])
+                or value["now"] < value["started"] or before <= 0 or after < before):
+            raise ValueError("invalid browser clock sample")
+        midpoint = (before + after) // 2
+        origin = round(midpoint - (value["now"] - value["started"]) * 1e6)
+        bracket_ms = (after - before) / 1e6
+        uncertainty_ms = math.ceil((bracket_ms / 2 + 1.0) * 1000) / 1000
+        if origin <= 0 or not math.isfinite(uncertainty_ms):
+            raise ValueError("invalid clock mapping")
+        calibration[edge] = {
+            "sampler_origin_monotonic_ns": origin,
+            "monotonic_before_ns": before, "monotonic_after_ns": after,
+            "browser_performance_now_ms": value["now"],
+            "sampler_started_performance_ms": value["started"],
+            "bracket_ms": round(bracket_ms, 3),
+            "uncertainty_ms": uncertainty_ms,
+        }
+    except Exception:
+        calibration[edge] = None
+    start, end = calibration.get("start"), calibration.get("end")
+    if start:
+        calibration["sampler_origin_monotonic_ns"] = start["sampler_origin_monotonic_ns"]
+    if not start or not end:
+        calibration["status"] = "capture_clock_unknown" if edge == "end" else "awaiting_end_sample"
+        return calibration
+    drift_ms = abs(end["sampler_origin_monotonic_ns"]
+                   - start["sampler_origin_monotonic_ns"]) / 1e6
+    calibration["origin_drift_ms"] = round(drift_ms, 3)
+    calibration["status"] = (
+        "calibrated" if max(start["uncertainty_ms"], end["uncertainty_ms"])
+        <= CAPTURE_CLOCK_MAX_ESTIMATED_UNCERTAINTY_MS
+        and drift_ms <= CAPTURE_CLOCK_MAX_ORIGIN_DRIFT_MS else "capture_clock_unknown")
+    return calibration
+
+
 def collect(args):
     output_dir = args.output or ROOT / "logs" / "real-browser-acceptance"
     recording_path, report_path, score_path = _result_paths(output_dir, args.label)
@@ -373,10 +437,19 @@ def collect(args):
     checkpoint_post_delta = None
     browser = page = None
     sampler_started = False
-    capture_enabled = bool(getattr(args, "capture_acoustic_sync", False))
+    sync_capture = bool(getattr(args, "capture_acoustic_sync", False))
+    playback_evidence = bool(getattr(args, "capture_playback_evidence", False))
+    capture_enabled = sync_capture or playback_evidence
     acoustic_capture = ({"mode": "browser_web_audio_media_element", "audio": None,
                          "screenshots": [], "screenshot_transition_count": 0}
                         if capture_enabled else None)
+    if playback_evidence:
+        acoustic_capture.update({
+            "purpose": "long_observation", "acceptance_assessed": False,
+            "sync_gate_passed": None,
+            "media_element_id": "player" if remote else "audioEl",
+            "clock_calibration": None,
+        })
     screenshot_state = {"value": ("", False), "index": 1}
     candidate_revision, candidate_dirty = (_candidate_identity()
                                            if capture_enabled else (None, None))
@@ -573,6 +646,11 @@ def collect(args):
             # WebSocket is expected to close before DELETE returns. Drain available public
             # events without treating the absence of an end event as a cleanup failure.
             drain()
+            if playback_evidence:
+                acoustic_capture["clock_calibration"] = _calibrate_capture_clock(
+                    page, acoustic_capture.get("clock_calibration"), "end")
+                if acoustic_capture["clock_calibration"].get("status") != "calibrated":
+                    errors.append({"type": "playback_capture_clock_unknown"})
             try:
                 page.evaluate("() => window.__realAcceptanceSampler?.stop()")
                 drain()
@@ -586,6 +664,16 @@ def collect(args):
                     )
                     if acoustic_capture["audio"].get("status") != "captured":
                         errors.append({"type": "playback_audio_capture_unavailable"})
+                    elif playback_evidence:
+                        audio = acoustic_capture["audio"]
+                        volume = audio.get("media_element_volume")
+                        volume_valid = (isinstance(volume, (int, float))
+                                        and not isinstance(volume, bool) and volume > 0)
+                        if (audio.get("media_element_id") != acoustic_capture["media_element_id"]
+                                or audio.get("signal_observed") is not True
+                                or audio.get("media_element_muted") is not False
+                                or not volume_valid):
+                            errors.append({"type": "playback_audio_capture_unavailable"})
                 except Exception:
                     acoustic_capture["audio"] = {"status": "capture_failed"}
                     errors.append({"type": "playback_audio_capture_unavailable"})
@@ -611,9 +699,21 @@ def collect(args):
                     started = time.monotonic()
                     page.evaluate(SAMPLER_START)
                     sampler_started = True
+                    if playback_evidence:
+                        acoustic_capture["clock_calibration"] = _calibrate_capture_clock(
+                            page, None, "start")
                     if acoustic_capture is not None:
-                        acoustic_capture["installation"] = _safe_value(install_audio_capture(page))
-                        if acoustic_capture["installation"].get("status") != "installed":
+                        target_id = acoustic_capture.get("media_element_id") or "audioEl"
+                        acoustic_capture["installation"] = _safe_value(
+                            install_audio_capture(page, media_element_id=target_id))
+                        installation = acoustic_capture["installation"]
+                        if (installation.get("status") != "installed"
+                                or (playback_evidence and (
+                                    installation.get("media_element_id") != target_id
+                                    or installation.get("media_element_muted") is not False
+                                    or not isinstance(installation.get("media_element_volume"),
+                                                      (int, float))
+                                    or installation["media_element_volume"] <= 0))):
                             errors.append({"type": "playback_audio_capture_unavailable"})
                     page.locator("#start").click()
 
@@ -717,6 +817,10 @@ def collect(args):
                     close_browser()
     except Exception as exc:
         errors.append({"type": "collector_error", "message": sanitize_text(str(exc))})
+    if (playback_evidence
+            and (acoustic_capture.get("clock_calibration") or {}).get("status") != "calibrated"):
+        if not any(error.get("type") == "playback_capture_clock_unknown" for error in errors):
+            errors.append({"type": "playback_capture_clock_unknown"})
     if started is None:
         started_at, started = datetime.now(timezone.utc).isoformat(), time.monotonic()
     errors.extend(page_errors)
@@ -812,11 +916,17 @@ def collect(args):
         "recording_path": str(recording_path),
     }
     if acoustic_capture is not None:
-        report["language"] = args.language
-        report["candidate_revision"] = candidate_revision
-        report["candidate_worktree_dirty"] = candidate_dirty
-        report["acoustic_capture"] = _safe_value(acoustic_capture)
-        report["acoustic_capture"]["physical_output_latency"] = "unknown"
+        if sync_capture:
+            report["language"] = args.language
+            report["candidate_revision"] = candidate_revision
+            report["candidate_worktree_dirty"] = candidate_dirty
+            report["acoustic_capture"] = _safe_value(acoustic_capture)
+            report["acoustic_capture"]["physical_output_latency"] = "unknown"
+        else:
+            report["playback_evidence"] = _safe_value(acoustic_capture)
+            report["playback_evidence"]["physical_output_latency"] = "unknown"
+            report["playback_evidence"]["candidate_revision"] = candidate_revision
+            report["playback_evidence"]["candidate_worktree_dirty"] = candidate_dirty
     _write_json(report_path, report)
     _write_json(progress_path, {
         "label": args.label, "running": False,
@@ -848,8 +958,11 @@ def parse_args(argv=None):
                         help="Maximum wall seconds for local-file recognition and playback")
     parser.add_argument("--reference", type=Path, help="Optional fixed reference manifest")
     parser.add_argument("--language", choices=("zh", "en"), help="Language for optional scoring")
-    parser.add_argument("--capture-acoustic-sync", action="store_true",
-                        help="Capture decoded browser playback audio and pixel screenshots at caption changes")
+    capture_group = parser.add_mutually_exclusive_group()
+    capture_group.add_argument("--capture-acoustic-sync", action="store_true",
+                               help="Capture fixed-reference browser audio and caption pixels")
+    capture_group.add_argument("--capture-playback-evidence", action="store_true",
+                               help="Capture unscored long-playback audio/pixels; clock requires <=50 ms estimated uncertainty and start/end drift")
     parser.add_argument("--checkpoints", type=parse_checkpoints, default=[],
                         help="Optional comma-separated local seek checkpoints, such as 5.1,23.8")
     parser.add_argument("--stop-file", type=Path,
@@ -860,6 +973,10 @@ def parse_args(argv=None):
     if args.observe_recovery and not args.media.startswith(("http://", "https://")):
         parser.error("--observe-recovery is supported only for HTTP(S) sources")
     if not args.media.startswith(("http://", "https://")):
+        windows_drive_path = re.match(r"^[A-Za-z]:[\\/]", args.media)
+        if (args.capture_playback_evidence and not windows_drive_path
+                and re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", args.media)):
+            parser.error("--capture-playback-evidence accepts local files or direct HTTP(S) HLS only")
         args.media = str(Path(args.media).expanduser().resolve())
     if not math.isfinite(args.seconds) or args.seconds <= 0:
         parser.error("--seconds must be a finite positive duration")
@@ -871,6 +988,11 @@ def parse_args(argv=None):
         parser.error("--capture-acoustic-sync requires a local file matching the fixed reference")
     if args.capture_acoustic_sync and (not args.reference or not args.language):
         parser.error("--capture-acoustic-sync requires --reference and --language")
+    if args.capture_playback_evidence:
+        if args.reference or args.language:
+            parser.error("--capture-playback-evidence does not accept --reference or --language")
+        if args.media.startswith(("http://", "https://")) and not _is_remote_hls_source(args.media):
+            parser.error("--capture-playback-evidence accepts remote HTTP(S) .m3u8 sources only")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", args.label):
         parser.error("--label must contain 1-80 letters, numbers, dots, underscores, or hyphens")
     return args
