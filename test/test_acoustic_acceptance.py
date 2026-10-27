@@ -109,10 +109,23 @@ def _speech_fixture(path, count=50):
     return spans
 
 
+def _write_wave_samples(path, samples):
+    # wave.open(..., "wb") returns a writer; pylint infers the reader type here.
+    # pylint: disable=no-member
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(RATE)
+        output.writeframes(samples.astype("<i2", copy=False).tobytes())
+    # pylint: enable=no-member
+
+
 def _write_evidence(tmp_path, *, lag=0.0, missing_items=(), quiet_capture=False,
                     uncertainty=0.02, frozen=False, missing_voice_items=(),
                     missing_screenshots=False, split_first_caption=False,
-                    cumulative_first_caption=False):
+                    cumulative_first_caption=False, pause_at=None,
+                    pause_duration=0.6, mute_after_pause_media_time=None,
+                    sampling_step_ms=50, caption_during_pause=False):
     source = tmp_path / "source.wav"
     voice_items = _speech_fixture(source)
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -140,15 +153,22 @@ def _write_evidence(tmp_path, *, lag=0.0, missing_items=(), quiet_capture=False,
     screenshots = []
     previous = (None, False)
     start_ms = 0
-    step_ms = 50
-    capture_duration = 52 if frozen else 50
-    for observed_ms in range(0, capture_duration * 1000 + 1, step_ms):
+    step_ms = sampling_step_ms
+    capture_duration = (52 if frozen else
+                        50 + pause_duration if pause_at is not None else 50)
+    for observed_ms in range(0, round(capture_duration * 1000) + 1, step_ms):
         capture_time = observed_ms / 1000
-        paused = frozen and 25 <= capture_time < 27
-        source_time = (min(25, capture_time) if paused else
+        paused = pause_at is not None and pause_at <= capture_time < pause_at + pause_duration
+        source_time = (pause_at if paused else
+                       capture_time - pause_duration
+                       if pause_at is not None and capture_time >= pause_at + pause_duration else
+                       min(25, capture_time) if frozen and capture_time < 27 else
                        capture_time - 2 if frozen and capture_time >= 27 else capture_time)
         item_index = min(49, int(source_time))
         item_offset = source_time - item_index
+        if (caption_during_pause and paused
+                and capture_time < pause_at + step_ms / 1000):
+            item_offset = 0.3 + lag
         text = labels[item_index]
         if split_first_caption and item_index == 0:
             if 0.2 + lag <= item_offset < 0.4 + lag:
@@ -214,6 +234,18 @@ def _write_evidence(tmp_path, *, lag=0.0, missing_items=(), quiet_capture=False,
             capture_path.write_bytes(source_bytes[:44 + 25 * RATE * 2]
                                      + bytes(2 * RATE * 2)
                                      + source_bytes[44 + 25 * RATE * 2:])
+        elif pause_at is not None:
+            gap_at = pause_at
+            source_samples = np.frombuffer(source_bytes[44:], dtype="<i2")
+            gap_samples = round(pause_duration * RATE)
+            capture_samples = np.concatenate((
+                source_samples[:round(gap_at * RATE)],
+                np.zeros(gap_samples, dtype=np.int16),
+                source_samples[round(gap_at * RATE):]))
+            if mute_after_pause_media_time is not None:
+                mute_at = round((mute_after_pause_media_time + pause_duration) * RATE)
+                capture_samples[mute_at:] = 0
+            _write_wave_samples(capture_path, capture_samples)
         else:
             capture_path.write_bytes(source_bytes)
     capture_hash = hashlib.sha256(capture_path.read_bytes()).hexdigest()
@@ -236,9 +268,12 @@ def _write_evidence(tmp_path, *, lag=0.0, missing_items=(), quiet_capture=False,
     report_path = tmp_path / "browser-report.json"
     if missing_screenshots:
         screenshots.clear()
+    clock_times = list(range(0, round(capture_duration * 1000) + 1, 250))
+    if clock_times[-1] < round(capture_duration * 1000):
+        clock_times.append(round(capture_duration * 1000))
     clock_samples = [
         {"performance_time_after_ms": observed_ms, "context_time_seconds": 1 + observed_ms / 1000}
-        for observed_ms in range(0, capture_duration * 1000 + 1, 250)
+        for observed_ms in clock_times
     ]
     report_path.write_text(json.dumps({
         "candidate_revision": "867b5327cd90f222cc7d9e45ba012f9de1d3567b",
@@ -305,6 +340,7 @@ def test_public_cli_reports_synthetic_pass_as_calibration_only(tmp_path):
     assert result["samples"] == 50
     assert result["voice_span_source"]["provenance"] == "independent synthetic test truth"
     assert result["audio_alignment"]["method"] == "bounded_spectral_feature_cross_correlation"
+    assert len(result["audio_alignment"]["epochs"]) == 1
     assert result["visual_evidence"]["verified_transition_count"] >= 100
     assert result["physical_output_latency"] == "unknown"
 
@@ -717,6 +753,78 @@ def test_public_cli_detects_a_frozen_playback_audio_segment(tmp_path):
     assert result["sync_status"] == "calibration_only"
     assert result["calibration_thresholds_satisfied"] is False
     assert result["audio_alignment"]["status"] == "discontinuous_or_frozen"
+    assert len(result["audio_alignment"]["epochs"]) == 1
+
+
+def test_public_cli_keeps_sparse_clock_pause_boundary_unknown(tmp_path):
+    paths = _write_evidence(tmp_path, lag=0.02, pause_at=25.0, sampling_step_ms=10)
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 1
+    assert result["sync_status"] == "calibration_only"
+    assert result["calibration_thresholds_satisfied"] is False
+    alignment = result["audio_alignment"]
+    assert alignment["status"] == "unmatched"
+    assert alignment["reason"] == "playback_epoch_boundary_ambiguous"
+    assert len(alignment["epochs"]) == 2
+    assert all(epoch["matched_anchor_count"] >= 2 for epoch in alignment["epochs"])
+    assert result["unknown_item_count"] == 50
+
+
+def test_public_cli_rejects_a_pause_epoch_with_only_one_audio_anchor(tmp_path):
+    paths = _write_evidence(tmp_path, pause_at=45.0,
+                            mute_after_pause_media_time=46.0)
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 1
+    assert result["sync_status"] == "calibration_only"
+    assert result["calibration_thresholds_satisfied"] is False
+    assert result["sync_gate_passed"] is None
+    alignment = result["audio_alignment"]
+    assert alignment["status"] == "unmatched"
+    assert alignment["matched_anchor_count"] >= alignment["required_anchor_count"]
+    assert alignment["epochs"][1]["matched_anchor_count"] == 1
+
+
+def test_public_cli_does_not_map_a_caption_transition_inside_a_pause(tmp_path):
+    paths = _write_evidence(tmp_path, pause_at=25.0, caption_during_pause=True)
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 1
+    assert result["sync_status"] == "calibration_only"
+    assert result["calibration_thresholds_satisfied"] is False
+    assert result["audio_alignment"]["status"] == "unmatched"
+    assert result["audio_alignment"]["reason"] == "playback_epoch_boundary_ambiguous"
+    assert result["unknown_item_count"] == 50
+
+
+@pytest.mark.parametrize("conflicting", [
+    pytest.param(False, id="identical"), pytest.param(True, id="same-time-different-context")])
+def test_public_cli_rejects_conflicting_clock_duplicates_but_deduplicates_exact_ones(
+        tmp_path, conflicting):
+    paths = list(_write_evidence(tmp_path))
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    samples = report["acoustic_capture"]["audio"]["output_clock_samples"]
+    original_count = len(samples)
+    duplicate = samples[5].copy()
+    if conflicting:
+        duplicate["context_time_seconds"] += 0.001
+    samples.insert(6, duplicate)
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    if conflicting:
+        assert completed.returncode == 2
+        assert result["sync_status"] == "measurement_invalid"
+        assert result["invalid_reason"] == "output_clock_samples_invalid"
+    else:
+        assert completed.returncode == 0, completed.stderr + completed.stdout
+        assert result["calibration_thresholds_satisfied"] is True
+        assert result["audio_alignment"]["output_clock_sample_count"] == original_count
 
 
 @pytest.mark.parametrize("bad_field", ["source_sha256", "capture_sha256", "screenshot_sha256"])
@@ -739,3 +847,91 @@ def test_public_cli_rejects_mismatched_evidence_hashes(tmp_path, bad_field):
     assert completed.returncode == 2
     assert result["sync_status"] == "measurement_invalid"
     assert result["sync_gate_passed"] is None
+
+
+def test_public_cli_requires_anchor_coverage_of_distinct_items(tmp_path):
+    missing = [i for i in range(1, 51) if i > 41 or i % 2 == 0]
+    paths = _write_evidence(tmp_path, missing_voice_items=missing)
+    spans = json.loads(paths[2].read_text(encoding="utf-8"))
+    for item in spans["items"]:
+        if not item["spans"]:
+            continue
+        span = item["spans"][0]
+        midpoint = (span["start_seconds"] + span["end_seconds"]) / 2
+        item["spans"] = [dict(span, end_seconds=midpoint - 0.2),
+                         dict(span, start_seconds=midpoint + 0.2)]
+    paths[2].write_text(json.dumps(spans), encoding="utf-8")
+
+    _, result = _run_cli(tmp_path, paths)
+
+    alignment = result["audio_alignment"]
+    assert alignment["status"] == "unmatched"
+    assert alignment["matched_anchor_count"] >= alignment["required_anchor_count"]
+    assert alignment["matched_item_count"] == 21
+    assert result["calibration_thresholds_satisfied"] is False
+
+
+def test_public_cli_rejects_unmarked_forward_jump_after_last_anchor(tmp_path):
+    paths = _write_evidence(tmp_path)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    for sample in report["timeline_samples"]:
+        if sample["observed_after_ms"] >= 49900:
+            sample["media_time"] += 2
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    _, result = _run_cli(tmp_path, paths)
+
+    assert result["audio_alignment"]["status"] == "discontinuous_or_frozen"
+    assert result["calibration_thresholds_satisfied"] is False
+
+
+def test_public_cli_rejects_replayed_audio_across_pause_boundary(tmp_path):
+    paths = _write_evidence(tmp_path, pause_at=25.0)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    for sample in report["timeline_samples"]:
+        if sample["observed_after_ms"] >= 25600:
+            sample["media_time"] -= 1
+    capture = tmp_path / report["acoustic_capture"]["audio"]["path"]
+    source = np.frombuffer(paths[0].read_bytes()[44:], dtype="<i2")
+    replayed = np.concatenate((source[:25 * RATE], np.zeros(round(0.6 * RATE), dtype=np.int16),
+                               source[24 * RATE:-RATE]))
+    _write_wave_samples(capture, replayed)
+    report["acoustic_capture"]["audio"]["sha256"] = hashlib.sha256(capture.read_bytes()).hexdigest()
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    _, result = _run_cli(tmp_path, paths)
+
+    assert result["audio_alignment"]["status"] == "discontinuous_or_frozen"
+    assert result["audio_alignment"]["reason"] == "playback_epoch_source_time_repeated_or_reversed"
+    assert result["calibration_thresholds_satisfied"] is False
+
+
+def test_public_cli_does_not_extrapolate_epoch_boundary_clock(tmp_path):
+    paths = _write_evidence(tmp_path)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    report["acoustic_capture"]["audio"]["output_clock_samples"].pop()
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    _, result = _run_cli(tmp_path, paths)
+
+    assert result["audio_alignment"]["status"] == "unmatched"
+    assert result["audio_alignment"]["reason"] == "playback_epoch_boundary_clock_missing"
+    assert result["calibration_thresholds_satisfied"] is False
+
+
+def test_public_cli_rejects_forward_jump_after_playback_slowdown(tmp_path):
+    paths = _write_evidence(tmp_path)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    for sample in report["timeline_samples"]:
+        observed = sample["observed_after_ms"]
+        if 49700 < observed < 49950:
+            sample["media_time"] = 49.7 + (observed - 49700) * 0.4 / 1000
+        elif observed >= 49950:
+            sample["media_time"] = 49.93 + (observed - 49950) / 1000
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    _, result = _run_cli(tmp_path, paths)
+
+    assert result["audio_alignment"]["status"] == "discontinuous_or_frozen"
+    assert result["audio_alignment"]["reason"] == "unmarked_playback_time_forward_jump"
+    assert result["calibration_thresholds_satisfied"] is False

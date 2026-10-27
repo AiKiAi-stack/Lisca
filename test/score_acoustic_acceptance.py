@@ -287,6 +287,7 @@ def _output_clock(audio):
         if _finite(perf) and _finite(context):
             pairs.append((float(perf), float(context)))
     pairs.sort()
+    pairs = list(dict.fromkeys(pairs))
     if len(pairs) < 2 or any(b[0] <= a[0] or b[1] <= a[1]
                              for a, b in zip(pairs, pairs[1:])):
         raise EvidenceError("output_clock_samples_invalid")
@@ -524,8 +525,13 @@ def _caption_episodes(report, screenshots, clock, audio, language):
         context = _context_time_at(transition_time_ms, clock)
         if context is None:
             continue
+        epoch = next((candidate for candidate in audio["epochs"]
+                      if candidate["start_performance_after_ms"] <= transition_time_ms
+                      <= candidate["end_performance_after_ms"]), None)
+        if epoch is None:
+            continue
         capture_time = context - float(start_context)
-        source_time = capture_time + audio["source_offset_seconds"]
+        source_time = capture_time + epoch["source_offset_seconds"]
         uncertainty_components = {
             "timeline_sampling_half_gap_seconds": sample_uncertainty,
             "screenshot_capture_bracket_seconds": selected["uncertainty"],
@@ -533,12 +539,13 @@ def _caption_episodes(report, screenshots, clock, audio, language):
                 screen_time_ms - transition_time_ms) / 1000,
             "performance_context_clock_origin_seconds": audio["clock_uncertainty_seconds"],
             "output_timestamp_interpolation_seconds": audio["output_clock_uncertainty_seconds"],
-            "source_capture_alignment_seconds": audio["alignment_uncertainty_seconds"],
+            "source_capture_alignment_seconds": epoch["alignment_uncertainty_seconds"],
             "reported_base_and_output_latency_seconds": audio["latency_bound_seconds"],
         }
         uncertainty = sum(uncertainty_components.values())
         verified_transitions.append({"time_ms": transition_time_ms,
                                      "screenshot_observed_after_ms": screen_time_ms,
+                                     "playback_epoch_index": epoch["index"],
                                      "text": transition["text"],
                                      "visible": transition["visible"],
                                      "pixel_verification": (
@@ -569,6 +576,58 @@ def _align_capture(source, capture, rate, items, report, audio):
     source_features = _spectral_features(source, rate)
     capture_features = _spectral_features(capture, rate)
     timeline = report["timeline_samples"]
+    required = min(len(items), max(10, math.ceil(len(items) * 0.8)))
+    epochs = []
+    epoch_by_time = {}
+    active_epoch = None
+    previous_observed = None
+    previous_media_time = None
+    timeline_error = None
+    for sample in timeline:
+        observed = sample.get("observed_after_ms")
+        if not _finite(observed):
+            continue
+        observed = float(observed)
+        if previous_observed is not None and observed <= previous_observed:
+            timeline_error = ("unmatched", "timeline_observation_time_not_increasing")
+            break
+        elapsed = (observed - previous_observed) / 1000 if previous_observed is not None else 0
+        previous_observed = observed
+        if sample.get("paused") or sample.get("seeking"):
+            active_epoch = None
+            previous_media_time = None
+            continue
+        media_time = sample.get("media_time")
+        if not _finite(media_time):
+            timeline_error = ("unmatched", "playback_epoch_media_time_missing")
+            break
+        media_time = float(media_time)
+        if active_epoch is None:
+            active_epoch = {
+                "index": len(epochs), "start_performance_after_ms": observed,
+                "end_performance_after_ms": observed, "start_media_time": media_time,
+            }
+            epochs.append(active_epoch)
+        elif previous_media_time is not None and media_time <= previous_media_time:
+            timeline_error = ("discontinuous_or_frozen",
+                              "unmarked_playback_time_repeat_or_reverse")
+            break
+        elif (media_time - previous_media_time > elapsed + 2 * float(clock_uncertainty) / 1000
+              or media_time - active_epoch["start_media_time"]
+              > (observed - active_epoch["start_performance_after_ms"]) / 1000
+              + 2 * float(clock_uncertainty) / 1000):
+            timeline_error = ("discontinuous_or_frozen", "unmarked_playback_time_forward_jump")
+            break
+        else:
+            active_epoch["end_performance_after_ms"] = observed
+        previous_media_time = media_time
+        epoch_by_time[observed] = active_epoch["index"]
+    if timeline_error:
+        status, reason = timeline_error
+        return {"status": status, "method": "bounded_spectral_feature_cross_correlation",
+                "matched_anchor_count": 0, "required_anchor_count": required,
+                "source_offset_seconds": None, "residual_seconds": None,
+                "reason": reason, "epochs": epochs}
     anchors = []
     used_capture_buckets = set()
     for item in items:
@@ -585,6 +644,9 @@ def _align_capture(source, capture, rate, items, report, audio):
             if not choices:
                 continue
             selected = min(choices, key=lambda sample: abs(sample["media_time"] - target))
+            epoch_index = epoch_by_time.get(float(selected["observed_after_ms"]))
+            if epoch_index is None:
+                continue
             context = _context_time_at(float(selected["observed_after_ms"]), clock_pairs)
             if context is None:
                 continue
@@ -596,26 +658,84 @@ def _align_capture(source, capture, rate, items, report, audio):
             best = _correlate(source_features, capture_features, rate, capture_time,
                               float(selected["media_time"]))
             if best is not None:
+                best["item"] = item["item"]
+                best["epoch_index"] = epoch_index
+                best["capture_time"] = capture_time
                 anchors.append(best)
-    required = min(len(items), max(10, math.ceil(len(items) * 0.8)))
-    if len(anchors) < required:
+    anchors_by_epoch = {
+        epoch["index"]: [anchor for anchor in anchors
+                         if anchor["epoch_index"] == epoch["index"]]
+        for epoch in epochs
+    }
+    unanchored_epochs = []
+    for epoch in epochs:
+        phase_anchors = anchors_by_epoch[epoch["index"]]
+        epoch["matched_anchor_count"] = len(phase_anchors)
+        if len(phase_anchors) < 2:
+            unanchored_epochs.append(epoch["index"])
+    matched_item_count = len({anchor["item"] for anchor in anchors})
+    if matched_item_count < required:
+        return {"status": "unmatched", "method": "bounded_spectral_feature_cross_correlation",
+                "matched_anchor_count": len(anchors), "matched_item_count": matched_item_count,
+                "required_anchor_count": required, "source_offset_seconds": None,
+                "residual_seconds": None, "epochs": epochs}
+    if unanchored_epochs:
         return {"status": "unmatched", "method": "bounded_spectral_feature_cross_correlation",
                 "matched_anchor_count": len(anchors), "required_anchor_count": required,
-                "source_offset_seconds": None, "residual_seconds": None}
-    offsets = [anchor["offset"] for anchor in anchors]
-    median_offset = statistics.median(offsets)
-    residual = max(abs(value - median_offset) for value in offsets)
-    if residual > 0.1:
-        return {"status": "discontinuous_or_frozen",
-                "method": "bounded_spectral_feature_cross_correlation",
-                "matched_anchor_count": len(anchors), "required_anchor_count": required,
-                "source_offset_seconds": median_offset, "residual_seconds": residual}
+                "source_offset_seconds": None, "residual_seconds": None,
+                "unanchored_epoch_indices": unanchored_epochs, "epochs": epochs}
+    residuals = []
+    for epoch in epochs:
+        phase_anchors = anchors_by_epoch[epoch["index"]]
+        offsets = [anchor["offset"] for anchor in phase_anchors]
+        median_offset = statistics.median(offsets)
+        residual = max(abs(value - median_offset) for value in offsets)
+        epoch["source_offset_seconds"] = median_offset
+        epoch["residual_seconds"] = residual
+        epoch["alignment_uncertainty_seconds"] = max(residual, FEATURE_FRAME_SECONDS / 2)
+        residuals.append(residual)
+        if residual > 0.1:
+            return {"status": "discontinuous_or_frozen",
+                    "method": "bounded_spectral_feature_cross_correlation",
+                    "matched_anchor_count": len(anchors), "required_anchor_count": required,
+                    "source_offset_seconds": None, "residual_seconds": residual,
+                    "residual_scope": "within_playback_epoch",
+                    "epochs": epochs}
+        boundary_times = [_context_time_at(epoch[key], clock_pairs)
+                          for key in ("start_performance_after_ms", "end_performance_after_ms")]
+        if any(value is None for value in boundary_times):
+            return {"status": "unmatched", "method": "bounded_spectral_feature_cross_correlation",
+                    "matched_anchor_count": len(anchors), "required_anchor_count": required,
+                    "source_offset_seconds": None, "residual_seconds": residual,
+                    "reason": "playback_epoch_boundary_clock_missing", "epochs": epochs}
+        epoch["source_start_seconds"] = boundary_times[0] - float(start_context) + median_offset
+        epoch["source_end_seconds"] = boundary_times[1] - float(start_context) + median_offset
+    for previous, following in zip(epochs, epochs[1:]):
+        difference = following["source_start_seconds"] - previous["source_end_seconds"]
+        uncertainty = (following["alignment_uncertainty_seconds"]
+                       + previous["alignment_uncertainty_seconds"]
+                       + 2 * (float(clock_uncertainty) / 1000 + output_clock_uncertainty))
+        if difference <= uncertainty:
+            repeated = difference < -uncertainty
+            return {"status": "discontinuous_or_frozen" if repeated else "unmatched",
+                    "method": "bounded_spectral_feature_cross_correlation",
+                    "matched_anchor_count": len(anchors), "required_anchor_count": required,
+                    "source_offset_seconds": None, "residual_seconds": max(residuals),
+                    "reason": ("playback_epoch_source_time_repeated_or_reversed" if repeated
+                               else "playback_epoch_boundary_ambiguous"),
+                    "epochs": epochs}
+    residual = max(residuals)
     alignment_uncertainty = max(residual, FEATURE_FRAME_SECONDS / 2)
     output_clock_gaps = [after[0] - before[0]
                          for before, after in zip(clock_pairs, clock_pairs[1:])]
     return {"status": "aligned", "method": "bounded_spectral_feature_cross_correlation",
-            "matched_anchor_count": len(anchors), "required_anchor_count": required,
-            "source_offset_seconds": median_offset, "residual_seconds": residual,
+            "matched_anchor_count": len(anchors), "matched_item_count": matched_item_count,
+            "required_anchor_count": required,
+            "source_offset_seconds": (epochs[0]["source_offset_seconds"]
+                                      if len(epochs) == 1 else None),
+            "residual_seconds": residual,
+            "residual_scope": "within_playback_epoch",
+            "epochs": epochs,
             "median_correlation": statistics.median(anchor["correlation"] for anchor in anchors),
             "clock_uncertainty_seconds": float(clock_uncertainty) / 1000,
             "output_clock_uncertainty_seconds": output_clock_uncertainty,
