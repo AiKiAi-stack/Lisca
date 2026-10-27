@@ -40,7 +40,7 @@
 
 ## 原始证据与停止
 
-原始报告仅在本机保留，目录为 `notes/acceptance-execution-20261027/startup-20-20261027`：40份录制、浏览器报告和截图、运行侧及 HLS 身份记录、源请求与解码记录、两份分析和安全哈希诊断。完整目录位于仓库外的 `stream-with-asr/notes`，不包含在 Git 提交中。
+原始报告仅在本机保留，目录为 `notes/acceptance-execution-20261027/startup-20-20261027`：40份录制、浏览器报告（本批未采集截图）、运行侧及 HLS 身份记录、源请求与解码记录、两份分析和安全哈希诊断。完整目录位于仓库外的 `stream-with-asr/notes`，不包含在 Git 提交中。
 
 - 中文分析 SHA-256：`8a2ad20e49d969dc041d1e60a581eb8b9d8fc2ac23fa3fc8e406fc07a8c911a5`。
 - 英文分析 SHA-256：`bacc3e153c0b2660a8e9b9dbe0bc83b5a08555807d0a3ff6f83a040e9995391c`。
