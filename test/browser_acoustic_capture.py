@@ -94,7 +94,8 @@ AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
       output_clock_supported: typeof context.getOutputTimestamp === "function",
       base_latency_seconds: Number.isFinite(context.baseLatency) ? context.baseLatency : null,
       output_latency_seconds: Number.isFinite(context.outputLatency) ? context.outputLatency : null},
-    status: () => clockError ? 'clock_error' : status,
+    status: () => ['recorder_error', 'audio_context_resume_failed'].includes(status)
+      ? status : (clockError ? 'clock_error' : status),
     save: () => new Promise(resolve => {
       const finish = () => {
         if (clockTimer) clearInterval(clockTimer);
