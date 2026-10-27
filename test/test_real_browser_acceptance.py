@@ -108,6 +108,27 @@ def test_browser_launch_failure_cannot_report_valid_sampling(tmp_path, monkeypat
     assert report["sampling"]["status"] == "measurement_invalid"
 
 
+def test_acoustic_capture_requires_a_local_reference_bound_input(tmp_path):
+    reference = tmp_path / "reference.json"
+    media = tmp_path / "sample.wav"
+    reference.write_text("{}", encoding="utf-8")
+    media.write_bytes(b"input identity only")
+
+    with pytest.raises(SystemExit):
+        acceptance.parse_args(["--media", str(media), "--label", "missing-ref",
+                               "--capture-acoustic-sync"])
+    with pytest.raises(SystemExit):
+        acceptance.parse_args(["--media", "https://media.test/live.m3u8",
+                               "--label", "remote-capture", "--reference", str(reference),
+                               "--language", "en", "--capture-acoustic-sync"])
+
+    args = acceptance.parse_args(["--media", str(media), "--label", "local-capture",
+                                  "--reference", str(reference), "--language", "en",
+                                  "--capture-acoustic-sync"])
+
+    assert args.capture_acoustic_sync is True
+
+
 def test_error_message_presence_survives_recording_sanitization_without_raw_text(tmp_path):
     event = acceptance.sanitize_ws_event({"type": "error",
         "message": "private provider details must not be saved"}, 30)

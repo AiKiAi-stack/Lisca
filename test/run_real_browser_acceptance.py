@@ -12,6 +12,7 @@ import json
 import math
 from pathlib import Path
 import re
+import subprocess
 import time
 from urllib.parse import urlsplit
 
@@ -25,6 +26,11 @@ from run_original_acceptance import (
 )
 from score_original_acceptance import score
 from playwright.sync_api import sync_playwright
+from browser_acoustic_capture import (
+    capture_visible_screenshot,
+    install_audio_capture,
+    save_audio_capture,
+)
 
 
 BASE = "http://127.0.0.1:8002"
@@ -326,6 +332,21 @@ def _result_paths(output_dir, label):
             destination / f"{label}.score.json")
 
 
+def _candidate_identity():
+    try:
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True,
+            text=True, timeout=3,
+        ).stdout.strip()
+        dirty = bool(subprocess.run(
+            ["git", "status", "--porcelain"], cwd=ROOT, check=True, capture_output=True,
+            text=True, timeout=3,
+        ).stdout.strip())
+        return revision, dirty
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+
+
 def collect(args):
     output_dir = args.output or ROOT / "logs" / "real-browser-acceptance"
     recording_path, report_path, score_path = _result_paths(output_dir, args.label)
@@ -352,6 +373,13 @@ def collect(args):
     checkpoint_post_delta = None
     browser = page = None
     sampler_started = False
+    capture_enabled = bool(getattr(args, "capture_acoustic_sync", False))
+    acoustic_capture = ({"mode": "browser_web_audio_media_element", "audio": None,
+                         "screenshots": [], "screenshot_transition_count": 0}
+                        if capture_enabled else None)
+    screenshot_state = {"value": ("", False), "index": 1}
+    candidate_revision, candidate_dirty = (_candidate_identity()
+                                           if capture_enabled else (None, None))
     next_progress_at = 0.0
     progress_path = Path(output_dir).expanduser() / f"{args.label}.progress.json"
 
@@ -387,6 +415,25 @@ def collect(args):
             batch = drain_samples(page)
             samples.extend(batch)
             video_eof |= any(sample.get("ended") for sample in batch)
+            if acoustic_capture is not None and batch:
+                sample = batch[-1]
+                visible = sample.get("visible") is True
+                state = (sample.get("visible_text", "") if visible else "", visible)
+                if state != screenshot_state["value"]:
+                    acoustic_capture["screenshot_transition_count"] += 1
+                    try:
+                        screenshot = capture_visible_screenshot(
+                            page, Path(output_dir).expanduser() / f"{args.label}.screens",
+                            Path(output_dir).expanduser().resolve(), screenshot_state["index"],
+                        )
+                        if screenshot and (screenshot["visible_text"], screenshot["visible"]) == state:
+                            screenshot["transition_observed_after_ms"] = sample.get(
+                                "observed_after_ms")
+                            acoustic_capture["screenshots"].append(_safe_value(screenshot))
+                            screenshot_state["index"] += 1
+                            screenshot_state["value"] = state
+                    except Exception:
+                        errors.append({"type": "pixel_capture_unavailable"})
 
     def on_frame(payload, generation=None):
         if isinstance(payload, bytes):
@@ -531,6 +578,17 @@ def collect(args):
                 drain()
             except Exception:
                 pass
+            if acoustic_capture is not None:
+                try:
+                    acoustic_capture["audio"] = save_audio_capture(
+                        page, Path(output_dir).expanduser() / f"{args.label}.playback.webm",
+                        Path(output_dir).expanduser().resolve(),
+                    )
+                    if acoustic_capture["audio"].get("status") != "captured":
+                        errors.append({"type": "playback_audio_capture_unavailable"})
+                except Exception:
+                    acoustic_capture["audio"] = {"status": "capture_failed"}
+                    errors.append({"type": "playback_audio_capture_unavailable"})
         if browser is not None:
             browser.close()
 
@@ -553,6 +611,10 @@ def collect(args):
                     started = time.monotonic()
                     page.evaluate(SAMPLER_START)
                     sampler_started = True
+                    if acoustic_capture is not None:
+                        acoustic_capture["installation"] = _safe_value(install_audio_capture(page))
+                        if acoustic_capture["installation"].get("status") != "installed":
+                            errors.append({"type": "playback_audio_capture_unavailable"})
                     page.locator("#start").click()
 
                     no_start_deadline = started + 15
@@ -633,7 +695,7 @@ def collect(args):
                         if remote and time.monotonic() - started >= args.seconds + 15:
                             errors.append({"type": "live_start_timeout"})
                             break
-                        page.wait_for_timeout(200)
+                        page.wait_for_timeout(50 if acoustic_capture is not None else 200)
 
                     drain()
                     last_end = latest_end_event()
@@ -749,6 +811,12 @@ def collect(args):
         "checkpoints": checkpoints, "errors": errors, "diagnostics": diagnostics,
         "recording_path": str(recording_path),
     }
+    if acoustic_capture is not None:
+        report["language"] = args.language
+        report["candidate_revision"] = candidate_revision
+        report["candidate_worktree_dirty"] = candidate_dirty
+        report["acoustic_capture"] = _safe_value(acoustic_capture)
+        report["acoustic_capture"]["physical_output_latency"] = "unknown"
     _write_json(report_path, report)
     _write_json(progress_path, {
         "label": args.label, "running": False,
@@ -780,6 +848,8 @@ def parse_args(argv=None):
                         help="Maximum wall seconds for local-file recognition and playback")
     parser.add_argument("--reference", type=Path, help="Optional fixed reference manifest")
     parser.add_argument("--language", choices=("zh", "en"), help="Language for optional scoring")
+    parser.add_argument("--capture-acoustic-sync", action="store_true",
+                        help="Capture decoded browser playback audio and pixel screenshots at caption changes")
     parser.add_argument("--checkpoints", type=parse_checkpoints, default=[],
                         help="Optional comma-separated local seek checkpoints, such as 5.1,23.8")
     parser.add_argument("--stop-file", type=Path,
@@ -797,6 +867,10 @@ def parse_args(argv=None):
         parser.error("--timeout must be a finite positive duration")
     if args.reference and not args.language:
         parser.error("--language is required with --reference")
+    if args.capture_acoustic_sync and args.media.startswith(("http://", "https://")):
+        parser.error("--capture-acoustic-sync requires a local file matching the fixed reference")
+    if args.capture_acoustic_sync and (not args.reference or not args.language):
+        parser.error("--capture-acoustic-sync requires --reference and --language")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", args.label):
         parser.error("--label must contain 1-80 letters, numbers, dots, underscores, or hyphens")
     return args
