@@ -10,10 +10,13 @@
         audio_f32 = s16_to_f32(chunk_bytes)   # np.float32, 值域 [-1, 1]
 """
 import io
+import logging
 import os
 import re
 import ssl
 import tempfile
+import threading
+import urllib.error
 import urllib.request
 from fractions import Fraction
 from urllib.parse import urljoin, urlparse, urlsplit
@@ -24,6 +27,7 @@ import numpy as np
 SAMPLING_RATE = 16000
 OPEN_TIMEOUT_SEC = 5.0
 READ_TIMEOUT_SEC = 5.0
+HLS_OPEN_RETRY_DELAY_SEC = 1.0
 MAX_REDIRECTED_HLS_BYTES = 1024 * 1024
 # Only repair small timestamp discontinuities. Larger jumps and clock resets
 # are unsupported because the byte-stream interface cannot map them safely.
@@ -49,6 +53,7 @@ _HLS_URI_ATTRIBUTE = re.compile(
 # 平台 CDN 防盗链：裸 Lavf UA 会被部分节点 403，统一带浏览器 UA
 DEFAULT_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+_LOGGER = logging.getLogger(__name__)
 
 
 def s16_to_f32(raw: bytes) -> np.ndarray:
@@ -71,6 +76,9 @@ class StreamSource:
         self._ca_file = None
         self._temporary_ca_file = None
         self._closed = False
+        self._hls_open_recovery_used = False
+        self._hls_open_retry_cancel = threading.Event()
+        self._hls_open_lock = threading.Lock()
         self._http_headers = {}
         self._manifest_response = None
         parsed_url = urlparse(url_or_path)
@@ -78,6 +86,7 @@ class StreamSource:
         is_remote = scheme in ("http", "https")
         is_https = scheme == "https"
         is_hls = is_remote and parsed_url.path.lower().endswith(".m3u8")
+        self._is_hls = is_hls
         if is_remote:
             hdrs = {"User-Agent": DEFAULT_UA}
             hdrs.update(http_headers or {})
@@ -105,9 +114,7 @@ class StreamSource:
             open_kwargs = {"timeout": (OPEN_TIMEOUT_SEC, READ_TIMEOUT_SEC)} if options else {}
             if is_hls:
                 request = urllib.request.Request(url_or_path, headers=self._http_headers)
-                response = urllib.request.urlopen(
-                    request, timeout=OPEN_TIMEOUT_SEC, context=self._tls_context
-                )
+                response = self._open_hls_http(request, OPEN_TIMEOUT_SEC)
                 self._manifest_response = response
                 named_response = _NamedResponse(response, response.geturl())
                 open_kwargs.update(format="hls", io_open=self._open_nested_http)
@@ -146,16 +153,23 @@ class StreamSource:
         try:
             for frame in self.container.decode(self.stream):
                 for rf in self.resampler.resample(frame):
-                    yield from self._append_resampled_frame(rf)
+                    yield from self._yield_pcm_chunks(self._append_resampled_frame(rf))
             # A normal EOF can leave a short delayed tail in the resampler.
             for rf in self.resampler.resample(None):
-                yield from self._append_resampled_frame(rf)
+                yield from self._yield_pcm_chunks(self._append_resampled_frame(rf))
         finally:
             self.close()
         # 正常耗尽：吐出不足一块的尾部数据（调用方提前 break 时不会走到这里）
         if self._buf:
-            yield self._buf
+            yield from self._yield_pcm_chunks([self._buf])
             self._buf = b""
+
+    def _yield_pcm_chunks(self, chunks):
+        for chunk in chunks:
+            if chunk:
+                with self._hls_open_lock:
+                    self._hls_open_recovery_used = False
+            yield chunk
 
     def _append_resampled_frame(self, frame):
         frame_start = None
@@ -221,10 +235,12 @@ class StreamSource:
         return chunks
 
     def close(self):
-        if self._closed:
-            return
-        self._closed = True
-        self._exhausted = True
+        with self._hls_open_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._exhausted = True
+            self._hls_open_retry_cancel.set()
         try:
             self.container.close()
         finally:
@@ -239,7 +255,7 @@ class StreamSource:
             response.close()
 
     def _open_nested_http(self, url: str, _flags: int, options: dict):
-        """Open HLS child playlists/segments with the same verified CA trust."""
+        """Open child HTTP resources with the same verified CA trust."""
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
             raise ValueError(f"HLS 子资源只支持 HTTP(S): {parsed.scheme or 'unknown'}")
@@ -252,9 +268,12 @@ class StreamSource:
             if separator and name.strip():
                 headers[name.strip()] = value.strip()
         request = urllib.request.Request(url, headers=headers)
-        response = urllib.request.urlopen(
-            request, timeout=READ_TIMEOUT_SEC, context=self._tls_context
-        )
+        if self._is_hls:
+            response = self._open_hls_http(request, READ_TIMEOUT_SEC)
+        else:
+            response = urllib.request.urlopen(
+                request, timeout=READ_TIMEOUT_SEC, context=self._tls_context
+            )
         try:
             effective_url = response.geturl()
         except Exception:
@@ -277,6 +296,46 @@ class StreamSource:
         finally:
             response.close()
         return _NamedResponse(io.BytesIO(body), effective_url)
+
+    def _open_hls_http(self, request, timeout):
+        """Retry one temporary HLS open failure until PCM advances the budget."""
+        try:
+            return self._urlopen_hls(request, timeout)
+        except Exception as error:
+            error_kind = _temporary_hls_open_error(error)
+            if error_kind is None:
+                raise
+
+            with self._hls_open_lock:
+                if self._hls_open_recovery_used:
+                    raise
+                self._hls_open_recovery_used = True
+            _LOGGER.warning(
+                "HLS open recovery attempt=1/1 delay=1s error=%s", error_kind
+            )
+            if self._hls_open_retry_cancel.wait(HLS_OPEN_RETRY_DELAY_SEC) or self._closed:
+                raise
+            return self._urlopen_hls(request, timeout)
+
+    def _urlopen_hls(self, request, timeout):
+        try:
+            with self._hls_open_lock:
+                if self._closed or self._hls_open_retry_cancel.is_set():
+                    raise RuntimeError("stream source is closed")
+                return urllib.request.urlopen(
+                    request, timeout=timeout, context=self._tls_context
+                )
+        except urllib.error.HTTPError as error:
+            error_body = getattr(error, "fp", None)
+            if error_body is not None:
+                try:
+                    error_body.close()
+                except Exception as close_error:
+                    _LOGGER.debug(
+                        "Failed to close HLS HTTP error body error=%s",
+                        type(close_error).__name__,
+                    )
+            raise
 
     def _remove_temporary_ca_file(self):
         if self._temporary_ca_file is not None:
@@ -375,6 +434,26 @@ def _is_hls_manifest_candidate(response, url: str) -> bool:
     if headers is None:
         return False
     return headers.get_content_type().lower() in _HLS_CONTENT_TYPES
+
+
+def _temporary_hls_open_error(error):
+    """Return a safe category for retryable failures before response bytes arrive."""
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code == 408:
+            return "http_408"
+        if 500 <= error.code <= 599:
+            return "http_5xx"
+        return None
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if isinstance(error, ConnectionError):
+        return "connection"
+    if isinstance(error, urllib.error.URLError):
+        if isinstance(error.reason, TimeoutError):
+            return "timeout"
+        if isinstance(error.reason, ConnectionError):
+            return "connection"
+    return None
 
 
 def _read_bounded_hls_manifest(response, prefix: bytes) -> bytes:
