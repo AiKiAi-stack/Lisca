@@ -50,6 +50,7 @@ from live_share import LiveShare, MAX_VIEWERS  # noqa: E402
 from cloud_translation import (CloudConfigStore, CloudError, QwenTranslator, RequestStop,
                                TranslationSession, validate_pair)  # noqa: E402
 from provider_errors import classify_provider_failure  # noqa: E402
+from streamparser.recognition_process import RecognitionCapacityError  # noqa: E402
 
 app = FastAPI(title="实时字幕")
 
@@ -1079,6 +1080,7 @@ async def ws_endpoint(ws: WebSocket):
                 http_headers = {"Referer": f"{p.scheme}://{p.netloc}"}
             engine_kwargs = {}
             if engine_name in ("aliyun-funasr", "aliyun", "api"):
+                engine_kwargs["stop_event"] = stop
                 # 断句灵敏度仅 API 引擎支持（本地引擎无该参数）
                 try:
                     engine_kwargs["max_sentence_silence"] = int(silence)
@@ -1234,6 +1236,8 @@ async def ws_endpoint(ws: WebSocket):
                     return
                 phase = "recognition"
                 o = call_provider(engine.finish)
+                if stop.is_set():
+                    return
                 if o[0] is not None:
                     emit(o)
                 # finish 后仍可能有剩余句子（异步引擎），poll 取尽
@@ -1255,13 +1259,18 @@ async def ws_endpoint(ws: WebSocket):
             finally:
                 src.close()
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
+            if stop.is_set():
+                return
             worker_failed = True
             terminal_reason = "error"
+            local_capacity_error = isinstance(exc, RecognitionCapacityError)
+            if local_capacity_error:
+                phase = "capacity"
             audio_timeline_error = isinstance(exc, AudioTimelineError)
             if audio_timeline_error:
                 stop.set()
             provider_details = (classify_provider_failure(exc)
-                                if provider_exception is exc else None)
+                                if provider_exception is exc and not local_capacity_error else None)
             if audio_timeline_error:
                 message = "音频时间轴存在过大间隙或跳变，已停止识别；可更换来源或仅播放"
             elif phase == "input_validation":
@@ -1287,7 +1296,9 @@ async def ws_endpoint(ws: WebSocket):
             elif phase == "no_progress":
                 message = "识别连续 15 秒没有字幕或静音处理进展，已停止新音频处理；可重试、仅播放或停止"
             elif phase == "capacity":
-                message = "字幕记录达到安全容量上限，结果不完整；已停止识别，请停止或重新开始"
+                message = ("识别达到安全容量上限，结果不完整；已停止识别，请重新开始"
+                           if local_capacity_error else
+                           "字幕记录达到安全容量上限，结果不完整；已停止识别，请停止或重新开始")
             elif provider_details is not None:
                 message = provider_details.pop("message")
                 logger.warning("provider failure category=%s status=%s code=%s",
@@ -1327,6 +1338,9 @@ async def ws_endpoint(ws: WebSocket):
                     try:
                         engine.close()
                     except Exception:  # noqa: BLE001 - 断开连接时仍需结束会话
+                        worker_failed = True
+                        put({"type": "error", "failure_category": "recognition_stop",
+                             "retryable": False, "message": "识别任务未能正常关闭，请停止后重试"})
                         logger.warning("引擎关闭失败")
                 if put in _LOG_SINKS:
                     _LOG_SINKS.remove(put)

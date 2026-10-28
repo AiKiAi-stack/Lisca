@@ -1,12 +1,154 @@
 import queue
 import threading
-from unittest.mock import MagicMock, Mock, patch, call
+import time
+from unittest.mock import ANY, MagicMock, Mock, patch, call
 import pytest
 from streamparser.asr_client import ASRClient, ASRState
 from streamparser.asr_config import ASRSettings
 
 
 class TestASRClient:
+    @patch("streamparser.asr_client.Recognition")
+    def test_provider_send_failure_is_not_reported_as_transport_failure(self, mock_rec):
+        from streamparser.asr_client import RecognitionFailure
+        from streamparser.recognition_process import RecognitionProviderError
+
+        mock_rec.return_value.send_audio_frame.side_effect = RecognitionProviderError(
+            403, "Model.AccessDenied")
+        client = ASRClient(ASRSettings(api_key="fake-test-key"))
+        client.start()
+        client.feed_audio(b"\x01\x00" * 1600)
+        with pytest.raises(RecognitionFailure) as caught:
+            client.stop()
+        assert caught.value.status_code == 403
+        assert caught.value.code == "Model.AccessDenied"
+
+    @patch("streamparser.asr_client.Recognition")
+    def test_eof_provider_error_keeps_structured_cause_after_shutdown(self, mock_rec):
+        from streamparser.asr_client import RecognitionFailure
+
+        client = ASRClient(ASRSettings(api_key="fake-test-key"))
+        callback = mock_rec.call_args.kwargs["callback"]
+
+        def fail_at_eof(**_kwargs):
+            callback.on_error(Mock(status_code=403, code="Model.AccessDenied"))
+            raise ConnectionError("Recognition worker failed before completion")
+
+        mock_rec.return_value.stop.side_effect = fail_at_eof
+        client.start()
+        with pytest.raises(RecognitionFailure) as caught:
+            client.stop()
+        assert caught.value.status_code == 403
+        assert caught.value.code == "Model.AccessDenied"
+        mock_rec.return_value.cancel.assert_called_once()
+
+    @patch("streamparser.asr_client.Recognition")
+    def test_audio_thread_start_failure_cancels_started_transport(self, mock_rec):
+        client = ASRClient(ASRSettings(api_key="fake-test-key"))
+        with patch("streamparser.asr_client.Thread.start", side_effect=RuntimeError("no thread")):
+            with pytest.raises(RuntimeError, match="no thread"):
+                client.start()
+        mock_rec.return_value.cancel.assert_called_once()
+        assert client.state == ASRState.STOPPED
+        with pytest.raises(RuntimeError):
+            client.feed_audio(b"\x00" * 3200)
+
+    @patch("streamparser.asr_client.Recognition")
+    def test_cancel_interrupts_transport_before_waiting_for_audio_sender(self, mock_rec):
+        """Cancellation releases an in-flight sender and discards later audio."""
+        recognition = mock_rec.return_value
+        entered, release = threading.Event(), threading.Event()
+        delivered = []
+
+        def send(data):
+            entered.set()
+            assert release.wait(10), "fake transport was not released"
+            delivered.append(data)
+
+        recognition.send_audio_frame.side_effect = send
+        recognition.cancel.side_effect = lambda **_kwargs: release.set()
+        client = ASRClient(ASRSettings(api_key="fake-test-key"))
+        client.start()
+        first, queued = b"a" * 3200, b"b" * 3200
+        client.feed_audio(first)
+        assert entered.wait(1)
+        client.feed_audio(queued)
+        try:
+            started = time.monotonic()
+            client.cancel()
+            assert time.monotonic() - started < 1
+            assert delivered == [first]
+            recognition.cancel.assert_called_once()
+            assert client.state == ASRState.STOPPED
+            with pytest.raises(RuntimeError):
+                client.feed_audio(b"c" * 3200)
+        finally:
+            release.set()
+            client.stop()
+
+    @patch("streamparser.asr_client.Recognition")
+    def test_explicit_restart_never_sends_audio_discarded_by_cancel(self, mock_rec):
+        recognition = mock_rec.return_value
+        entered, release = threading.Event(), threading.Event()
+        delivered = []
+
+        def send(data):
+            if not delivered:
+                entered.set()
+                assert release.wait(10)
+            delivered.append(data)
+
+        recognition.send_audio_frame.side_effect = send
+        recognition.cancel.side_effect = lambda **_kwargs: release.set()
+        client = ASRClient(ASRSettings(api_key="fake-test-key"))
+        client.start()
+        first, discarded, fresh = b"a" * 3200, b"b" * 3200, b"c" * 3200
+        client.feed_audio(first)
+        assert entered.wait(1)
+        client.feed_audio(discarded)
+        try:
+            client.cancel()
+            client.start()
+            client.feed_audio(fresh)
+            client.stop()
+            assert delivered == [first, fresh]
+        finally:
+            release.set()
+            client.stop()
+
+    @patch("streamparser.asr_client.Recognition")
+    def test_cancel_preserves_results_but_rejects_late_callbacks(self, mock_rec):
+        client = ASRClient(ASRSettings(api_key="fake-test-key"))
+        callback = mock_rec.call_args.kwargs["callback"]
+
+        class Result:
+            status_code = 403
+            code = "Model.AccessDenied"
+
+            def __init__(self, text):
+                self.text = text
+
+            def get_sentence(self):
+                return {"text": self.text, "begin_time": 0, "end_time": 1000}
+
+        client.start()
+        callback.on_event(Result("kept"))
+        client.cancel()
+        callback.on_event(Result("late"))
+        callback.on_error(Result("late error"))
+        assert [item.text for item in client.subtitle_buffer] == ["kept"]
+        client.raise_if_error()
+
+    @patch("streamparser.asr_client.Recognition")
+    def test_local_transport_failure_keeps_its_type(self, mock_rec):
+        client = ASRClient(ASRSettings(api_key="fake-test-key"))
+        callback = mock_rec.call_args.kwargs["callback"]
+        failure = ConnectionError("safe transport failure")
+        callback.on_error(type("Result", (), {"transport_error": failure})())
+        with pytest.raises(ConnectionError) as caught:
+            client.raise_if_error()
+        assert caught.value is failure
+
     @patch("streamparser.asr_client.Recognition")
     def test_start_stop_lifecycle(self, mock_rec):
         """start() should set state to RUNNING and call recognition.start(); stop() sets STOPPED."""
@@ -92,8 +234,9 @@ class TestASRClient:
         assert recorder.mock_calls == [
             call.send_audio_frame(frames[0]),
             call.send_audio_frame(frames[1]),
-            call.stop(),
+            call.stop(timeout=ANY),
         ]
+        assert 0 < mock_instance.stop.call_args.kwargs["timeout"] <= 15
 
     @patch("streamparser.asr_client.Recognition")
     def test_callback_preserves_structured_sdk_error_without_raw_message(self, mock_rec):

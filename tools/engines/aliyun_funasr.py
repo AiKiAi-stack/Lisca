@@ -6,6 +6,7 @@ workspace_id 可选：新版 dashscope SDK（>=1.20）支持默认业务空间�
 """
 import os
 import sys
+import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
@@ -20,7 +21,8 @@ class AliyunFunASREngine(Engine):
                  workspace_id: str = "", region: str = DEFAULT_REGION,
                  api_key: str = "", chunk_size: int = 3200, model_dir: str = "",
                  max_sentence_silence: int = 400, heartbeat: bool = True,
-                 language_hints=("zh",), multi_threshold_mode_enabled: bool = True):
+                 language_hints=("zh",), multi_threshold_mode_enabled: bool = True,
+                 stop_event=None):
         # model_dir 仅为兼容通用 CLI 传参（本地引擎使用），API 引擎忽略
         del model_dir
         self._api_key = api_key or os.environ.get("DASHSCOPE_API_KEY", "")
@@ -58,6 +60,36 @@ class AliyunFunASREngine(Engine):
         self.client = ASRClient(settings, chunk_size=chunk_size,
                                 **recognition_kwargs)
         self.client.start()
+        self._monitor_done = threading.Event()
+        self._stop_monitor = None
+        self._stop_error = None
+        if stop_event is not None:
+            self._stop_monitor = threading.Thread(
+                target=self._watch_stop, args=(stop_event,), daemon=True)
+            try:
+                self._stop_monitor.start()
+            except RuntimeError:
+                self.client.cancel()
+                raise
+
+    def _watch_stop(self, stop_event):
+        # Cancellation must interrupt finish(), including its server-complete wait.
+        while not self._monitor_done.wait(0.05):
+            if stop_event.is_set():
+                try:
+                    self.client.cancel()
+                except Exception as exc:
+                    self._stop_error = exc
+                return
+
+    def _close_monitor(self):
+        self._monitor_done.set()
+        if self._stop_monitor is not None:
+            self._stop_monitor.join(timeout=5.0)
+            if self._stop_monitor.is_alive():
+                raise TimeoutError("Recognition cancellation monitor did not exit")
+        if self._stop_error is not None:
+            raise self._stop_error
 
     def _drain(self) -> Subtitle:
         """FIFO 取出一条待显示句子（partial 实时文本，前端定时快照成块显示）"""
@@ -87,14 +119,18 @@ class AliyunFunASREngine(Engine):
         if not getattr(self, "_stopped", False):
             self.client.stop()
             self._stopped = True
+        self._close_monitor()
         self.client.raise_if_error()
         return self._drain()
 
     def close(self) -> None:
-        if not getattr(self, "_stopped", False):
-            cancel = getattr(self.client, "cancel", None)
-            if callable(cancel):
-                cancel()
-            else:
-                self.client.stop()
-            self._stopped = True
+        try:
+            if not getattr(self, "_stopped", False):
+                cancel = getattr(self.client, "cancel", None)
+                if callable(cancel):
+                    cancel()
+                else:
+                    self.client.stop()
+                self._stopped = True
+        finally:
+            self._close_monitor()
