@@ -1,13 +1,20 @@
 from collections import deque
 from enum import Enum, auto
 from queue import Empty, Full, Queue
-from threading import Event, Thread
+from threading import Event, Lock, Thread
+import time
 from typing import Optional
 
-from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
+from dashscope.audio.asr import RecognitionCallback, RecognitionResult
 
 from streamparser.asr_config import ASRSettings
+from streamparser.recognition_process import (RecognitionProcess as Recognition,
+                                              RecognitionProviderError)
 from streamparser.subtitle import SubtitleEntry
+
+CANCEL_TIMEOUT_SECONDS = 5.0
+FINALIZE_TIMEOUT_SECONDS = 15.0
+MAX_INPUT_CHUNK_BYTES = 1024 * 1024
 
 
 class ASRState(Enum):
@@ -30,11 +37,13 @@ class ASRTransportFailure(ConnectionError):
 
 
 class _Callback(RecognitionCallback):
-    def __init__(self, subtitle_buffer: deque, sentence_count: list, errors: Queue) -> None:
+    def __init__(self, subtitle_buffer: deque, sentence_count: list, errors: Queue,
+                 cancelled=None) -> None:
         super().__init__()
         self._subtitle_buffer = subtitle_buffer
         self._sentence_count = sentence_count
         self._errors = errors
+        self._cancelled = cancelled
 
     def on_open(self) -> None:
         pass
@@ -46,10 +55,18 @@ class _Callback(RecognitionCallback):
         pass
 
     def on_error(self, result: RecognitionResult) -> None:
+        if self._cancelled is not None and self._cancelled.is_set():
+            return
+        transport_error = getattr(result, "transport_error", None)
+        if isinstance(transport_error, (ConnectionError, TimeoutError)):
+            self._errors.put(transport_error)
+            return
         self._errors.put(RecognitionFailure(getattr(result, "status_code", None),
                                             getattr(result, "code", None)))
 
     def on_event(self, result: RecognitionResult) -> None:
+        if self._cancelled is not None and self._cancelled.is_set():
+            return
         sentence = result.get_sentence()
         if not isinstance(sentence, dict):
             return
@@ -81,12 +98,21 @@ class ASRClient:
                  **recognition_kwargs) -> None:
         self.settings = settings
         self.chunk_size = chunk_size
+        if not isinstance(chunk_size, int) or not 0 < chunk_size <= MAX_INPUT_CHUNK_BYTES:
+            raise ValueError("ASR chunk size is outside the supported input budget")
         self.state = ASRState.IDLE
         self.subtitle_buffer: deque = deque()
         self._sentence_count = [0]
 
         self._errors: Queue = Queue()
-        callback = _Callback(self.subtitle_buffer, self._sentence_count, self._errors)
+        self._input_queue: Queue = Queue(maxsize=100)
+        self._audio_buffer = bytearray()
+        self._running = Event()
+        self._cancelled = Event()
+        self._input_lock = Lock()
+        self._worker: Optional[Thread] = None
+        callback = _Callback(self.subtitle_buffer, self._sentence_count, self._errors,
+                             self._cancelled)
         self._recognition = Recognition(
             model=settings.model or "fun-asr-realtime",
             format="pcm",
@@ -95,28 +121,57 @@ class ASRClient:
             api_key=settings.api_key,
             **recognition_kwargs,
         )
-        self._input_queue: Queue = Queue(maxsize=100)
-        self._audio_buffer = bytearray()
-        self._running = Event()
-        self._cancelled = Event()
-        self._worker: Optional[Thread] = None
 
     def start(self) -> None:
+        if self._running.is_set() or (self._worker is not None and self._worker.is_alive()):
+            raise RuntimeError("ASR session is already running")
         self._cancelled.clear()
-        self.state = ASRState.RUNNING
         self._running.set()
-        self._recognition.start()
-        self._worker = Thread(target=self._worker_loop, daemon=True)
-        self._worker.start()
+        try:
+            self._recognition.start()
+            self._worker = Thread(target=self._worker_loop, daemon=True)
+            self._worker.start()
+        except Exception:
+            self._running.clear()
+            self._cancelled.set()
+            self.state = ASRState.STOPPED
+            self._recognition.cancel(timeout=CANCEL_TIMEOUT_SECONDS)
+            raise
+        self.state = ASRState.RUNNING
 
     def stop(self) -> None:
-        self.state = ASRState.STOPPED
-        self._running.clear()
-        if self._worker is not None:
-            self._worker.join(timeout=5)
+        if self.state == ASRState.STOPPED and (self._worker is None or not self._worker.is_alive()):
+            return
+        deadline = time.monotonic() + FINALIZE_TIMEOUT_SECONDS
+        with self._input_lock:
+            self._running.clear()
+        try:
+            self._join_worker(deadline)
+            self.raise_if_error()
+            self._recognition.stop(timeout=max(0.0, deadline - time.monotonic()))
+            self.raise_if_error()
+        except Exception as failure:
+            if isinstance(failure, RecognitionProviderError):
+                failure = RecognitionFailure(failure.status_code, failure.code)
+            try:
+                self.raise_if_error()
+            except Exception as reported_failure:
+                failure = reported_failure
+            self._cancelled.set()
+            try:
+                self._recognition.cancel(timeout=max(0.0, deadline - time.monotonic()))
+                self._join_worker(deadline)
+            except Exception as cleanup_error:
+                raise failure from cleanup_error
+            raise failure
+        finally:
+            self.state = ASRState.STOPPED
+
+    def _join_worker(self, deadline):
+        if self._worker is not None and self._worker.ident is not None:
+            self._worker.join(timeout=min(5.0, max(0.0, deadline - time.monotonic())))
             if self._worker.is_alive():
-                raise RuntimeError("ASR audio worker did not stop within 5 seconds")
-        self._recognition.stop()
+                raise TimeoutError("ASR audio worker did not exit within the shutdown budget")
 
     def raise_if_error(self) -> None:
         """Raise the next asynchronous SDK error on the caller's thread."""
@@ -130,17 +185,33 @@ class ASRClient:
 
     def cancel(self) -> None:
         """Discard unsent audio on user cancellation instead of billing a backlog."""
+        deadline = time.monotonic() + CANCEL_TIMEOUT_SECONDS
         self._cancelled.set()
-        self.stop()
+        self._running.clear()
+        try:
+            self._recognition.cancel(timeout=max(0.0, deadline - time.monotonic()))
+        finally:
+            self._join_worker(deadline)
+        with self._input_lock:
+            while True:
+                try:
+                    self._input_queue.get_nowait()
+                except Empty:
+                    break
+            self._audio_buffer.clear()
+        self.state = ASRState.STOPPED
 
     def feed_audio(self, data: bytes) -> None:
         self.raise_if_error()
-        if not self._running.is_set():
-            raise RuntimeError("ASR session is stopped")
-        try:
-            self._input_queue.put(data, timeout=0.5)
-        except Full:
-            raise RuntimeError("ASR audio queue is full; please check the connection") from None
+        if not isinstance(data, bytes) or len(data) > MAX_INPUT_CHUNK_BYTES:
+            raise ValueError("ASR audio input is outside the supported chunk budget")
+        with self._input_lock:
+            if not self._running.is_set() or self._cancelled.is_set():
+                raise RuntimeError("ASR session is stopped")
+            try:
+                self._input_queue.put(data, timeout=0.5)
+            except Full:
+                raise RuntimeError("ASR audio queue is full; please check the connection") from None
 
     def _worker_loop(self) -> None:
         while True:
@@ -155,6 +226,9 @@ class ASRClient:
                 continue
             self._audio_buffer.extend(chunk)
             while len(self._audio_buffer) >= self.chunk_size:
+                if self._cancelled.is_set():
+                    self._audio_buffer.clear()
+                    return
                 send_data = bytes(self._audio_buffer[: self.chunk_size])
                 self._audio_buffer = self._audio_buffer[self.chunk_size :]
                 if not self._send_audio_frame(send_data):
@@ -167,9 +241,14 @@ class ASRClient:
     def _send_audio_frame(self, data: bytes) -> bool:
         try:
             self._recognition.send_audio_frame(data)
-        except Exception:
+        except Exception as error:
             self._audio_buffer.clear()
-            self._errors.put(ASRTransportFailure())
+            if not self._cancelled.is_set():
+                if isinstance(error, RecognitionProviderError):
+                    error = RecognitionFailure(error.status_code, error.code)
+                self._errors.put(error if isinstance(error, (ConnectionError, TimeoutError,
+                                                             RecognitionFailure))
+                                 else ASRTransportFailure())
             self._running.clear()
             self._cancelled.set()
             return False

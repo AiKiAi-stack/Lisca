@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 import json
 import math
 import os
@@ -17,6 +18,38 @@ from urllib.parse import urlsplit
 CASE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SDK_METHODS = ("start", "send_audio_frame", "stop", "complete")
+
+
+def _safe_shutdown_evidence(target):
+    try:
+        evidence = target.get_shutdown_evidence()
+        booleans = ("worker_alive", "worker_exit_verified", "listener_alive", "sender_alive",
+                    "server_complete_observed", "sdk_stop_returned", "memory_limit_enforced")
+        if (not isinstance(evidence, Mapping)
+                or type(evidence.get("schema_version")) is not int
+                or evidence.get("schema_version") != 1
+                or evidence.get("observation_scope") != "isolated_sdk_adapter"
+                or any(type(evidence.get(key)) is not bool for key in booleans)
+                or evidence.get("shutdown_mode") not in (
+                    "not_started", "running", "completed", "cancelled", "forced", "failed")):
+            return None
+        safe = {key: evidence[key] for key in (
+            "schema_version", "observation_scope", "shutdown_mode", *booleans)}
+        for key in ("worker_pid", "memory_limit_bytes"):
+            value = evidence.get(key)
+            if value is not None and (type(value) is not int or value <= 0):
+                return None
+            safe[key] = value
+        return safe
+    except Exception:
+        return None
+
+
+def _isolated_exited(sdk):
+    evidence = sdk.get("shutdown_evidence")
+    return bool(evidence and evidence["worker_exit_verified"]
+                and not any(evidence[key] for key in (
+                    "worker_alive", "listener_alive", "sender_alive")))
 
 
 class ProbeFinalizationError(RuntimeError):
@@ -143,6 +176,7 @@ class _Capture:
         self.first_pts = self.last_pts = self.timeline_offset = None
         self.pcm_digest = hashlib.sha256()
         self.sdk_lock = threading.Lock()
+        self.sdk_target = None
         self.sdk_inflight = {name: 0 for name in SDK_METHODS}
         self.complete_callback_expected = False
         self.sdk = {"start_calls": 0, "start_successes": 0,
@@ -302,7 +336,14 @@ class _Capture:
             result = dict(self.sdk)
             result["inflight_calls"] = dict(self.sdk_inflight)
             result["complete_callback_expected"] = self.complete_callback_expected
-            return result
+            target = self.sdk_target
+        # Read the public witness outside sdk_lock; it never waits for shutdown.
+        isolated = callable(getattr(type(target), "get_shutdown_evidence", None))
+        result["observation_scope"] = ("isolated_sdk_adapter_public_methods" if isolated
+                                       else "sdk_public_methods")
+        if isolated:
+            result["shutdown_evidence"] = _safe_shutdown_evidence(target)
+        return result
 
     def note_complete_callback(self):
         with self.sdk_lock:
@@ -311,19 +352,19 @@ class _Capture:
             self.sdk["complete_callbacks"] += 1
         self.state_changed.set()
 
-    def sdk_shutdown_observed(self):
-        with self.sdk_lock:
-            if any(self.sdk_inflight.values()):
-                return False
-            if not self.sdk["start_successes"]:
-                return True
-            if "stop" in self.sdk["public_methods_present"]:
-                stop_observed = self.sdk["stop_calls"] > 0
-            else:
-                stop_observed = self.sdk["complete_calls"] > 0
-            callback_observed = (not self.complete_callback_expected
-                                 or self.sdk["complete_callbacks"] > 0)
-            return stop_observed and callback_observed
+    def sdk_shutdown_observed(self, snapshot=None):
+        sdk = self.sdk_snapshot() if snapshot is None else snapshot
+        if any(sdk["inflight_calls"].values()):
+            return False
+        if sdk["observation_scope"] == "isolated_sdk_adapter_public_methods":
+            return sdk["stop_calls"] > 0 and _isolated_exited(sdk)
+        if not sdk["start_successes"]:
+            return True
+        stop_observed = (sdk["stop_calls"] > 0 if "stop" in sdk["public_methods_present"]
+                         else sdk["complete_calls"] > 0)
+        callback_observed = (not sdk["complete_callback_expected"]
+                             or sdk["complete_callbacks"] > 0)
+        return stop_observed and callback_observed
 
     def ready_to_finish(self):
         with self.lock:
@@ -388,6 +429,16 @@ class _Capture:
                 self.log_fd = None
 
     def summary(self):
+        sdk = self.sdk_snapshot()
+        evidence = sdk.get("shutdown_evidence")
+        cancelled = bool(evidence and evidence["shutdown_mode"] == "cancelled")
+        if (sdk["observation_scope"] == "isolated_sdk_adapter_public_methods"
+                and self.stream_status == "completed"
+                and not cancelled
+                and not (evidence and evidence["server_complete_observed"]
+                         and evidence["sdk_stop_returned"]
+                         and evidence["shutdown_mode"] == "completed")):
+            self.invalidate("isolated_provider_completion_not_observed")
         with self.lock:
             reasons = list(self.invalid_reasons)
             source_status = self.stream_status
@@ -397,21 +448,21 @@ class _Capture:
             first_ns, last_ns = self.first_ns, self.last_ns
             first_pts, last_pts, offset = self.first_pts, self.last_pts, self.timeline_offset
         wav_sha = _file_hash(self.wav_path)
-        sdk = self.sdk_snapshot()
-        sdk_shutdown = self.sdk_shutdown_observed()
+        sdk_shutdown = self.sdk_shutdown_observed(sdk)
         source_finalized = source_closed and iterator_depth == 0
         valid = (not reasons and observed == captured and wav_sha is not None
                  and source_finalized and sdk_shutdown)
+        status = "cancelled" if cancelled and source_status == "completed" else source_status
         return {"schema_version": 1, "event": "capture_summary",
                 "case_id": self.case["case_id"], "generation": self.case["generation"],
                 "input_identity_sha256": self.case["input_identity_sha256"],
                 "input_identity_kind": self.case["input_kind"],
                 "source_content_sha256": self.case["source_content_sha256"],
-                "status": "invalid" if reasons else source_status,
+                "status": "invalid" if reasons else status,
                 "source_stream_status": source_status, "valid": valid,
                 "source_closed": source_closed, "source_iterator_depth": iterator_depth,
                 "sdk_shutdown_observed": sdk_shutdown,
-                "complete": valid and source_status == "completed",
+                "complete": valid and status == "completed",
                 "invalid_reasons": reasons,
                 "source_samples_observed": observed, "source_samples_captured": captured,
                 "dropped_samples": max(0, observed - captured),
@@ -562,7 +613,10 @@ class _Probe:
                 elif (sdk["start_successes"] and not has_stop
                       and sdk["complete_calls"] == 0):
                     capture.invalidate("sdk_completion_method_not_observed")
-                if (sdk["start_successes"] and sdk["complete_callback_expected"]
+                isolated = sdk["observation_scope"] == "isolated_sdk_adapter_public_methods"
+                if isolated and not _isolated_exited(sdk):
+                    capture.invalidate("isolated_worker_exit_not_observed")
+                if (not isolated and sdk["start_successes"] and sdk["complete_callback_expected"]
                         and sdk["complete_callbacks"] == 0):
                     capture.invalidate("sdk_completion_callback_not_observed")
                 if not capture.invalid_reasons:
@@ -783,6 +837,8 @@ def install_probe(webui_module, manifest_path, output_dir, *, max_pcm_bytes,
                         if name == "start" and active is not None:
                             capture = active
                             probe.sdk_targets[id(instance)] = (instance, active)
+                            with capture.sdk_lock:
+                                capture.sdk_target = instance
                     if capture:
                         try:
                             capture.note_sdk(name, args, kwargs)

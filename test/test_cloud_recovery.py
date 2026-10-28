@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import webui  # noqa: E402
 from cloud_translation import CloudConfigStore  # noqa: E402
+from streamparser.recognition_process import RecognitionCapacityError  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +95,7 @@ def test_partial_asr_send_failure_is_reported_by_public_cloud_websocket(monkeypa
 
     class Recognition:
         def __init__(self, **_kwargs):
-            pass
+            self.stopped = False
 
         def start(self):
             pass
@@ -102,8 +103,13 @@ def test_partial_asr_send_failure_is_reported_by_public_cloud_websocket(monkeypa
         def send_audio_frame(self, _data):
             raise OSError("TEST_ONLY_PRIVATE_TRANSPORT_DETAIL")
 
-        def stop(self):
-            closed["recognition"] += 1
+        def stop(self, **_kwargs):
+            if not self.stopped:
+                closed["recognition"] += 1
+                self.stopped = True
+
+        def cancel(self, **kwargs):
+            self.stop(**kwargs)
 
     class Source:
         def __init__(self, *_args, **_kwargs):
@@ -250,6 +256,7 @@ def test_cloud_ws_exposes_provider_permission_evidence_without_raw_error(monkeyp
     (StructuredProviderFailure(429, "Throttling.RateQuota"), "rate_limited", True,
      "Throttling.RateQuota"),
     (ConnectionError("private network detail"), "network", True, None),
+    (RecognitionCapacityError("private memory detail"), "capacity", False, None),
     (StructuredProviderFailure(503, "UnknownServiceCode"), "temporarily_unavailable", True, None),
     (StructuredProviderFailure(400, "UnknownPrivateCode"), "unknown", False, None),
 ])
@@ -291,7 +298,49 @@ def test_cloud_ws_classifies_failures_only_from_provider_evidence(
     error = next(event for event in events if event["type"] == "error")
     assert error["failure_category"] == category
     assert error["retryable"] is retryable
-    assert error["provider_code"] == code
+    assert error.get("provider_code") == code
+    assert "private" not in str(events)
+    assert "TEST_ONLY_KEY" not in str(events)
+
+
+def test_cloud_stop_failure_is_reported_without_claiming_clean_cancellation(monkeypatch):
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            yield b"\x01\x00" * 1600
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            return (None, None, "", None)
+
+        def poll(self):
+            return (None, None, "", None)
+
+        finish = poll
+
+        def close(self):
+            raise TimeoutError("private shutdown detail TEST_ONLY_KEY")
+
+    monkeypatch.setattr(webui, "StreamSource", Source)
+    monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
+        ticket = client.post("/api/cloud/sessions", json={
+            "mode": "transcribe", "url": "https://media.test/clip.mp4", "source": "auto",
+        }).json()
+        with client.websocket_connect("/ws?session=" + ticket["session"]) as ws:
+            events = []
+            while not events or events[-1]["type"] != "end":
+                events.append(ws.receive_json())
+    error = next(event for event in events if event["type"] == "error")
+    assert error["failure_category"] == "recognition_stop"
+    assert error["retryable"] is False
+    assert events[-1] == {"type": "end", "reason": "error"}
     assert "private" not in str(events)
     assert "TEST_ONLY_KEY" not in str(events)
 

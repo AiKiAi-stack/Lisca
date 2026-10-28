@@ -844,6 +844,114 @@ def test_public_sdk_completion_callback_is_forwarded_and_counted(tmp_path):
     assert sdk["send_audio_frame_successes"] == 2
 
 
+@pytest.mark.parametrize("change,valid", [
+    ({}, True),
+    ({"worker_alive": True}, False),
+    ({"worker_exit_verified": False}, False),
+    ({"listener_alive": True}, False),
+    ({"sender_alive": True}, False),
+    ({"worker_exit_verified": 1}, False),
+    ({"schema_version": True}, False),
+    ({"schema_version": 2}, False),
+    ({"observation_scope": "private-scope"}, False),
+    ({"raise": True}, False),
+])
+def test_isolated_cancel_requires_real_exit_and_safe_evidence(tmp_path, change, valid):
+    summary, receipt = _isolated_capture(tmp_path, change, eof=False)
+    assert summary["valid"] is valid
+    assert receipt["valid"] is valid
+    assert summary["complete"] is False
+    assert summary["sdk"]["complete_callbacks"] == 0
+    assert summary["sdk"]["observation_scope"] == "isolated_sdk_adapter_public_methods"
+    serialized = json.dumps([summary, receipt])
+    assert "private" not in serialized
+    assert "sdk_completion_callback_not_observed" not in summary["invalid_reasons"]
+    if valid:
+        assert summary["sdk"]["shutdown_evidence"]["worker_exit_verified"] is True
+    else:
+        assert "isolated_worker_exit_not_observed" in summary["invalid_reasons"]
+
+
+@pytest.mark.parametrize("server_complete", [False, True])
+def test_isolated_eof_needs_actual_provider_completion(tmp_path, server_complete):
+    summary, receipt = _isolated_capture(tmp_path, {
+        "server_complete_observed": server_complete,
+        "sdk_stop_returned": server_complete,
+        "shutdown_mode": "completed" if server_complete else "forced",
+    }, eof=True)
+    assert summary["sdk_shutdown_observed"] is True
+    assert summary["complete"] is server_complete
+    assert summary["valid"] is server_complete
+    assert receipt["valid"] is server_complete
+
+
+def test_isolated_cancel_during_eof_wait_is_closed_but_not_completed(tmp_path):
+    summary, receipt = _isolated_capture(tmp_path, {}, eof=True)
+    assert summary["valid"] is receipt["valid"] is True
+    assert summary["status"] == "cancelled"
+    assert summary["source_stream_status"] == "completed"
+    assert summary["complete"] is False
+    assert summary["sdk"]["complete_callbacks"] == 0
+    assert summary["sdk"]["shutdown_evidence"]["shutdown_mode"] == "cancelled"
+
+
+def _isolated_capture(tmp_path, change, *, eof):
+    from types import MappingProxyType
+
+    class Callback:
+        def on_complete(self):
+            pass
+
+    class IsolatedRecognition:
+        def __init__(self, *, callback):
+            self.callback = callback
+
+        def start(self):
+            pass
+
+        def stop(self):
+            if change.get("server_complete_observed"):
+                self.callback.on_complete()
+
+        def get_shutdown_evidence(self):
+            if change.get("raise"):
+                raise ValueError("private exception detail")
+            return MappingProxyType(dict({
+                "schema_version": 1, "observation_scope": "isolated_sdk_adapter",
+                "worker_pid": 123, "worker_alive": False,
+                "worker_exit_verified": True, "listener_alive": False,
+                "sender_alive": False, "shutdown_mode": "cancelled",
+                "server_complete_observed": False, "sdk_stop_returned": False,
+                "memory_limit_enforced": True, "memory_limit_bytes": 512 * 1024 * 1024,
+                "api_key": "private-key", "request_id": "private-id",
+            }, **change))
+
+    manifest = tmp_path / "manifest.json"
+    write_manifest(manifest)
+    output = tmp_path / "capture"
+    webui = SimpleNamespace(StreamSource=FakeStreamSource)
+    installation = probe.install_probe(
+        webui, manifest, output, max_pcm_bytes=1024,
+        invalid_stop_file=tmp_path / "stop.json", sdk_recognition_class=IsolatedRecognition,
+        sdk_callback_class=Callback, shutdown_timeout=0.01,
+    )
+    source = webui.StreamSource(SECRET_URL)
+    recognition = IsolatedRecognition(callback=Callback())
+    recognition.start()
+    iterator = source.iter_chunks()
+    if eof:
+        list(iterator)
+    else:
+        next(iterator)
+        iterator.close()
+    source.close()
+    recognition.stop()
+    installation.restore()
+    summary = read_events(output / "pcm" / "zh-live-01-g1.jsonl")[-1]
+    receipt = json.loads((output / "run-closed.json").read_text(encoding="utf-8"))
+    return summary, receipt
+
+
 def test_source_identity_mismatch_is_not_captured_or_leaked(tmp_path):
     manifest = tmp_path / "allowed-cases.json"
     write_manifest(manifest)
