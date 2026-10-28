@@ -772,6 +772,28 @@ def test_public_cli_keeps_sparse_clock_pause_boundary_unknown(tmp_path):
     assert result["unknown_item_count"] == 50
 
 
+def test_public_cli_counts_all_items_as_unknown_when_alignment_is_unavailable(tmp_path):
+    paths = _write_evidence(tmp_path, lag=0.02, pause_at=25.5, sampling_step_ms=10)
+    spans = json.loads(paths[2].read_text(encoding="utf-8"))
+    spans["items"][0]["spans"][0]["start_uncertainty_seconds"] = 0.6
+    paths[2].write_text(json.dumps(spans), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 1
+    assert result["sync_status"] == "calibration_only"
+    assert result["calibration_thresholds_satisfied"] is False
+    assert result["sync_gate_passed"] is None
+    assert result["release_gate_passed"] is False
+    assert result["audio_alignment"]["reason"] == "playback_epoch_boundary_ambiguous"
+    assert result["samples"] == 50
+    assert result["measured_item_count"] == 0
+    assert result["missing_item_count"] == 0
+    assert result["unknown_item_count"] == 50
+    assert (result["measured_item_count"] + result["missing_item_count"]
+            + result["unknown_item_count"]) == result["samples"]
+
+
 def test_public_cli_rejects_a_pause_epoch_with_only_one_audio_anchor(tmp_path):
     paths = _write_evidence(tmp_path, pause_at=45.0,
                             mute_after_pause_media_time=46.0)

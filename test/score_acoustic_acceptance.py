@@ -1039,7 +1039,6 @@ def score(reference_path, source_path, spans_path, recording_path, report_path, 
     if alignment["status"] != "aligned":
         result = _unknown_result(
             language, reference, source_hash, source_spans, alignment["status"], len(items),
-            sum(item.get("energy_check") != "supported" for item in items) or len(items),
             alignment,
         )
         denominator = sum(
@@ -1124,7 +1123,7 @@ def score(reference_path, source_path, spans_path, recording_path, report_path, 
 
 
 def _unknown_result(language, reference, source_hash, source_spans, reason,
-                    item_count, unknown_count, alignment=None):
+                    item_count, alignment=None):
     return {"schema_version": 1, "language": language,
             "candidate_revision": None, "reference_sha256": reference.get("sha256"),
             "input_sha256": source_hash, "sync_status": "unknown",
@@ -1133,7 +1132,7 @@ def _unknown_result(language, reference, source_hash, source_spans, reason,
             "measurement_scope": "browser_audio_context_render_output",
             "physical_output_latency": "unknown", "samples": item_count,
             "measured_item_count": 0, "missing_item_count": 0,
-            "unknown_item_count": unknown_count,
+            "unknown_item_count": item_count,
             "voice_span_source": {"method": source_spans.get("method"),
                                   "provenance": source_spans.get("provenance"),
                                   "source_condition": source_spans.get("source_condition")},
