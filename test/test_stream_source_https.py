@@ -361,9 +361,7 @@ def test_redirected_binary_resource_is_not_buffered_or_rewritten(monkeypatch):
             self.closed = True
 
     response = Response()
-    source = object.__new__(StreamSource)
-    source._http_headers = {"User-Agent": "test"}
-    source._tls_context = object()
+    source = _bare_stream_source()
     monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
 
     opened = source._open_nested_http("https://origin.example.test/segment.ts", 0, {})
@@ -397,9 +395,7 @@ def test_redirected_manifest_read_is_bounded_and_response_closed(monkeypatch):
             self.closed = True
 
     response = Response()
-    source = object.__new__(StreamSource)
-    source._http_headers = {"User-Agent": "test"}
-    source._tls_context = object()
+    source = _bare_stream_source()
     monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
 
     with pytest.raises(ValueError, match="exceeds the size limit"):
@@ -407,6 +403,18 @@ def test_redirected_manifest_read_is_bounded_and_response_closed(monkeypatch):
 
     assert response.read_bytes == 16
     assert response.closed
+
+
+def _bare_stream_source():
+    source = object.__new__(StreamSource)
+    source._http_headers = {"User-Agent": "test"}
+    source._tls_context = object()
+    source._is_hls = True
+    source._closed = False
+    source._hls_open_recovery_used = False
+    source._hls_open_retry_cancel = threading.Event()
+    source._hls_open_lock = threading.Lock()
+    return source
 
 
 def test_https_live_playlist_refreshes_and_reads_new_segments(
