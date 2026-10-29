@@ -1,6 +1,7 @@
 from fractions import Fraction
 from unittest.mock import MagicMock
 
+import httpx
 import numpy as np
 import pytest
 
@@ -14,17 +15,16 @@ def test_hls_clock_uses_decoded_pts_not_sliding_playlist_duration(monkeypatch):
     av_open = MagicMock(return_value=container)
     monkeypatch.setattr("tools.stream_source.av.open", av_open)
 
-    class Response:
-        def read(self, _size=-1):
-            return b""
-
-        def geturl(self):
-            return "https://asr.test/live/index.m3u8"
+    class Body(httpx.SyncByteStream):
+        def __iter__(self):
+            return iter(())
 
         def close(self):
             pass
 
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: Response())
+    monkeypatch.setattr("httpx.HTTPTransport.handle_request", lambda *_a, **_k: (
+        httpx.Response(200, stream=Body())
+    ))
     resampled = MagicMock()
     resampled.pts = 19752000
     resampled.time_base = Fraction(1, 16000)

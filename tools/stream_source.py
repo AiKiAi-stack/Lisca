@@ -18,10 +18,13 @@ import tempfile
 import threading
 import urllib.error
 import urllib.request
+from email.message import Message
+from datetime import datetime
 from fractions import Fraction
 from urllib.parse import urljoin, urlparse, urlsplit
 
 import av
+import httpx
 import numpy as np
 
 SAMPLING_RATE = 16000
@@ -29,6 +32,7 @@ OPEN_TIMEOUT_SEC = 5.0
 READ_TIMEOUT_SEC = 5.0
 HLS_OPEN_RETRY_DELAY_SEC = 1.0
 MAX_REDIRECTED_HLS_BYTES = 1024 * 1024
+MAX_HLS_PENDING_SEGMENTS = 256
 # Only repair small timestamp discontinuities. Larger jumps and clock resets
 # are unsupported because the byte-stream interface cannot map them safely.
 MAX_REPAIRED_PTS_GAP_SEC = 1.0
@@ -77,10 +81,12 @@ class StreamSource:
         self._temporary_ca_file = None
         self._closed = False
         self._hls_open_recovery_used = False
+        self._hls_terminal_error = None
         self._hls_open_retry_cancel = threading.Event()
         self._hls_open_lock = threading.Lock()
         self._http_headers = {}
         self._manifest_response = None
+        self._hls_http = None
         parsed_url = urlparse(url_or_path)
         scheme = parsed_url.scheme.lower()
         is_remote = scheme in ("http", "https")
@@ -113,6 +119,7 @@ class StreamSource:
         try:
             open_kwargs = {"timeout": (OPEN_TIMEOUT_SEC, READ_TIMEOUT_SEC)} if options else {}
             if is_hls:
+                self._hls_http = _HlsHttpSession(self._tls_context)
                 request = urllib.request.Request(url_or_path, headers=self._http_headers)
                 response = self._open_hls_http(request, OPEN_TIMEOUT_SEC)
                 self._manifest_response = response
@@ -127,7 +134,10 @@ class StreamSource:
             try:
                 self._close_manifest_response()
             finally:
-                self._remove_temporary_ca_file()
+                try:
+                    self._close_hls_http()
+                finally:
+                    self._remove_temporary_ca_file()
             raise
         try:
             if not self.container.streams.audio:
@@ -247,12 +257,20 @@ class StreamSource:
             try:
                 self._close_manifest_response()
             finally:
-                self._remove_temporary_ca_file()
+                try:
+                    self._close_hls_http()
+                finally:
+                    self._remove_temporary_ca_file()
 
     def _close_manifest_response(self):
         response, self._manifest_response = self._manifest_response, None
         if response is not None:
             response.close()
+
+    def _close_hls_http(self):
+        session, self._hls_http = self._hls_http, None
+        if session is not None:
+            session.close()
 
     def _open_nested_http(self, url: str, _flags: int, options: dict):
         """Open child HTTP resources with the same verified CA trust."""
@@ -279,7 +297,8 @@ class StreamSource:
         except Exception:
             response.close()
             raise
-        if effective_url == url or not _is_hls_manifest_candidate(response, url):
+        if (isinstance(response, _NamedResponse) or effective_url == url
+                or not _is_hls_manifest_candidate(response, url)):
             return response
 
         try:
@@ -300,10 +319,11 @@ class StreamSource:
     def _open_hls_http(self, request, timeout):
         """Retry one temporary HLS open failure until PCM advances the budget."""
         try:
-            return self._urlopen_hls(request, timeout)
+            response = self._urlopen_hls(request, timeout)
         except Exception as error:
             error_kind = _temporary_hls_open_error(error)
             if error_kind is None:
+                self._hls_terminal_error = error
                 raise
 
             with self._hls_open_lock:
@@ -315,16 +335,27 @@ class StreamSource:
             )
             if self._hls_open_retry_cancel.wait(HLS_OPEN_RETRY_DELAY_SEC) or self._closed:
                 raise
-            return self._urlopen_hls(request, timeout)
+            try:
+                response = self._urlopen_hls(request, timeout)
+            except Exception as retry_error:
+                if _temporary_hls_open_error(retry_error) is None:
+                    self._hls_terminal_error = retry_error
+                raise
+        # Manifest recovery reads bodies after the open retry boundary.
+        try:
+            return self._hls_http.observe_response(request.full_url, response)
+        except Exception as error:
+            self._hls_terminal_error = error
+            raise
 
     def _urlopen_hls(self, request, timeout):
         try:
             with self._hls_open_lock:
+                if self._hls_terminal_error is not None:
+                    raise self._hls_terminal_error
                 if self._closed or self._hls_open_retry_cancel.is_set():
                     raise RuntimeError("stream source is closed")
-                return urllib.request.urlopen(
-                    request, timeout=timeout, context=self._tls_context
-                )
+                return self._hls_http.open(request, timeout)
         except urllib.error.HTTPError as error:
             error_body = getattr(error, "fp", None)
             if error_body is not None:
@@ -344,6 +375,435 @@ class StreamSource:
             except FileNotFoundError:
                 pass
             self._temporary_ca_file = None
+
+
+class _HlsHttpSession:
+    """Own bounded HLS pools without adding cookies, decoding or URL logging."""
+
+    def __init__(self, tls_context):
+        self._tls_context = tls_context or ssl.create_default_context()
+        self._proxies = urllib.request.getproxies()
+        self._transports = {}
+        self._responses = set()
+        self._lock = threading.Lock()
+        self._history = _HlsPlaylistHistory()
+
+    def _transport(self, url):
+        parsed = urlsplit(url)
+        proxy = (None if urllib.request.proxy_bypass(parsed.netloc)
+                 else self._proxies.get(parsed.scheme))
+        if proxy and "://" not in proxy:
+            proxy = "http://" + proxy
+        if proxy not in self._transports:
+            # Direct plus the two scheme proxies: at most three pools per source.
+            self._transports[proxy] = httpx.HTTPTransport(
+                verify=self._tls_context, trust_env=False, proxy=proxy, retries=0,
+                limits=httpx.Limits(max_connections=4, max_keepalive_connections=4,
+                                    keepalive_expiry=30.0),
+            )
+        return self._transports[proxy]
+
+    def open(self, request, timeout):
+        url = request.full_url
+        headers = httpx.Headers(request.header_items(), encoding="latin-1")
+        headers.setdefault("Accept-Encoding", "identity")
+        visited = {}
+        while True:
+            outgoing = httpx.Request("GET", url, headers=headers, extensions={
+                "timeout": dict.fromkeys(("connect", "read", "write", "pool"), timeout),
+            })
+            try:
+                response = self._transport(url).handle_request(outgoing)
+            except httpx.HTTPError as error:
+                _raise_hls_transport_error(error)
+            response.request = outgoing
+            opened = _RawHlsResponse(response, self._response_closed)
+            with self._lock:
+                self._responses.add(opened)
+            location = response.headers.get("location", response.headers.get("uri"))
+            if response.status_code in (301, 302, 303, 307, 308) and location is not None:
+                redirected = urljoin(url, location.replace(" ", "%20"))
+                if (urlsplit(redirected).scheme not in ("http", "https")
+                        or visited.get(redirected, 0) >= 4 or len(visited) >= 10):
+                    raise urllib.error.HTTPError(
+                        url, response.status_code, "HLS redirect rejected", opened.headers, opened
+                    )
+                visited[redirected] = visited.get(redirected, 0) + 1
+                # Empty redirects can release their socket; never drain an arbitrary body.
+                if response.headers.get("content-length") == "0":
+                    opened.read(1)
+                opened.close()
+                headers.pop("Content-Length", None)
+                headers.pop("Content-Type", None)
+                url = redirected
+                continue
+            if not 200 <= response.status_code < 300:
+                raise urllib.error.HTTPError(
+                    url, response.status_code, response.reason_phrase, opened.headers, opened
+                )
+            return opened
+
+    def observe_response(self, url, response):
+        try:
+            return self._history.wrap(url, response)
+        except Exception:
+            response.close()
+            raise
+
+    def _response_closed(self, response):
+        with self._lock:
+            self._responses.discard(response)
+
+    def close(self):
+        with self._lock:
+            responses = list(self._responses)
+        try:
+            for response in responses:
+                response.close()
+        finally:
+            for transport in self._transports.values():
+                transport.close()
+            self._transports.clear()
+            self._history.clear()
+
+
+class _RawHlsResponse:
+    """Expose sized, raw reads while retaining at most one network block."""
+
+    def __init__(self, response, on_close):
+        self._response = response
+        self._on_close = on_close
+        self._iterator = response.iter_raw()
+        self._buffer = b""
+        self._eof = False
+        self.closed = False
+        self.status = response.status_code
+        self.headers = Message()
+        for name, value in response.headers.multi_items():
+            self.headers[name] = value
+
+    def geturl(self):
+        return str(self._response.url)
+
+    def read(self, size=-1):
+        if self.closed:
+            return b""
+        result = bytearray()
+        try:
+            while size is None or size < 0 or len(result) < size:
+                if not self._buffer:
+                    if self._eof:
+                        break
+                    self._buffer = next(self._iterator, b"")
+                    if not self._buffer:
+                        self._eof = True
+                        self.close()
+                        break
+                count = (len(self._buffer) if size is None or size < 0
+                         else min(len(self._buffer), size - len(result)))
+                result.extend(self._buffer[:count])
+                self._buffer = self._buffer[count:]
+        except httpx.HTTPError as error:
+            self.close()
+            _raise_hls_transport_error(error)
+        return bytes(result)
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            self._buffer = b""
+            try:
+                self._response.close()
+            finally:
+                self._on_close(self)
+
+
+class _ObservedHlsResponse:
+    """Observe only bytes requested by the decoder, never drain on close."""
+
+    def __init__(self, response, completed, prefix=b"", *, capture=True):
+        self._response = response
+        self._completed = completed
+        self._prefix = io.BytesIO(prefix)
+        self._prefix_length = len(prefix)
+        self._body = bytearray() if capture else None
+        self._count = 0
+
+    def read(self, size=-1):
+        if size == 0:
+            return b""
+        data = self._prefix.read(size)
+        if size is None or size < 0:
+            data += self._response.read()
+        elif len(data) < size:
+            data += self._response.read(size - len(data))
+        self._count += len(data)
+        if self._body is not None:
+            if len(self._body) + len(data) <= MAX_REDIRECTED_HLS_BYTES:
+                self._body.extend(data)
+            else:
+                self._body = None
+        if (self._response._eof and self._prefix.tell() == self._prefix_length
+                and self._completed is not None):
+            completed, self._completed = self._completed, None
+            body, self._body = self._body, None
+            completed(body, self._count)
+        return data
+
+    def close(self):
+        self._body = None
+        self._completed = None
+        self._prefix.close()
+        self._response.close()
+
+    def __getattr__(self, name):
+        return getattr(self._response, name)
+
+
+class _HlsPlaylistHistory:
+    """Retain observed pending media rows, without fetching or caching TS bodies."""
+
+    def __init__(self):
+        self._playlists = {}
+
+    def clear(self):
+        self._playlists.clear()
+
+    def wrap(self, url, response):
+        if not _is_hls_manifest_candidate(response, url):
+            return _ObservedHlsResponse(
+                response, lambda _body, count: self._consumed(url, response, count),
+                capture=False,
+            )
+        state = self._playlists.setdefault(
+            url, {"active": None, "pending": {}, "blocked": False,
+                  "floor": 0, "consumed": set(), "ambiguous": set()}
+        )
+        if state["active"] is False:
+            return response
+        prefix = b""
+        if state["active"] and state["pending"]:
+            prefix, first = self._first_sequence(response)
+            if first is not None and first > min(state["pending"]):
+                if state["blocked"]:
+                    raise ValueError("HLS pending playlist cannot be recovered safely")
+                body = _read_bounded_hls_manifest(response, prefix)
+                try:
+                    if not self._complete_representation(response, len(body)):
+                        raise ValueError("HLS pending playlist cannot be recovered safely")
+                    parsed = self._observe(state, body, response.geturl())
+                    if parsed is None or state["blocked"]:
+                        raise ValueError("HLS pending playlist cannot be recovered safely")
+                    lines, first_row, _rows, _endlist = parsed
+                    retained = [row for seq, row in sorted(state["pending"].items())
+                                if seq < first]
+                    for index, line in enumerate(lines):
+                        if line.startswith(b"#EXT-X-MEDIA-SEQUENCE:"):
+                            ending = line[len(line.rstrip(b"\r\n")):]
+                            lines[index] = (
+                                f"#EXT-X-MEDIA-SEQUENCE:{min(state['pending'])}".encode()
+                                + ending
+                            )
+                    earlier = []
+                    for tags, uri in retained:
+                        earlier.extend(tags)
+                        ending = tags[-1][len(tags[-1].rstrip(b"\r\n")):] or b"\n"
+                        earlier.append(uri.encode("utf-8") + ending)
+                    merged = b"".join(lines[:first_row] + earlier + lines[first_row:])
+                    return _NamedResponse(
+                        io.BytesIO(_rewrite_hls_playlist(
+                            merged, response.geturl(), rewrite_attributes=False
+                        )),
+                        response.geturl(),
+                    )
+                finally:
+                    response.close()
+        return _ObservedHlsResponse(
+            response, lambda body, count: self._observe(
+                state, body if self._complete_representation(response, count) else None,
+                response.geturl(),
+            ),
+            prefix,
+        )
+
+    @staticmethod
+    def _first_sequence(response):
+        prefix = bytearray()
+        line = bytearray()
+        while len(prefix) <= MAX_REDIRECTED_HLS_BYTES:
+            char = response.read(1)
+            if not char:
+                return bytes(prefix), None
+            prefix.extend(char)
+            line.extend(char)
+            if char == b"\n":
+                if line.startswith(b"#EXT-X-MEDIA-SEQUENCE:"):
+                    try:
+                        return bytes(prefix), int(line.split(b":", 1)[1])
+                    except ValueError:
+                        return bytes(prefix), None
+                if line.startswith(b"#EXTINF:"):
+                    return bytes(prefix), 0
+                line.clear()
+        raise ValueError("HLS pending playlist exceeds the size limit")
+
+    def _observe(self, state, body, base):
+        parsed = self._parse(body, base) if body is not None else None
+        if state["active"] is None:
+            state["active"] = parsed is not None and not parsed[3]
+            if not state["active"]:
+                return None
+            rows = parsed[2][-3:]
+            state["floor"] = rows[0][0]
+        elif parsed is None:
+            state["blocked"] = True
+            return None
+        else:
+            rows = parsed[2]
+        if not state["pending"] and rows[0][0] > state["floor"]:
+            raise ValueError("HLS pending playlist has a sequence gap")
+        sequences_by_uri = {}
+        known_rows = [(seq, uri) for seq, (_tags, uri) in state["pending"].items()]
+        known_rows.extend((seq, uri) for seq, _tags, uri in parsed[2])
+        for seq, uri in known_rows:
+            sequences_by_uri.setdefault(uri, set()).add(seq)
+        state["ambiguous"].update(uri for uri, seqs in sequences_by_uri.items() if len(seqs) > 1)
+        if state["ambiguous"]:
+            state["blocked"] = True
+        for seq, tags, uri in rows:
+            if seq < state["floor"] or seq in state["consumed"]:
+                continue
+            previous = state["pending"].get(seq)
+            if previous is not None and previous[1] != uri:
+                raise ValueError("HLS observed sequence URI changed")
+            state["pending"][seq] = (tags, uri)
+        pending = sorted(state["pending"])
+        if any(right != left + 1 for left, right in zip(pending, pending[1:])):
+            raise ValueError("HLS pending playlist has a sequence gap")
+        all_rows = [(seq, tags, uri) for playlist in self._playlists.values()
+                    for seq, (tags, uri) in playlist["pending"].items()]
+        metadata_bytes = sum(len(str(seq)) + sum(map(len, tags)) + len(uri.encode("utf-8"))
+                             for seq, tags, uri in all_rows)
+        if len(all_rows) > MAX_HLS_PENDING_SEGMENTS or metadata_bytes > MAX_REDIRECTED_HLS_BYTES:
+            raise ValueError("HLS pending playlist metadata budget exceeded")
+        return parsed
+
+    @staticmethod
+    def _complete_representation(response, count):
+        content_range = response.headers.get("Content-Range")
+        if response.status == 200:
+            return content_range is None
+        if response.status == 206:
+            match = re.fullmatch(r"bytes 0-(\d+)/(\d+)", content_range or "")
+            return (match is not None and int(match[1]) + 1 == int(match[2])
+                    and count == int(match[2]))
+        return False
+
+    def _consumed(self, url, response, count):
+        if not self._complete_representation(response, count):
+            return
+        matches = [(state, seq) for state in self._playlists.values()
+                   for seq, (_tags, uri) in state["pending"].items() if uri == url]
+        if len(matches) != 1:
+            for state, _seq in matches:
+                state["blocked"] = True
+            return
+        state, seq = matches[0]
+        if url in state["ambiguous"]:
+            return
+        del state["pending"][seq]
+        state["consumed"].add(seq)
+        while state["floor"] in state["consumed"]:
+            state["consumed"].remove(state["floor"])
+            state["floor"] += 1
+
+    @staticmethod
+    def _parse(body, base):
+        lines = bytes(body).splitlines(keepends=True)
+        if not lines or lines[0].strip() != b"#EXTM3U":
+            return None
+        sequence, tags, rows, first_row, endlist = 0, [], [], None, False
+        globals_seen = set()
+        for index, line in enumerate(lines[1:], 1):
+            value = line.strip()
+            if value.startswith(b"#EXT-X-MEDIA-SEQUENCE:"):
+                if rows or tags or b"sequence" in globals_seen:
+                    return None
+                try:
+                    sequence = int(value.split(b":", 1)[1])
+                except ValueError:
+                    return None
+                if sequence < 0:
+                    return None
+                globals_seen.add(b"sequence")
+            elif value.startswith(b"#EXTINF:"):
+                if (endlist or any(tag.startswith(b"#EXTINF:") for tag in tags)
+                        or re.fullmatch(rb"#EXTINF:(?:\d+(?:\.\d*)?|\.\d+),[^\r\n]*", value)
+                        is None):
+                    return None
+                tags.append(line)
+                if first_row is None:
+                    first_row = index
+            elif value.startswith(b"#EXT-X-PROGRAM-DATE-TIME:"):
+                if any(tag.startswith(b"#EXT-X-PROGRAM-DATE-TIME:") for tag in tags):
+                    return None
+                date = value.split(b":", 1)[1]
+                if re.fullmatch(
+                    rb"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+                    date,
+                ) is None:
+                    return None
+                try:
+                    datetime.fromisoformat(date.decode("ascii").replace("Z", "+00:00"))
+                except ValueError:
+                    return None
+                tags.append(line)
+                if first_row is None:
+                    first_row = index
+            elif value == b"#EXT-X-ENDLIST":
+                if tags or endlist:
+                    return None
+                endlist = True
+            elif value.startswith((b"#EXT-X-VERSION:", b"#EXT-X-TARGETDURATION:")):
+                name, number = value.split(b":", 1)
+                if name in globals_seen or not number.isdigit() or int(number) <= 0:
+                    return None
+                globals_seen.add(name)
+            elif value == b"#EXT-X-INDEPENDENT-SEGMENTS" or not value:
+                continue
+            elif value.startswith(b"#"):
+                return None
+            else:
+                if not any(tag.startswith(b"#EXTINF:") for tag in tags):
+                    return None
+                try:
+                    uri = _resolve_hls_uri(value.decode("utf-8"), base)
+                    if urlsplit(uri).scheme not in ("http", "https"):
+                        return None
+                except (UnicodeError, ValueError):
+                    return None
+                rows.append((sequence, tuple(tags), uri))
+                sequence += 1
+                tags = []
+        if not rows or tags:
+            return None
+        return lines, first_row, rows, endlist
+
+
+def _raise_hls_transport_error(error):
+    """Keep certificate failures outside the existing connection retry budget."""
+    cause = error
+    seen = set()
+    while cause is not None and id(cause) not in seen:
+        if isinstance(cause, ssl.SSLError):
+            raise urllib.error.URLError(cause) from error
+        seen.add(id(cause))
+        cause = cause.__cause__ or cause.__context__
+    if isinstance(error, httpx.TimeoutException):
+        raise TimeoutError("HLS HTTP timed out") from error
+    if isinstance(error, (httpx.NetworkError, httpx.RemoteProtocolError)):
+        raise urllib.error.URLError(ConnectionError("HLS HTTP connection failed")) from error
+    raise urllib.error.URLError(error) from error
 
 
 def _https_trust():
@@ -396,6 +856,9 @@ class _NamedResponse:
 
     def read(self, size=-1):
         return self._response.read(size)
+
+    def geturl(self):
+        return self.name
 
     def close(self):
         self._response.close()
@@ -482,7 +945,7 @@ def _resolve_hls_uri(uri: str, base_url: str) -> str:
     return urljoin(base_url, uri)
 
 
-def _rewrite_hls_playlist(body: bytes, base_url: str) -> bytes:
+def _rewrite_hls_playlist(body: bytes, base_url: str, *, rewrite_attributes=True) -> bytes:
     text = body.decode("utf-8")
     bom = "\ufeff" if text.startswith("\ufeff") else ""
     if bom:
@@ -497,7 +960,8 @@ def _rewrite_hls_playlist(body: bytes, base_url: str) -> bytes:
                 quote = '"' if match.group(2) is not None else "'" if match.group(3) is not None else ""
                 return match.group(1) + quote + _resolve_hls_uri(uri, base_url) + quote
 
-            content = _HLS_URI_ATTRIBUTE.sub(replace_uri, content)
+            if rewrite_attributes:
+                content = _HLS_URI_ATTRIBUTE.sub(replace_uri, content)
         else:
             stripped = content.strip()
             if stripped:
