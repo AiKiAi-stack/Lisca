@@ -409,6 +409,87 @@ def test_public_cli_qualifies_a_voiced_pause_with_frame_evidence(tmp_path, monke
     assert result["acceptance_status"] == "not_assessed"
 
 
+def test_public_cli_uses_pcm_render_clock_for_media_progression(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "RATE", 48000)
+    paths = _write_evidence(tmp_path, pause_at=25.5, sampling_step_ms=10)
+    _declare_zero_asr(paths)
+    _declare_pcm_pause(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    audio = report["acoustic_capture"]["audio"]
+    for row in report["timeline_samples"] + report["acoustic_capture"]["screenshots"]:
+        row["observed_after_ms"] /= 1.001
+    for row in audio["output_clock_samples"]:
+        row["performance_time_after_ms"] /= 1.001
+    for action in audio["pcm_capture"]["actions"]:
+        for row in (action["before"], action["after"]):
+            row["performance_after_ms"] /= 1.001
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 0, completed.stdout
+    assert result["measured_item_count"] == 50
+    assert result["audio_alignment"]["progression_clock"] == "pcm_render_context"
+
+
+@pytest.mark.parametrize("pcm", [False, True])
+def test_public_cli_keeps_112ms_unmarked_jump_unknown_with_or_without_pcm(tmp_path, pcm):
+    paths = _write_evidence(tmp_path, pause_at=25.5)
+    if pcm:
+        _declare_zero_asr(paths)
+        _declare_pcm_pause(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    for row in report["timeline_samples"]:
+        if row["observed_after_ms"] >= 10000:
+            row["media_time"] += 0.112
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 1
+    assert result["audio_alignment"]["reason"] == "unmarked_playback_time_forward_jump"
+    assert result["unknown_item_count"] == result["samples"] == 50
+
+
+def test_browser_fixture_preserves_the_last_lag_caption_boundary(tmp_path):
+    directory = tmp_path / "prepared"
+    fixture = Path(__file__).with_name("acoustic_calibration_fixture.py")
+    completed = subprocess.run([sys.executable, str(fixture), "--prepare-only",
+                                "--output-root", str(directory)], capture_output=True, text=True)
+
+    assert completed.returncode == 0, completed.stderr
+    with wave.open(str(directory / "source.wav"), "rb") as source:
+        assert source.getnframes() / source.getframerate() > 50.63
+    reference = json.loads((directory / "reference.json").read_text(encoding="utf-8"))
+    assert len(reference["items"]) == 50
+
+
+@pytest.mark.parametrize(("measured", "p95", "signed_lag", "expected"), [
+    (50, 0.74, True, True), (0, 0.74, True, False),
+    (50, 0.2, True, False), (50, 0.74, False, False)])
+def test_browser_fixture_qualifies_only_a_measurable_known_lag(measured, p95, signed_lag, expected):
+    from acoustic_calibration_fixture import qualify_control  # pylint: disable=import-outside-toplevel
+    oracle = {"status": "qualified", "actual_gap_interval_seconds": [-0.016, 0.016]}
+    result = {"sync_status": "calibration_only", "acceptance_status": "not_assessed",
+        "sync_gate_passed": None, "release_gate_passed": False,
+        "calibration_thresholds_satisfied": False,
+        "samples": 50, "measured_item_count": measured, "unknown_item_count": 50 - measured,
+        "missing_item_count": 0, "visual_evidence": {
+            "transition_count": 100, "verified_transition_count": 100 if measured else 0},
+        "start_error_seconds": {"p95_upper_bound": p95},
+        "end_error_seconds": {"p95_upper_bound": p95 + 0.16},
+        "audio_alignment": {"pause_certificates": [{
+            "source_gap_interval_seconds": [-0.022, 0.022]}]},
+        "items": [{"status": "measured", "start_lag_interval_seconds": [0.62, 0.72]
+                   if signed_lag else [0.1, 0.2],
+                   "end_lag_interval_seconds": [0.78, 0.88]} for _ in range(measured)]}
+
+    qualification = qualify_control("lag", oracle, result, 1)
+
+    assert qualification["capture_calibration_qualified"] is expected
+    assert qualification["caption_measurement_complete"] is (measured == 50)
+
+
 @pytest.mark.parametrize("corruption", ["missing", "duplicate", "reordered", "truncated"])
 def test_public_cli_rejects_corrupted_pcm_frame_bridge(tmp_path, corruption):
     paths = _write_evidence(tmp_path, pause_at=25.5)

@@ -36,7 +36,7 @@ def prepare(root):
     if any(root.iterdir()):
         raise FileExistsError("prepare requires an empty evidence directory")
     rng = np.random.default_rng(70029)
-    source = np.zeros(50 * RATE, dtype="<i2")
+    source = np.zeros(52 * RATE, dtype="<i2")
     items, spans = [], []
     for index in range(50):
         t = np.arange(round(0.6 * RATE)) / RATE
@@ -64,7 +64,7 @@ def prepare(root):
     source_hash = digest(root / "source.wav")
     write_json(root / "reference.json", {"schema_version": 1, "language": "en",
         "dataset": "independent-browser-pcm-calibration", "sha256": source_hash,
-        "seconds": 50, "asset_sample_rate_hz": RATE, "items": items})
+        "seconds": 52, "asset_sample_rate_hz": RATE, "items": items})
     write_json(root / "voice-spans.json", {"schema_version": 1, "source_sha256": source_hash,
         "source_condition": "synthetic_tone_fixture", "provenance": "independent integer source truth",
         "method": {"name": "seeded-source-construction", "parameters": "seed=70029; sample-exact"},
@@ -72,6 +72,7 @@ def prepare(root):
     write_json(root / "truth-control-manifest.json", {
         "schema_version": 1, "frozen_before_capture": True, "seed": 70029,
         "sample_rate_hz": RATE, "pause_target_seconds": 25.5, "pause_duration_seconds": 0.6,
+        "source_tail_silence_seconds": 2, "capture_format": "uncompressed_pcm16",
         "caption_onset_lead_seconds": 0.08, "caption_end_tail_seconds": 0.08,
         "source_sha256": source_hash, "reference_sha256": digest(root / "reference.json"),
         "voice_spans_sha256": digest(root / "voice-spans.json"),
@@ -86,10 +87,13 @@ def prepare(root):
             "maximum_quantization_lsb": 1, "edge_exclusion_seconds_each": 0.008,
             "verified_trace_seconds_each": 0.16, "source_gap_bound_seconds_each": 0.016,
             "resolution_seconds": 0.05,
-            "rule": "require unique complete traces immediately outside fixed edge bands; "
+            "rule": "select longest interior zero run, excluding leading/trailing silence; "
+                    "require unique complete traces immediately outside fixed edge bands; "
                     "unknown on mismatch; actual gap bounds independent of DOM command targets"},
         "qualification": "CLI gap interval must contain independent actual-gap bounds; "
-                         "width <50ms; skip/replay bounds and certificates must exclude zero",
+                         "width <50ms; skip/replay bounds and certificates must exclude zero; "
+                         "pause/lag require 50 measured, zero unknown/missing and complete pixels; "
+                         "lag requires signed intervals covering +0.67/+0.83s and both P95>0.5s",
     })
 
 
@@ -103,7 +107,10 @@ def integer_oracle(source_path, capture_path):
     source, captured = read(source_path), read(capture_path)
     changes = np.diff(np.concatenate(([False], captured == 0, [False])).astype(np.int8))
     starts, ends = np.flatnonzero(changes == 1), np.flatnonzero(changes == -1)
-    longest = int(np.argmax(ends - starts))
+    interior = np.flatnonzero((starts > 0) & (ends < len(captured)))
+    if not interior.size:
+        return {"status": "unknown", "reason": "independent_interior_silence_missing"}
+    longest = int(interior[np.argmax((ends - starts)[interior])])
     begin, end = int(starts[longest]), int(ends[longest])
     if not 0.3 <= (end - begin) / RATE <= 0.9:
         return {"status": "unknown", "reason": "independent_silence_run_not_unique_pause"}
@@ -129,6 +136,49 @@ def integer_oracle(source_path, capture_path):
             "actual_gap_point_seconds": gap, "independent_source_addresses": addresses,
             "silence_run_samples": [begin, end], "edge_exclusion_samples_each": edge,
             "commanded_delta_used_in_oracle": False, "scorer_or_frames_used_in_oracle": False}
+
+
+def qualify_control(name, oracle, result, exit_code):
+    """Qualify saved public scorer evidence against independent control truth."""
+    delta, lag, expected_exit = CASES[name]
+    certificates = result.get("audio_alignment", {}).get("pause_certificates", [])
+    interval = certificates[0].get("source_gap_interval_seconds") if len(certificates) == 1 else None
+    truth = oracle.get("actual_gap_interval_seconds")
+    covered = bool(interval and truth and interval[0] <= truth[0] <= truth[1] <= interval[1])
+    resolved = bool(interval and interval[1] - interval[0] < 0.05
+                    and (delta == 0 or interval[1] < 0 or interval[0] > 0)
+                    and (delta == 0 or truth and (truth[1] < 0 or truth[0] > 0)))
+    visual = result.get("visual_evidence", {})
+    complete = (result.get("samples") == result.get("measured_item_count") == 50
+                and result.get("unknown_item_count") == result.get("missing_item_count") == 0
+                and visual.get("transition_count", 0) >= 100
+                and visual.get("verified_transition_count") == visual.get("transition_count"))
+    rows = result.get("items", [])
+    lag_demonstrated = bool(complete and len(rows) == 50
+        and result.get("calibration_thresholds_satisfied") is False
+        and all(isinstance(value, (int, float)) and np.isfinite(value) and value > 0.5
+                for value in (result.get("start_error_seconds", {}).get("p95_upper_bound"),
+                              result.get("end_error_seconds", {}).get("p95_upper_bound")))
+        and all(row.get("status") == "measured"
+                and all(isinstance(row.get(key), list) and len(row[key]) == 2
+                        and row[key][0] <= expected <= row[key][1]
+                        for key, expected in (("start_lag_interval_seconds", lag - 0.08),
+                                              ("end_lag_interval_seconds", lag + 0.08)))
+                for row in rows))
+    control_proved = True
+    if lag:
+        control_proved = lag_demonstrated
+    elif delta == 0:
+        control_proved = complete and result.get("calibration_thresholds_satisfied") is True
+    qualified = (oracle.get("status") == "qualified" and covered and resolved
+                 and exit_code == expected_exit and control_proved
+                 and result.get("sync_status") == "calibration_only"
+                 and result.get("acceptance_status") == "not_assessed"
+                 and result.get("sync_gate_passed") is None
+                 and result.get("release_gate_passed") is False)
+    return {"independent_truth_covered": covered, "resolution_demonstrated": resolved,
+            "caption_measurement_complete": complete, "known_lag_demonstrated": lag_demonstrated,
+            "capture_calibration_qualified": bool(qualified), "release_acceptance_assessed": False}
 
 
 PAGE = """<!doctype html><style>
@@ -290,22 +340,14 @@ def run(root, name, ocr_executable, tessdata_dir):
     (directory / "cli.stdout.txt").write_text(completed.stdout, encoding="utf-8")
     (directory / "cli.stderr.txt").write_text(completed.stderr, encoding="utf-8")
     result = json.loads((directory / "score.json").read_text(encoding="utf-8"))
-    certificates = result.get("audio_alignment", {}).get("pause_certificates", [])
-    interval = certificates[0].get("source_gap_interval_seconds") if len(certificates) == 1 else None
-    truth = oracle.get("actual_gap_interval_seconds")
-    covered = bool(interval and truth and interval[0] <= truth[0] <= truth[1] <= interval[1])
-    resolved = bool(interval and interval[1] - interval[0] < 0.05
-                    and (delta == 0 or interval[1] < 0 or interval[0] > 0)
-                    and (delta == 0 or truth and (truth[1] < 0 or truth[0] > 0)))
-    qualified = (oracle["status"] == "qualified" and covered and resolved
-                 and completed.returncode == manifest["cases"][name]["expected_cli_exit"])
+    qualification = qualify_control(name, oracle, result, completed.returncode)
     write_json(directory / "execution.json", {"command": command, "exit_code": completed.returncode,
         "candidate_revision": revision, "oracle_status": oracle["status"],
         "expected_exit": manifest["cases"][name]["expected_cli_exit"],
-        "independent_truth_covered": covered, "resolution_demonstrated": resolved,
-        "capture_calibration_qualified": qualified, "release_acceptance_assessed": False})
+        **qualification})
     print(json.dumps({"case": name, "candidate": revision, "exit": completed.returncode,
-                      "oracle": oracle, "qualified": qualified, "evidence": str(directory)}), flush=True)
+                      "oracle": oracle, "qualified": qualification["capture_calibration_qualified"],
+                      "evidence": str(directory)}), flush=True)
 
 
 def main():

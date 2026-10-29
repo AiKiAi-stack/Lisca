@@ -728,6 +728,9 @@ def _align_capture(source, capture, rate, items, report, audio, calibration=Fals
     active_epoch = None
     previous_observed = None
     previous_media_time = None
+    previous_progression = None
+    pcm_clock = bool(audio.get("pcm_capture"))
+    progression_clock = "pcm_render_context" if pcm_clock else "page_performance"
     timeline_error = None
     for sample in timeline:
         observed = sample.get("observed_after_ms")
@@ -742,16 +745,24 @@ def _align_capture(source, capture, rate, items, report, audio, calibration=Fals
         if sample.get("paused") or sample.get("seeking"):
             active_epoch = None
             previous_media_time = None
+            previous_progression = None
             continue
         media_time = sample.get("media_time")
         if not _finite(media_time):
             timeline_error = ("unmatched", "playback_epoch_media_time_missing")
             break
         media_time = float(media_time)
+        progression = _context_time_at(observed, clock_pairs) if pcm_clock else observed / 1000
+        if progression is None:
+            timeline_error = ("unmatched", "pcm_progression_clock_missing")
+            break
+        if pcm_clock and previous_progression is not None:
+            elapsed = progression - previous_progression
         if active_epoch is None:
             active_epoch = {
                 "index": len(epochs), "start_performance_after_ms": observed,
                 "end_performance_after_ms": observed, "start_media_time": media_time,
+                "start_progression_time_seconds": progression,
             }
             epochs.append(active_epoch)
         elif previous_media_time is not None and media_time <= previous_media_time:
@@ -760,20 +771,22 @@ def _align_capture(source, capture, rate, items, report, audio, calibration=Fals
             break
         elif (media_time - previous_media_time > elapsed + 2 * float(clock_uncertainty) / 1000
               or media_time - active_epoch["start_media_time"]
-              > (observed - active_epoch["start_performance_after_ms"]) / 1000
+              > (progression - active_epoch["start_progression_time_seconds"] if pcm_clock else
+                 (observed - active_epoch["start_performance_after_ms"]) / 1000)
               + 2 * float(clock_uncertainty) / 1000):
             timeline_error = ("discontinuous_or_frozen", "unmarked_playback_time_forward_jump")
             break
         else:
             active_epoch["end_performance_after_ms"] = observed
         previous_media_time = media_time
+        previous_progression = progression
         epoch_by_time[observed] = active_epoch["index"]
     if timeline_error:
         status, reason = timeline_error
         return {"status": status, "method": "bounded_spectral_feature_cross_correlation",
                 "matched_anchor_count": 0, "required_anchor_count": required,
                 "source_offset_seconds": None, "residual_seconds": None,
-                "reason": reason, "epochs": epochs}
+                "reason": reason, "epochs": epochs, "progression_clock": progression_clock}
     anchors = []
     used_capture_buckets = set()
     for item in items:
@@ -886,6 +899,7 @@ def _align_capture(source, capture, rate, items, report, audio, calibration=Fals
     output_clock_gaps = [after[0] - before[0]
                          for before, after in zip(clock_pairs, clock_pairs[1:])]
     return {"status": "aligned", "method": "bounded_spectral_feature_cross_correlation",
+            "progression_clock": progression_clock,
             "matched_anchor_count": len(anchors), "matched_item_count": matched_item_count,
             "required_anchor_count": required,
             "source_offset_seconds": (epochs[0]["source_offset_seconds"]
