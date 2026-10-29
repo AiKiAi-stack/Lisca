@@ -102,6 +102,8 @@ def _read_audio(path, rate, include_timing=False):
             stream = container.streams.audio[0]
             timing.update({
                 "codec": stream.codec_context.name,
+                "sample_rate_hz": stream.codec_context.sample_rate,
+                "channels": stream.codec_context.channels,
                 "time_base": str(stream.time_base),
                 "stream_start_pts": stream.start_time,
                 "stream_duration_ticks": stream.duration,
@@ -156,20 +158,33 @@ def _load_identity(reference_path, source_path, spans_path, recording_path,
         raise EvidenceError("source_reference_hash_mismatch")
     if recording.get("source_kind") != "local_file" or recording.get("input_sha256") != source_hash:
         raise EvidenceError("recording_input_hash_mismatch")
+    zero_asr = any(document.get("recognition_mode") == "none"
+                   for document in (recording, report))
+    if zero_asr and (not calibration
+                    or source_spans.get("source_condition") != "synthetic_tone_fixture"
+                    or not all(document.get("recognition_mode") == "none"
+                               and document.get("simulated_recognition") is True
+                               and document.get("session_post_start_count") == 0
+                               and document.get("completion_signal") == "media_ended"
+                               and any(event.get("type") == "media_ended"
+                                       and event.get("reason") == "completed"
+                                       for event in document.get("events", []))
+                               for document in (recording, report))):
+        raise EvidenceError("zero_asr_calibration_identity_invalid")
     if (recording.get("input_unchanged") is not True
             or recording.get("input_sha256_after") != source_hash
             or recording.get("recording_status") != "completed"
-            or recording.get("completion_signal") != "end"
+            or recording.get("completion_signal") != ("media_ended" if zero_asr else "end")
             or recording.get("errors")):
         raise EvidenceError("recording_not_complete_and_clean")
     end_observed = any(event.get("type") == "end" and event.get("reason") == "completed"
                        for event in recording.get("events", []))
-    if recording.get("simulated_recognition") is not False or not end_observed:
+    if not zero_asr and (recording.get("simulated_recognition") is not False or not end_observed):
         raise EvidenceError("recording_not_real_completed_session")
     if report.get("recording_status") != "completed" or report.get("language") != language:
         raise EvidenceError("browser_report_identity_mismatch")
-    if (report.get("simulated_recognition") is not False
-            or report.get("session_post_start_count", 0) < 1
+    if (not zero_asr and (report.get("simulated_recognition") is not False
+                         or report.get("session_post_start_count", 0) < 1)
             or report.get("errors")):
         raise EvidenceError("browser_report_not_real_clean_session")
     if report.get("source_verified") is not True:
@@ -303,6 +318,137 @@ def _context_time_at(perf_ms, clock):
             ratio = (perf_ms - before[0]) / (after[0] - before[0])
             return before[1] + ratio * (after[1] - before[1])
     return None
+
+
+def _validate_pcm_bridge(pcm, timing):
+    blocks = pcm.get("blocks")
+    rate = pcm.get("sample_rate_hz")
+    if (pcm.get("schema_version") != 1 or not _finite(rate) or rate <= 0
+            or pcm.get("channels") != 1 or timing["channels"] != 1
+            or timing["codec"] != "pcm_s16le" or timing["sample_rate_hz"] != rate
+            or not isinstance(blocks, list) or len(blocks) < 2):
+        raise EvidenceError("pcm_bridge_invalid")
+    expected = blocks[0].get("start_frame")
+    first = expected
+    for sequence, block in enumerate(blocks):
+        frame, count = block.get("start_frame"), block.get("frame_count")
+        context = block.get("context_time_seconds")
+        if (block.get("sequence") != sequence or type(frame) is not int
+                or type(count) is not int or frame < 0 or not 0 < count <= 128
+                or frame != expected or not _finite(context)
+                or abs(context * rate - frame) > 0.000001):
+            raise EvidenceError("pcm_frames_missing_duplicate_or_reordered")
+        expected += count
+    if expected - first != timing["decoded_sample_count"]:
+        raise EvidenceError("pcm_frame_length_mismatch")
+    return first / rate
+
+
+def _waveform_anchor(source, observed, expected_start, rate):
+    size = len(observed)
+    lower = max(0, round((expected_start - ALIGNMENT_SEARCH_SECONDS) * rate))
+    upper = min(len(source) - size, round((expected_start + ALIGNMENT_SEARCH_SECONDS) * rate))
+    if size < 2 or upper <= lower or np.sqrt(np.mean(observed ** 2)) < 0.0005:
+        return None
+    region = source[lower:upper + size].astype(np.float64)
+    window = observed.astype(np.float64) - np.mean(observed)
+    norm = np.linalg.norm(window)
+    if norm == 0:
+        return None
+    fft_size = 1 << (len(region) + size - 1).bit_length()
+    products = np.fft.irfft(np.fft.rfft(region, fft_size)
+                           * np.fft.rfft(window[::-1], fft_size), fft_size)
+    products = products[size - 1:len(region)]
+    sums = np.concatenate(([0.0], np.cumsum(region)))
+    squares = np.concatenate(([0.0], np.cumsum(region ** 2)))
+    variance = squares[size:] - squares[:-size] - (sums[size:] - sums[:-size]) ** 2 / size
+    denominator = np.where(variance > size * 0.0005 ** 2,
+                           np.sqrt(np.maximum(variance, 0)) * norm, np.inf)
+    scores = products / denominator
+    best = int(np.argmax(scores))
+    distant = np.abs(np.arange(len(scores)) - best) > round(0.1 * rate)
+    alternative = float(np.max(scores[distant])) if np.any(distant) else 1.0
+    correlation = float(scores[best])
+    if correlation < MIN_CORRELATION or correlation - alternative < MIN_CORRELATION_MARGIN:
+        return None
+    peaks = np.flatnonzero(scores >= correlation - MIN_CORRELATION_MARGIN)
+    return {"source_start_seconds": (lower + best) / rate,
+            "source_start_interval_seconds": [(lower + int(peaks[0])) / rate,
+                                              (lower + int(peaks[-1])) / rate],
+            "correlation": correlation, "distant_margin": correlation - alternative}
+
+
+def _pcm_pause_certificate(source, capture, rate, audio, previous, following):
+    pcm = audio["pcm_capture"]
+    actions = pcm.get("actions", [])
+    pair = [action for action in actions if action.get("kind") in ("pause", "resume")
+            and previous["end_performance_after_ms"]
+            <= action.get("before", {}).get("performance_after_ms", -1)
+            <= following["start_performance_after_ms"]]
+    result = {"status": "unknown", "reason": "pcm_pause_action_brackets_missing",
+              "resolution_seconds": 0.05}
+    if [action.get("kind") for action in pair] != ["pause", "resume"]:
+        return result
+    origin = audio["start_context_time_seconds"]
+    graph_rate = pcm["sample_rate_hz"]
+    brackets = []
+    for action in pair:
+        before, after = action["before"], action["after"]
+        if (not all(_finite(row.get("frame")) and _finite(row.get("performance_after_ms"))
+                    for row in (before, after)) or after["frame"] < before["frame"]
+                or after["performance_after_ms"] < before["performance_after_ms"]
+                or after["frame"] - before["frame"] > 128):
+            return result
+        brackets.append([(row["frame"] / graph_rate - origin) for row in (before, after)])
+    pause, resume = brackets
+    midpoint = round((pause[1] + resume[0]) / 2 * rate)
+    if (not 0 <= midpoint < len(capture) or resume[0] - pause[1] < 0.3
+            or abs(float(capture[midpoint])) > 0.0001):
+        result["reason"] = "pcm_pause_silence_missing"
+        return result
+    edges = []
+    for threshold in (0.0, 0.0001):
+        lower = max(0, round((pause[0] - 0.1) * rate))
+        upper = min(len(capture), round((resume[1] + 0.1) * rate))
+        left = np.flatnonzero(np.abs(capture[lower:midpoint]) > threshold)
+        right = np.flatnonzero(np.abs(capture[midpoint:upper]) > threshold)
+        if not left.size or not right.size:
+            result["reason"] = "pcm_pause_voiced_edges_missing"
+            return result
+        edges.append((lower + int(left[-1]) + 1, midpoint + int(right[0])))
+    windows = [(pause[0] - 0.22, previous), (resume[1] + 0.06, following)]
+    anchors = []
+    for start, epoch in windows:
+        index = round(start * rate)
+        observed = capture[index:index + round(0.16 * rate)] if index >= 0 else np.array([])
+        anchor = _waveform_anchor(source, observed, start + epoch["source_offset_seconds"], rate)
+        if anchor is None:
+            result["reason"] = "pcm_pause_anchor_missing_or_ambiguous"
+            return result
+        anchor["capture_start_seconds"] = index / rate
+        anchors.append(anchor)
+    left, right = anchors
+    gap_low = min(end - begin for begin, end in edges) / rate
+    gap_high = max(end - begin for begin, end in edges) / rate
+    # Fixed 8 ms per edge must also pass the independent fixture's integer-sample oracle.
+    uncertainty = 0.016 + 256 / graph_rate + 2 / rate
+    offset = left["capture_start_seconds"] - right["capture_start_seconds"]
+    low = (right["source_start_interval_seconds"][0]
+           - left["source_start_interval_seconds"][1] + offset + gap_low - uncertainty)
+    high = (right["source_start_interval_seconds"][1]
+            - left["source_start_interval_seconds"][0] + offset + gap_high + uncertainty)
+    result.update({"source_gap_interval_seconds": [low, high], "anchors": anchors,
+                   "silence_edges_samples": edges,
+                   "uncertainty_components_seconds": {"edge_exclusion": 0.016,
+                        "two_render_quanta": 256 / graph_rate, "sample_grid": 2 / rate},
+                   "action_frame_brackets_seconds": brackets})
+    if high - low >= 0.05:
+        result["reason"] = "pcm_pause_resolution_insufficient"
+    elif low <= 0 <= high:
+        result.update(status="consistent_at_resolution", reason=None)
+    else:
+        result["reason"] = "pcm_pause_source_discontinuity"
+    return result
 
 
 def _bounds(value, viewport, error):
@@ -557,7 +703,7 @@ def _caption_episodes(report, screenshots, clock, audio, language):
     return episodes, transitions, verified_transitions
 
 
-def _align_capture(source, capture, rate, items, report, audio):
+def _align_capture(source, capture, rate, items, report, audio, calibration=False):
     if source.size < rate or capture.size < rate:
         raise EvidenceError("audio_capture_too_short")
     start_context = audio.get("start_context_time_seconds")
@@ -710,7 +856,18 @@ def _align_capture(source, capture, rate, items, report, audio):
                     "reason": "playback_epoch_boundary_clock_missing", "epochs": epochs}
         epoch["source_start_seconds"] = boundary_times[0] - float(start_context) + median_offset
         epoch["source_end_seconds"] = boundary_times[1] - float(start_context) + median_offset
+    certificates = []
     for previous, following in zip(epochs, epochs[1:]):
+        if calibration and audio.get("pcm_capture"):
+            certificate = _pcm_pause_certificate(source, capture, rate, audio, previous, following)
+            certificates.append(certificate)
+            if certificate["status"] == "consistent_at_resolution":
+                continue
+            return {"status": "unmatched", "method": "bounded_spectral_feature_cross_correlation",
+                    "matched_anchor_count": len(anchors), "required_anchor_count": required,
+                    "source_offset_seconds": None, "residual_seconds": max(residuals),
+                    "reason": certificate["reason"], "epochs": epochs,
+                    "pause_certificates": certificates}
         difference = following["source_start_seconds"] - previous["source_end_seconds"]
         uncertainty = (following["alignment_uncertainty_seconds"]
                        + previous["alignment_uncertainty_seconds"]
@@ -736,6 +893,7 @@ def _align_capture(source, capture, rate, items, report, audio):
             "residual_seconds": residual,
             "residual_scope": "within_playback_epoch",
             "epochs": epochs,
+            "pause_certificates": certificates,
             "median_correlation": statistics.median(anchor["correlation"] for anchor in anchors),
             "clock_uncertainty_seconds": float(clock_uncertainty) / 1000,
             "output_clock_uncertainty_seconds": output_clock_uncertainty,
@@ -1033,8 +1191,17 @@ def score(reference_path, source_path, spans_path, recording_path, report_path, 
         raise EvidenceError("reference_sample_rate_missing")
     source = _read_audio(source_path, int(rate))
     captured, decoded_timing = _read_audio(audio_path, int(rate), include_timing=True)
+    if audio_data.get("pcm_capture") is not None:
+        pcm = audio_data["pcm_capture"]
+        pcm_path = _safe_artifact(report_path, pcm.get("path", ""))
+        if _sha256(pcm_path) != pcm.get("sha256"):
+            raise EvidenceError("pcm_audio_hash_mismatch")
+        captured, decoded_timing = _read_audio(pcm_path, int(rate), include_timing=True)
+        start_context = _validate_pcm_bridge(pcm, decoded_timing)
+        audio_data = {**audio_data, "start_context_time_seconds": start_context}
     _check_source_energy(source, int(rate), items)
-    alignment = _align_capture(source, captured, int(rate), items, report, audio_data)
+    alignment = _align_capture(source, captured, int(rate), items, report, audio_data,
+                               calibration=calibration)
     alignment["decoded_audio_timing"] = decoded_timing
     if alignment["status"] != "aligned":
         result = _unknown_result(

@@ -345,6 +345,109 @@ def test_public_cli_reports_synthetic_pass_as_calibration_only(tmp_path):
     assert result["physical_output_latency"] == "unknown"
 
 
+def _declare_zero_asr(paths):
+    spans = json.loads(paths[2].read_text(encoding="utf-8"))
+    spans["source_condition"] = "synthetic_tone_fixture"
+    paths[2].write_text(json.dumps(spans), encoding="utf-8")
+    for path in paths[3:]:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document.update({"recognition_mode": "none", "simulated_recognition": True,
+                         "session_post_start_count": 0,
+                         "completion_signal": "media_ended",
+                         "events": [{"type": "media_ended", "reason": "completed"}]})
+        path.write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_public_cli_accepts_honest_zero_asr_only_as_calibration(tmp_path):
+    paths = _write_evidence(tmp_path)
+    _declare_zero_asr(paths)
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 0, completed.stdout
+    assert result["sync_status"] == "calibration_only"
+    assert result["sync_gate_passed"] is None
+    assert result["release_gate_passed"] is False
+    assert result["acceptance_status"] == "not_assessed"
+
+
+def _declare_pcm_pause(paths):
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    audio = report["acoustic_capture"]["audio"]
+    count = round(50.6 * RATE)
+    audio["pcm_capture"] = {
+        "schema_version": 1, "path": audio["path"], "sha256": audio["sha256"],
+        "sample_rate_hz": RATE, "channels": 1,
+        "blocks": [{"sequence": index, "start_frame": RATE + start,
+                    "frame_count": min(128, count - start),
+                    "context_time_seconds": (RATE + start) / RATE}
+                   for index, start in enumerate(range(0, count, 128))],
+        "actions": [{"kind": kind,
+                     "before": {"frame": round((1 + time) * RATE),
+                                "performance_after_ms": time * 1000},
+                     "after": {"frame": round((1 + time) * RATE),
+                               "performance_after_ms": time * 1000}}
+                    for kind, time in (("pause", 25.5), ("resume", 26.1))],
+    }
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+
+def test_public_cli_qualifies_a_voiced_pause_with_frame_evidence(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "RATE", 48000)
+    paths = _write_evidence(tmp_path, pause_at=25.5, sampling_step_ms=10)
+    _declare_zero_asr(paths)
+    _declare_pcm_pause(paths)
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 0, completed.stdout
+    assert result["measured_item_count"] == 50
+    certificate = result["audio_alignment"]["pause_certificates"][0]
+    low, high = certificate["source_gap_interval_seconds"]
+    assert low <= 0 <= high
+    assert high - low < 0.05
+    assert result["acceptance_status"] == "not_assessed"
+
+
+@pytest.mark.parametrize("corruption", ["missing", "duplicate", "reordered", "truncated"])
+def test_public_cli_rejects_corrupted_pcm_frame_bridge(tmp_path, corruption):
+    paths = _write_evidence(tmp_path, pause_at=25.5)
+    _declare_zero_asr(paths)
+    _declare_pcm_pause(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    blocks = report["acoustic_capture"]["audio"]["pcm_capture"]["blocks"]
+    if corruption == "missing":
+        blocks.pop(2)
+    elif corruption == "duplicate":
+        blocks.insert(2, blocks[1])
+    elif corruption == "reordered":
+        blocks[1], blocks[2] = blocks[2], blocks[1]
+    else:
+        blocks[-1]["frame_count"] -= 1
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 2
+    assert result["invalid_reason"] == ("pcm_frame_length_mismatch" if corruption == "truncated"
+                                        else "pcm_frames_missing_duplicate_or_reordered")
+    assert result["release_gate_passed"] is False
+
+
+@pytest.mark.parametrize("claim", ["simulated_recognition", "session_post_start_count"])
+def test_public_cli_rejects_zero_asr_with_a_contradictory_session_claim(tmp_path, claim):
+    paths = _write_evidence(tmp_path)
+    _declare_zero_asr(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    report[claim] = False if claim == "simulated_recognition" else 1
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 2
+    assert result["invalid_reason"] == "zero_asr_calibration_identity_invalid"
+
+
 def test_calibration_labels_current_dirty_checkout_without_claiming_acceptance(tmp_path):
     paths = list(_write_evidence(tmp_path))
     report = json.loads(paths[4].read_text(encoding="utf-8"))

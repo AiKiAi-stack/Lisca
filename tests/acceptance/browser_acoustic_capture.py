@@ -4,7 +4,7 @@ from pathlib import Path
 import struct
 
 
-AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
+AUDIO_CAPTURE_INSTALL = r"""async (mediaElementId = 'audioEl') => {
   if (window.__acousticCapture) return window.__acousticCapture.installation;
   // Local WebUI playback uses a muted video clock plus a separate audible audioEl.
   // Local sources use audioEl; direct HLS uses the audible player element.
@@ -48,6 +48,52 @@ AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
   let startContextTimeSeconds = null;
   let clockTimer = null;
   const sampler = () => window.__realAcceptanceSampler;
+  const pcmBlocks = [], pcmSamples = [], pcmActions = [];
+  let worklet, stopPCM;
+  try {
+    const module = new Blob([`class Capture extends AudioWorkletProcessor {
+      constructor() { super(); this.sequence = 0; this.active = true;
+        this.port.onmessage = event => { if (event.data === 'stop') {
+          this.active = false; this.port.postMessage({kind: 'stopped'}); } }; }
+      process(inputs) {
+        if (this.active) {
+          const samples = new Float32Array(inputs[0]?.[0] || 128);
+          this.port.postMessage({kind: 'block', sequence: this.sequence++,
+            start_frame: currentFrame, frame_count: samples.length,
+            context_time_seconds: currentTime, samples}, [samples.buffer]);
+        }
+        return true;
+      }
+    } registerProcessor('acoustic-pcm', Capture);`], {type: 'text/javascript'});
+    const moduleURL = URL.createObjectURL(module);
+    try { await context.audioWorklet.addModule(moduleURL); }
+    finally { URL.revokeObjectURL(moduleURL); }
+    worklet = new AudioWorkletNode(context, 'acoustic-pcm', {channelCount: 1,
+      channelCountMode: 'explicit'});
+    worklet.port.onmessage = ({data}) => {
+      if (data.kind === 'stopped') { stopPCM?.(); return; }
+      const {samples, kind, ...block} = data;
+      pcmBlocks.push(block); pcmSamples.push(samples);
+    };
+    const silent = context.createGain(); silent.gain.value = 0;
+    source.connect(worklet); worklet.connect(silent); silent.connect(context.destination);
+    const snapshot = () => ({frame: Math.round(context.currentTime * context.sampleRate),
+      performance_after_ms: performance.now() - (sampler()?.started || 0),
+      media_time_seconds: media.currentTime, paused: media.paused,
+      seeking: media.seeking, output_timestamp: context.getOutputTimestamp()});
+    for (const name of ['pause', 'play']) {
+      const original = media[name].bind(media);
+      media[name] = (...args) => {
+        const before = snapshot(); const result = original(...args); const after = snapshot();
+        if (name === 'pause' ? !before.paused : before.paused)
+          pcmActions.push({kind: name === 'play' ? 'resume' : 'pause', before, after});
+        return result;
+      };
+    }
+    for (const kind of ['seeking', 'seeked']) media.addEventListener(kind, () => {
+      const before = snapshot(); pcmActions.push({kind, before, after: snapshot()});
+    });
+  } catch { return {status: 'pcm_capture_unsupported'}; }
   const recordOutputTime = () => {
     analyser.getFloatTimeDomainData(signalSamples);
     let energy = 0;
@@ -97,9 +143,10 @@ AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
     status: () => ['recorder_error', 'audio_context_resume_failed'].includes(status)
       ? status : (clockError ? 'clock_error' : status),
     save: () => new Promise(resolve => {
-      const finish = () => {
+      const finish = async () => {
         if (clockTimer) clearInterval(clockTimer);
         recordOutputTime();
+        await new Promise(done => { stopPCM = done; worklet.port.postMessage('stop'); });
         const blob = new Blob(chunks, {type: mimeType});
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
@@ -118,6 +165,8 @@ AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
           base_latency_seconds: Number.isFinite(context.baseLatency) ? context.baseLatency : null,
           output_latency_seconds: Number.isFinite(context.outputLatency) ? context.outputLatency : null,
           output_clock_samples: outputClockSamples,
+          pcm_capture: {schema_version: 1, sample_rate_hz: context.sampleRate, channels: 1,
+            blocks: pcmBlocks, actions: pcmActions},
           physical_output_latency: 'unknown'});
       };
       if (recorder.state === 'recording') {
@@ -126,7 +175,27 @@ AUDIO_CAPTURE_INSTALL = r"""(mediaElementId = 'audioEl') => {
       } else {
         finish();
       }
-    })
+    }),
+    savePCM: () => {
+      const count = pcmSamples.reduce((sum, block) => sum + block.length, 0);
+      const buffer = new ArrayBuffer(44 + count * 2), view = new DataView(buffer);
+      const label = (offset, value) => { for (let i = 0; i < value.length; i++)
+        view.setUint8(offset + i, value.charCodeAt(i)); };
+      label(0, 'RIFF'); view.setUint32(4, 36 + count * 2, true); label(8, 'WAVE');
+      label(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true); view.setUint32(24, context.sampleRate, true);
+      view.setUint32(28, context.sampleRate * 2, true); view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true); label(36, 'data'); view.setUint32(40, count * 2, true);
+      let offset = 44;
+      for (const block of pcmSamples) for (const sample of block) {
+        view.setInt16(offset, Math.round(Math.max(-1, Math.min(1, sample)) * 32767), true);
+        offset += 2;
+      }
+      const url = URL.createObjectURL(new Blob([buffer], {type: 'audio/wav'}));
+      const link = document.createElement('a'); link.href = url;
+      link.download = 'browser-playback.pcm.wav'; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
   };
   window.__acousticCapture.installation = {
     ...window.__acousticCapture.installation,
@@ -181,6 +250,16 @@ def save_audio_capture(page, output_path, report_root):
         "status": "captured",
         "path": destination.relative_to(Path(report_root).resolve()).as_posix(),
         "sha256": _sha256(destination),
+    })
+    pcm = destination.with_suffix(".pcm.wav")
+    if pcm.exists():
+        raise FileExistsError("refusing to overwrite existing PCM audio")
+    with page.expect_download(timeout=15_000) as pcm_download:
+        page.evaluate("() => window.__acousticCapture.savePCM()")
+    pcm_download.value.save_as(str(pcm))
+    metadata["pcm_capture"].update({
+        "path": pcm.relative_to(Path(report_root).resolve()).as_posix(),
+        "sha256": _sha256(pcm),
     })
     return metadata
 
