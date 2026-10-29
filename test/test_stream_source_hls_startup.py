@@ -20,11 +20,11 @@ FIRST_PCM_LIMIT_SECONDS = 0.9
 GATE_TIMEOUT_SECONDS = 8
 
 
-def _make_hls_fixture(directory: Path):
+def _make_hls_fixture(directory: Path, segment_count=SEGMENT_COUNT):
     """Create a short, real H.264/AAC transport-stream HLS asset."""
     playlist_path = directory / "all.m3u8"
     segment_pattern = directory / "seg%03d.ts"
-    audio = (np.sin(2 * np.pi * 440 * np.arange(SAMPLE_RATE * SEGMENT_COUNT) / SAMPLE_RATE)
+    audio = (np.sin(2 * np.pi * 440 * np.arange(SAMPLE_RATE * segment_count) / SAMPLE_RATE)
              * 0.3).astype(np.float32)
 
     with av.open(str(playlist_path), mode="w", format="hls", options={
@@ -43,7 +43,7 @@ def _make_hls_fixture(directory: Path):
         audio_stream.layout = "mono"
         audio_stream.bit_rate = 64000
 
-        for index in range(SEGMENT_COUNT * 10):
+        for index in range(segment_count * 10):
             frame = av.VideoFrame.from_ndarray(
                 np.full((90, 160, 3), (20, 24, 28), dtype=np.uint8), format="rgb24")
             frame.pts, frame.time_base = index, Fraction(1, 10)
@@ -91,7 +91,7 @@ def _make_hls_fixture(directory: Path):
             "audio_end_seconds": float(max(audio_ends)),
         })
 
-    assert len(segments) == SEGMENT_COUNT, playlist_path.read_text(encoding="utf-8")
+    assert len(segments) == segment_count, playlist_path.read_text(encoding="utf-8")
     return playlist_path, segments
 
 

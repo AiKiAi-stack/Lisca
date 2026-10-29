@@ -7,6 +7,7 @@ import time
 from urllib.error import HTTPError, URLError
 from unittest.mock import MagicMock
 
+import httpx
 import numpy as np
 import pytest
 
@@ -22,7 +23,7 @@ class _Headers(dict):
         return self.get("Content-Type", "application/octet-stream").split(";", 1)[0]
 
 
-class _Response:
+class _Response(httpx.SyncByteStream):
     def __init__(self, url, body=b"segment", content_type="video/mp2t", read_error=None):
         self.url = url
         self.body = body
@@ -32,6 +33,13 @@ class _Response:
         self.read_calls = 0
         self.closed = False
         self.headers = _Headers({"Content-Type": content_type})
+
+    def __iter__(self):
+        while True:
+            chunk = self.read(1)
+            if not chunk:
+                break
+            yield chunk
 
     def geturl(self):
         return self.url
@@ -99,26 +107,44 @@ def _install_audio(monkeypatch, frames):
     return container
 
 
-def _install_urlopen(monkeypatch, outcomes):
+class _ErrorStream(httpx.SyncByteStream):
+    def __init__(self, body):
+        self.body = body
+
+    def __iter__(self):
+        raise AssertionError("HTTP error bodies must be closed without reading")
+        yield b""
+
+    def close(self):
+        self.body.close()
+
+
+def _install_http(monkeypatch, outcomes):
     calls = []
     pending = iter(outcomes)
 
-    def urlopen(request, *, timeout, context):
-        calls.append((request.full_url, timeout, context))
+    def handle_request(_transport, request):
+        assert request.extensions["timeout"] == {
+            "connect": 5.0, "read": 5.0, "write": 5.0, "pool": 5.0,
+        }
+        calls.append((str(request.url), request.extensions["timeout"]["connect"]))
         outcome = next(pending)
+        if isinstance(outcome, HTTPError):
+            return httpx.Response(outcome.code, headers=outcome.headers,
+                                  stream=_ErrorStream(outcome.fp))
         if isinstance(outcome, BaseException):
             raise outcome
-        return outcome
+        return httpx.Response(200, headers=outcome.headers, stream=outcome)
 
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", urlopen)
+    monkeypatch.setattr("httpx.HTTPTransport.handle_request", handle_request)
     return calls
 
 
 def test_initial_manifest_timeout_recovers_and_yields_original_pcm(monkeypatch, caplog):
     manifest = _Response(HLS_URL, b"#EXTM3U\n", "application/vnd.apple.mpegurl")
-    calls = _install_urlopen(
+    calls = _install_http(
         monkeypatch,
-        [TimeoutError("private timeout detail"), manifest],
+        [httpx.ConnectTimeout("private timeout detail"), manifest],
     )
     frame = _pcm_frame(1234)
     container = _install_audio(monkeypatch, [frame])
@@ -151,7 +177,7 @@ def test_nested_playlist_open_uses_the_same_retry_boundary(monkeypatch):
         b"#EXTM3U\n#EXTINF:1.0,\nsegment.ts\n",
         "application/vnd.apple.mpegurl",
     )
-    calls = _install_urlopen(
+    calls = _install_http(
         monkeypatch,
         [initial, URLError(ConnectionError("private connection detail")), playlist],
     )
@@ -172,7 +198,7 @@ def test_nested_playlist_open_uses_the_same_retry_boundary(monkeypatch):
 
 def test_direct_connection_error_recovers_once(monkeypatch):
     manifest = _Response(HLS_URL, b"#EXTM3U\n", "application/vnd.apple.mpegurl")
-    calls = _install_urlopen(
+    calls = _install_http(
         monkeypatch,
         [ConnectionError("private connection detail"), manifest],
     )
@@ -190,7 +216,7 @@ def test_second_open_failure_exhausts_the_single_recovery(monkeypatch):
     segment_url = "https://media.example.test/live/segment.ts"
     first_failure = TimeoutError("first private failure")
     second_failure = TimeoutError("second private failure")
-    calls = _install_urlopen(monkeypatch, [initial, first_failure, second_failure])
+    calls = _install_http(monkeypatch, [initial, first_failure, second_failure])
     container = _install_audio(monkeypatch, [])
 
     def av_open(_source, **kwargs):
@@ -209,7 +235,7 @@ def test_successful_other_resource_without_pcm_does_not_reset_budget(monkeypatch
     first_url = "https://media.example.test/live/first.ts"
     second_url = "https://media.example.test/live/second.ts"
     first_segment = _Response(first_url)
-    calls = _install_urlopen(
+    calls = _install_http(
         monkeypatch,
         [initial, TimeoutError("first resource timeout"), first_segment,
          TimeoutError("second resource timeout")],
@@ -235,7 +261,7 @@ def test_new_pcm_resets_recovery_budget_for_later_hls_open(monkeypatch):
     second_url = "https://media.example.test/live/second.ts"
     first_segment = _Response(first_url)
     second_segment = _Response(second_url)
-    calls = _install_urlopen(
+    calls = _install_http(
         monkeypatch,
         [initial, TimeoutError("first resource timeout"), first_segment,
          TimeoutError("second resource timeout"), second_segment],
@@ -276,7 +302,7 @@ def test_temporary_http_status_recovers_once(monkeypatch, status):
     manifest = _Response(HLS_URL, b"#EXTM3U\n", "application/vnd.apple.mpegurl")
     failure = _http_error(HLS_URL, status)
     response_body = failure.fp
-    calls = _install_urlopen(monkeypatch, [failure, manifest])
+    calls = _install_http(monkeypatch, [failure, manifest])
     container = _install_audio(monkeypatch, [])
     monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
 
@@ -296,7 +322,7 @@ def test_concurrent_temporary_http_errors_share_one_recovery(monkeypatch):
     first_error = _http_error(child_url, 503, first_body)
     second_error = _http_error(child_url, 503, second_body)
     recovered = _Response(child_url)
-    calls = _install_urlopen(
+    calls = _install_http(
         monkeypatch, [initial, first_error, second_error, recovered,
                       _Response(child_url)],
     )
@@ -325,7 +351,8 @@ def test_concurrent_temporary_http_errors_share_one_recovery(monkeypatch):
         assert len(calls) - 1 == 3
         assert len(results) == 1
         assert len(failures) == 1
-        assert failures[0] in (first_error, second_error)
+        assert isinstance(failures[0], HTTPError)
+        assert failures[0].code == 503
         assert first_body.closed and second_body.closed
     finally:
         source.close()
@@ -338,7 +365,7 @@ def test_exhausted_http_recovery_closes_both_bodies_and_preserves_second_error(m
     second_error = _http_error(child_url, 503)
     first_body = first_error.fp
     second_body = second_error.fp
-    calls = _install_urlopen(monkeypatch, [initial, first_error, second_error])
+    calls = _install_http(monkeypatch, [initial, first_error, second_error])
     container = _install_audio(monkeypatch, [])
     monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
     source = StreamSource(HLS_URL)
@@ -347,7 +374,7 @@ def test_exhausted_http_recovery_closes_both_bodies_and_preserves_second_error(m
         with pytest.raises(HTTPError) as caught:
             source._open_nested_http(child_url, 0, {})
 
-        assert caught.value is second_error
+        assert caught.value.code == 503
         assert [call[0] for call in calls] == [HLS_URL, child_url, child_url]
         assert first_body.closed and second_body.closed
     finally:
@@ -360,7 +387,7 @@ def test_http_error_close_failure_does_not_replace_original(monkeypatch, caplog)
     child_url = "https://media.example.test/live/segment.ts"
     body = _CloseErrorBody()
     failure = _http_error(child_url, 403, body)
-    calls = _install_urlopen(monkeypatch, [initial, failure])
+    calls = _install_http(monkeypatch, [initial, failure])
     container = _install_audio(monkeypatch, [])
     monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
     source = StreamSource(HLS_URL)
@@ -369,7 +396,7 @@ def test_http_error_close_failure_does_not_replace_original(monkeypatch, caplog)
         with pytest.raises(HTTPError) as caught:
             source._open_nested_http(child_url, 0, {})
 
-        assert caught.value is failure
+        assert caught.value.code == 403
         assert body.close_attempted
         assert len(calls) == 2
         messages = " ".join(record.getMessage() for record in caplog.records)
@@ -391,7 +418,7 @@ def test_http_error_close_failure_does_not_replace_original(monkeypatch, caplog)
     ids=["tls-certificate", "http-403", "http-404", "other-url-error", "other-error"],
 )
 def test_non_temporary_open_failures_are_not_retried(monkeypatch, failure):
-    calls = _install_urlopen(monkeypatch, [failure])
+    calls = _install_http(monkeypatch, [failure])
 
     with pytest.raises(type(failure)):
         StreamSource(HLS_URL)
@@ -399,11 +426,24 @@ def test_non_temporary_open_failures_are_not_retried(monkeypatch, failure):
     assert len(calls) == 1
 
 
+def test_wrapped_httpx_certificate_failure_never_retries(monkeypatch):
+    certificate = ssl.SSLCertVerificationError("private certificate detail")
+    failure = httpx.ConnectError("private connect detail")
+    failure.__cause__ = certificate
+    calls = _install_http(monkeypatch, [failure])
+
+    with pytest.raises(URLError) as caught:
+        StreamSource(HLS_URL)
+
+    assert caught.value.reason is certificate
+    assert len(calls) == 1
+
+
 def test_body_read_failure_never_reopens_or_replays_segment(monkeypatch):
     initial = _Response(HLS_URL, b"#EXTM3U\n", "application/vnd.apple.mpegurl")
     segment_url = "https://media.example.test/live/segment.ts"
-    segment = _Response(segment_url, body=b"partial", read_error=TimeoutError("body timeout"))
-    calls = _install_urlopen(monkeypatch, [initial, segment])
+    segment = _Response(segment_url, body=b"partial", read_error=httpx.ReadTimeout("body timeout"))
+    calls = _install_http(monkeypatch, [initial, segment])
     container = _install_audio(monkeypatch, [_pcm_frame(1)])
 
     def av_open(_source, **kwargs):
@@ -423,7 +463,7 @@ def test_body_read_failure_never_reopens_or_replays_segment(monkeypatch):
     monkeypatch.setattr("tools.stream_source.av.open", av_open)
     source = StreamSource(HLS_URL)
     try:
-        with pytest.raises(TimeoutError, match="body timeout"):
+        with pytest.raises(TimeoutError, match="HLS HTTP timed out"):
             list(source.iter_chunks())
     finally:
         source.close()
@@ -434,7 +474,7 @@ def test_body_read_failure_never_reopens_or_replays_segment(monkeypatch):
 
 def test_close_cancels_retry_wait_without_a_second_get(monkeypatch):
     initial = _Response(HLS_URL, b"#EXTM3U\n", "application/vnd.apple.mpegurl")
-    calls = _install_urlopen(monkeypatch, [initial, TimeoutError("private timeout")])
+    calls = _install_http(monkeypatch, [initial, TimeoutError("private timeout")])
     container = _install_audio(monkeypatch, [])
     monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
     source = StreamSource(HLS_URL)

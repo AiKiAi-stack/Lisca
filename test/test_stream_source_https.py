@@ -7,7 +7,6 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.request
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,11 +14,14 @@ from urllib.error import URLError
 from unittest.mock import MagicMock
 
 import av
+import httpx
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from tools.stream_source import MAX_REDIRECTED_HLS_BYTES, StreamSource, _rewrite_hls_playlist
+from tools.stream_source import (
+    MAX_REDIRECTED_HLS_BYTES, StreamSource, _HlsHttpSession, _rewrite_hls_playlist,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import webui
@@ -188,32 +190,15 @@ def test_trusted_https_hls_decodes_audio_from_nested_playlists(
     monkeypatch.delenv("SSL_CERT_DIR", raising=False)
     monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
     monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
-    original_urlopen = urllib.request.urlopen
+    original_handle_request = httpx.HTTPTransport.handle_request
     opened_responses = []
 
-    class TrackedResponse:
-        def __init__(self, response):
-            self.response = response
-            self.closed = False
-            opened_responses.append(self)
+    def tracked_request(transport, request):
+        response = original_handle_request(transport, request)
+        opened_responses.append(response)
+        return response
 
-        def read(self, size=-1):
-            return self.response.read(size)
-
-        def geturl(self):
-            return self.response.geturl()
-
-        def close(self):
-            self.closed = True
-            self.response.close()
-
-        def __getattr__(self, name):
-            return getattr(self.response, name)
-
-    def tracked_urlopen(*args, **kwargs):
-        return TrackedResponse(original_urlopen(*args, **kwargs))
-
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", tracked_urlopen)
+    monkeypatch.setattr("httpx.HTTPTransport.handle_request", tracked_request)
 
     source = StreamSource(url, chunk_sec=0.05)
     try:
@@ -228,7 +213,7 @@ def test_trusted_https_hls_decodes_audio_from_nested_playlists(
     assert source.first_pts_sec is not None
     assert requested == ["/master.m3u8", "/level/index.m3u8", "/level/seg0.ts"]
     assert len(opened_responses) == 3
-    assert all(response.closed for response in opened_responses)
+    assert all(response.is_closed for response in opened_responses)
 
 
 def test_untrusted_https_hls_peer_is_rejected(https_hls, local_tls_material, monkeypatch):
@@ -244,6 +229,51 @@ def test_untrusted_https_hls_peer_is_rejected(https_hls, local_tls_material, mon
 
     assert isinstance(failure.value.reason, ssl.SSLCertVerificationError)
     assert requested == []
+
+
+def test_hls_https_environment_proxy_keeps_system_ca_trust(
+    tmp_path, local_tls_material, monkeypatch
+):
+    from test_stream_source_hls_startup import _make_hls_fixture
+    from test_stream_source_hls_transport import (
+        _RollingServer, _clear_proxy_environment, _running_origin,
+    )
+
+    certificate, private_key = local_tls_material["trusted"]
+    _playlist, segments = _make_hls_fixture(tmp_path)
+    proxy = _RollingServer(segments, cold_delay=0, static=True)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(certificate), str(private_key))
+    proxy.socket = context.wrap_socket(proxy.socket, server_side=True)
+    _clear_proxy_environment(monkeypatch)
+    monkeypatch.setenv("SSL_CERT_FILE", str(certificate))
+    with _running_origin(proxy) as address:
+        monkeypatch.setenv("http_proxy", address.replace("http://", "https://", 1))
+        pcm = b"".join(StreamSource("http://source.invalid/live.m3u8").iter_chunks())
+    assert pcm
+    assert len(proxy.requests) == 4
+    assert proxy.accepted == proxy.finished == 1
+
+
+def _install_http_response(monkeypatch, response):
+    class Body(httpx.SyncByteStream):
+        def __iter__(self):
+            while True:
+                chunk = response.read(16)
+                if not chunk:
+                    break
+                yield chunk
+
+        def close(self):
+            response.close()
+
+    def handle_request(_transport, request):
+        if str(request.url) != response.geturl():
+            return httpx.Response(302, headers={"Location": response.geturl(),
+                                                "Content-Length": "0"}, stream=httpx.ByteStream(b""))
+        return httpx.Response(200, headers=getattr(response, "headers", {}), stream=Body())
+
+    monkeypatch.setattr("httpx.HTTPTransport.handle_request", handle_request)
 
 
 def test_hls_manifest_response_is_closed_with_source(monkeypatch):
@@ -262,7 +292,7 @@ def test_hls_manifest_response_is_closed_with_source(monkeypatch):
     response = Response()
     container = MagicMock()
     container.streams.audio = [object()]
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
+    _install_http_response(monkeypatch, response)
     monkeypatch.setattr("tools.stream_source.av.open", lambda *_a, **_k: container)
 
     source = StreamSource("https://asr.test/live/index.m3u8")
@@ -284,7 +314,7 @@ def test_hls_manifest_response_is_closed_when_open_fails(monkeypatch):
             self.closed = True
 
     response = Response()
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
+    _install_http_response(monkeypatch, response)
 
     def fail_open(*_args, **_kwargs):
         raise RuntimeError("invalid HLS manifest")
@@ -362,13 +392,15 @@ def test_redirected_binary_resource_is_not_buffered_or_rewritten(monkeypatch):
 
     response = Response()
     source = _bare_stream_source()
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
+    _install_http_response(monkeypatch, response)
 
     opened = source._open_nested_http("https://origin.example.test/segment.ts", 0, {})
 
-    assert opened is response
+    assert opened.geturl() == response.geturl()
     assert response.read_calls == 0
     assert not response.closed
+    opened.close()
+    source._hls_http.close()
 
 
 def test_redirected_manifest_read_is_bounded_and_response_closed(monkeypatch):
@@ -389,20 +421,21 @@ def test_redirected_manifest_read_is_bounded_and_response_closed(monkeypatch):
 
         def read(self, size=-1):
             self.read_bytes += size
-            return b"#EXTM3U\n"[:size]
+            return b"#EXTM3U\n" + b" " * max(0, size - 8)
 
         def close(self):
             self.closed = True
 
     response = Response()
     source = _bare_stream_source()
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
+    _install_http_response(monkeypatch, response)
 
     with pytest.raises(ValueError, match="exceeds the size limit"):
         source._open_nested_http("https://origin.example.test/live.m3u8", 0, {})
 
     assert response.read_bytes == 16
     assert response.closed
+    source._hls_http.close()
 
 
 def _bare_stream_source():
@@ -412,8 +445,10 @@ def _bare_stream_source():
     source._is_hls = True
     source._closed = False
     source._hls_open_recovery_used = False
+    source._hls_terminal_error = None
     source._hls_open_retry_cancel = threading.Event()
     source._hls_open_lock = threading.Lock()
+    source._hls_http = _HlsHttpSession(ssl.create_default_context())
     return source
 
 
@@ -471,7 +506,7 @@ def test_hls_constructor_failure_closes_opened_resources(
         "tools.stream_source._https_trust",
         lambda: (object(), str(ca_file), str(ca_file)),
     )
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", lambda *_a, **_k: response)
+    _install_http_response(monkeypatch, response)
     monkeypatch.setattr("tools.stream_source.av.open", lambda *_a, **_k: container)
 
     if failure_stage == "seek":
