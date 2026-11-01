@@ -183,13 +183,46 @@ def qualify_control(name, oracle, result, exit_code):
 
 PAGE = """<!doctype html><style>
 body{margin:32px;font-family:Arial;background:#fff;color:#111}
-#current{font-size:30px;width:500px;height:48px;margin-top:100px}
+#player{display:none}
+#current{font-size:30px;width:640px;height:128px;margin-top:100px}
 </style><button id=start>Start</button><input id=url>
 <video id=player muted></video><audio id=audioEl src=/source.wav></audio><div id=current></div>
 <script>
 const media = document.getElementById('audioEl'), caption = document.getElementById('current');
 window.fixture = {done:false,samples:[],controls:[]};
 window.__realAcceptanceSampler = {started:performance.now()};
+window.__immutableCaptionFixture = {
+  version:0, text:'', held:false, metadata:null,
+  paint(text) {
+    if (this.held || this.metadata && this.text === text) return;
+    const now = () => performance.now() - __realAcceptanceSampler.started;
+    const createBefore = now(), canvas = document.createElement('canvas');
+    canvas.width = 640; canvas.height = 128;
+    const context = canvas.getContext('2d'), version = ++this.version;
+    context.fillStyle = '#fff'; context.fillRect(0,0,640,128);
+    context.fillStyle = '#111'; context.font = '30px Arial'; context.fillText(text,0,60);
+    for (let bit=0; bit<16; bit++) {
+      context.fillStyle = version & (1<<bit) ? '#fff' : '#000';
+      context.fillRect(bit,0,1,8);
+    }
+    const data = canvas.toDataURL('image/png'), createAfter = now(), installBefore = now();
+    caption.replaceChildren(canvas); this.text = text;
+    const installAfter = now(), rect = caption.getBoundingClientRect();
+    this.metadata = {schema_version:1,version,raster_data_url:data,
+      create_before_ms:createBefore,create_after_ms:createAfter,
+      install_before_ms:installBefore,install_after_ms:installAfter,
+      raster_bounds:{x:rect.x,y:rect.y,width:640,height:128},
+      caption_bounds:{x:rect.x,y:rect.y+16,width:640,height:112},
+      marker_bounds:{x:0,y:0,width:16,height:8}};
+  },
+  hold() { this.held = true; return {...this.metadata}; },
+  release() {
+    const returned = performance.now() - __realAcceptanceSampler.started;
+    this.held = false;
+    return {held_version:this.version,screenshot_return_ms:returned,
+      hold_release_ms:performance.now()-__realAcceptanceSampler.started};
+  }
+};
 document.getElementById('start').onclick = async () => {
   window.__realAcceptanceSampler.started = performance.now();
   let pausedOnce = false;
@@ -198,9 +231,10 @@ document.getElementById('start').onclick = async () => {
     const index = Math.floor(shifted), phase = shifted - index;
     const text = index >= 0 && index < 50 && phase >= .12 && phase < .88
       ? 'sentence ' + String(index+1).padStart(2,'0') : '';
-    caption.textContent = text; caption.style.display = text ? 'block' : 'none';
+    __immutableCaptionFixture.paint(text);
+    const displayed = __immutableCaptionFixture.text;
     fixture.samples.push({observed_after_ms:performance.now()-__realAcceptanceSampler.started,
-      media_time:time,visible_text:text,visible:!!text,paused:media.paused,
+      media_time:time,visible_text:displayed,visible:!!displayed,paused:media.paused,
       seeking:media.seeking,buffering:media.readyState<3});
     if (!pausedOnce && time >= 25.5) {
       pausedOnce = true; const before = media.currentTime; media.pause();
@@ -290,8 +324,8 @@ def run(root, name, ocr_executable, tessdata_dir):
             screens, previous = [], ("", False)
             deadline = time.monotonic() + 65
             while time.monotonic() < deadline:
-                state = page.evaluate("() => ({done:fixture.done,text:current.innerText,"
-                                      "visible:!!current.innerText})")
+                state = page.evaluate("() => ({done:fixture.done,text:__immutableCaptionFixture.text,"
+                                      "visible:!!__immutableCaptionFixture.text})")
                 key = state["text"], state["visible"]
                 if key != previous:
                     screen = capture_visible_screenshot(page, directory / "screens", directory, len(screens))

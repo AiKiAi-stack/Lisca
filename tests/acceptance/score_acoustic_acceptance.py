@@ -378,7 +378,187 @@ def _waveform_anchor(source, observed, expected_start, rate):
             "correlation": correlation, "distant_margin": correlation - alternative}
 
 
-def _pcm_pause_certificate(source, capture, rate, audio, previous, following):
+def _causal_graph(pcm):
+    contract = pcm.get("causal_graph")
+    if (not isinstance(contract, dict) or contract.get("schema_version") != 1
+            or contract.get("sample_contract") != "pcm16_source_quantization_lsb1"
+            or pcm["sample_rate_hz"] != 48000):
+        raise EvidenceError("causal_graph_contract_invalid")
+    witnesses = contract.get("witnesses")
+    if not isinstance(witnesses, list) or len(witnesses) < 2:
+        raise EvidenceError("causal_graph_witnesses_missing")
+    seen = set()
+    blocks = pcm["blocks"]
+    intervals = {}
+    if any(not isinstance(block.get("witness_nonces"), list)
+           or any(not isinstance(nonce, str) for nonce in block["witness_nonces"])
+           for block in blocks):
+        raise EvidenceError("causal_graph_nonce_list_invalid")
+    for row in witnesses:
+        nonce, sequence = row.get("nonce"), row.get("sequence")
+        if (not isinstance(nonce, str) or not nonce or nonce in seen
+                or type(sequence) is not int or not 0 <= sequence < len(blocks)
+                or not all(_finite(row.get(key)) for key in ("send_after_ms", "receive_after_ms"))
+                or row["receive_after_ms"] < row["send_after_ms"]
+                or row.get("channels") != 1 or row.get("sample_rate_hz") != 48000):
+            raise EvidenceError("causal_graph_witness_invalid")
+        block = blocks[sequence]
+        if (row.get("start_frame") != block["start_frame"]
+                or row.get("frame_count") != block["frame_count"]
+                or block.get("witness_nonces", []).count(nonce) != 1):
+            raise EvidenceError("causal_graph_block_identity_invalid")
+        seen.add(nonce)
+        low, high = intervals.get(sequence, (row["send_after_ms"], row["receive_after_ms"]))
+        intervals[sequence] = max(low, row["send_after_ms"]), min(high, row["receive_after_ms"])
+        if intervals[sequence][0] > intervals[sequence][1]:
+            raise EvidenceError("causal_graph_same_block_interval_inconsistent")
+    recorded = [nonce for block in blocks for nonce in block.get("witness_nonces", [])]
+    if len(recorded) != len(seen) or set(recorded) != seen:
+        raise EvidenceError("causal_graph_nonce_missing_or_reused")
+    for first, second in zip(witnesses, witnesses[1:]):
+        if (second["send_after_ms"] < first["send_after_ms"]
+                or second["start_frame"] < first["start_frame"]):
+            raise EvidenceError("causal_graph_witness_order_invalid")
+    return witnesses
+
+
+def _graph_bounds(witnesses, start, end):
+    before = [row for row in witnesses if row["receive_after_ms"] <= start]
+    after = [row for row in witnesses if row["send_after_ms"] >= end]
+    if not before or not after:
+        raise EvidenceError("causal_graph_join_unbounded")
+    first = max(before, key=lambda row: row["start_frame"])
+    last = min(after, key=lambda row: row["start_frame"])
+    if last["start_frame"] < first["start_frame"]:
+        raise EvidenceError("causal_graph_join_order_invalid")
+    return first["start_frame"], last["start_frame"] + last["frame_count"]
+
+
+def _trace_matches(source, capture, begin, end, offset):
+    source_begin = begin + offset
+    if begin < 0 or begin >= end or end > len(capture) or source_begin < 0 or source_begin + end - begin > len(source):
+        return False
+    return bool(np.all(np.abs(capture[begin:end].astype(np.float64)
+                              - source[source_begin:source_begin + end - begin]) <= 1 / 32768))
+
+
+def _align_causal_capture(source, capture, rate, items, report, audio):
+    """Explicit lossless calibration: graph causality and independent complete PCM traces."""
+    witnesses = _causal_graph(audio["pcm_capture"])
+    origin = round(audio["start_context_time_seconds"] * rate)
+    epochs, active = [], None
+    previous = None
+    for sample in report["timeline_samples"]:
+        observed = sample.get("observed_after_ms")
+        if not _finite(observed) or previous is not None and observed <= previous:
+            raise EvidenceError("timeline_observation_time_not_increasing")
+        previous = observed
+        if sample.get("paused") or sample.get("seeking"):
+            active = None
+            continue
+        if not _finite(sample.get("media_time")):
+            raise EvidenceError("playback_epoch_media_time_missing")
+        if active is None:
+            active = {"index": len(epochs), "start_performance_after_ms": observed,
+                      "end_performance_after_ms": observed, "samples": []}
+            epochs.append(active)
+        active["samples"].append(sample)
+        active["end_performance_after_ms"] = observed
+    result = {"status": "unmatched", "method": "causal_graph_and_complete_pcm_trace",
+              "progression_clock": "causal_graph_frames", "epochs": epochs,
+              "matched_anchor_count": 0, "required_anchor_count": min(len(items), max(10, math.ceil(len(items) * .8))),
+              "physical_output_latency": "unknown", "pause_certificates": []}
+    samples_by_epoch = {epoch["index"]: epoch.pop("samples") for epoch in epochs}
+    matched_items = set()
+    for epoch in epochs:
+        anchors = []
+        epoch_samples = samples_by_epoch[epoch["index"]]
+        for item in items:
+            for span in item["spans"]:
+                candidates = [sample for sample in epoch_samples
+                              if span["start"] <= sample["media_time"] <= span["end"]
+                              and epoch["start_performance_after_ms"] + 100 <= sample["observed_after_ms"]
+                              <= epoch["end_performance_after_ms"] - 100
+                              and not sample.get("buffering")]
+                if not candidates:
+                    continue
+                selected = min(candidates, key=lambda sample: abs(
+                    sample["media_time"] - (span["start"] + span["end"]) / 2))
+                lower, upper = _graph_bounds(witnesses, selected["observed_after_ms"], selected["observed_after_ms"])
+                # The interval midpoint selects a search window; waveform evidence supplies its address.
+                begin = round((lower + upper) / 2) - origin - round(.08 * rate)
+                observed = capture[begin:begin + round(.16 * rate)] if begin >= 0 else np.array([])
+                anchor = _waveform_anchor(source, observed, selected["media_time"] - .08, rate)
+                if anchor is None:
+                    continue
+                anchor.update(capture_sample=begin, item=item["item"])
+                anchors.append(anchor)
+                matched_items.add(item["item"])
+        epoch["matched_anchor_count"] = len(anchors)
+        result["matched_anchor_count"] += len(anchors)
+        if len(anchors) < 2:
+            result["reason"] = "causal_epoch_anchors_missing_or_ambiguous"
+            return result
+        offsets = [round(anchor["source_start_seconds"] * rate) - anchor["capture_sample"] for anchor in anchors]
+        first = offsets[0]
+        if any(abs(offset - first) > 2 for offset in offsets):
+            second = next(anchor for anchor, offset in zip(anchors, offsets) if abs(offset - first) > 2)
+            first_anchor = anchors[0]
+            grid_delta = (first_anchor["capture_sample"] - second["capture_sample"]) / rate
+            first_low, first_high = first_anchor["source_start_interval_seconds"]
+            second_low, second_high = second["source_start_interval_seconds"]
+            result.update(reason="causal_source_discontinuity",
+                          source_gap_interval_seconds=[second_low - first_high + grid_delta - 2 / rate,
+                                                       second_high - first_low + grid_delta + 2 / rate])
+            return result
+        begin = min(anchor["capture_sample"] for anchor in anchors)
+        end = max(anchor["capture_sample"] + round(.16 * rate) for anchor in anchors)
+        if not _trace_matches(source, capture, begin, end, first):
+            result["reason"] = "causal_complete_trace_unverified"
+            return result
+        uncertainty = max(max(abs(bound - anchor["source_start_seconds"])
+                              for bound in anchor["source_start_interval_seconds"])
+                          for anchor in anchors) + 1 / rate
+        epoch.update(source_offset_seconds=first / rate, alignment_uncertainty_seconds=uncertainty,
+                     complete_trace_samples=[begin, end], residual_seconds=0)
+    result["matched_item_count"] = len(matched_items)
+    if len(matched_items) < result["required_anchor_count"]:
+        result["reason"] = "causal_distinct_item_anchors_missing"
+        return result
+    uncertainty = audio.get("clock_uncertainty_ms")
+    if not _finite(uncertainty) or uncertainty < 0:
+        raise EvidenceError("audio_latency_bounds_missing")
+    for epoch in epochs:
+        first = previous = None
+        for sample in samples_by_epoch[epoch["index"]]:
+            try:
+                bounds = _graph_bounds(witnesses, sample["observed_after_ms"], sample["observed_after_ms"])
+            except EvidenceError:
+                continue
+            current = sample["media_time"], bounds
+            if previous is not None and current[0] <= previous[0]:
+                result["reason"] = "unmarked_playback_time_repeat_or_reverse"
+                return result
+            if any(current[0] - earlier[0] > (current[1][1] - earlier[1][0]) / rate + 2 * uncertainty / 1000
+                   for earlier in (previous, first) if earlier is not None):
+                result["reason"] = "unmarked_playback_time_forward_jump"
+                return result
+            first = first or current
+            previous = current
+    for previous, following in zip(epochs, epochs[1:]):
+        certificate = _pcm_pause_certificate(source, capture, rate, audio, previous, following,
+                                             witnesses=witnesses)
+        result["pause_certificates"].append(certificate)
+        if certificate["status"] != "consistent_at_resolution":
+            result["reason"] = certificate["reason"]
+            return result
+    result.update(status="aligned", reason=None, residual_seconds=0,
+                  source_offset_seconds=epochs[0]["source_offset_seconds"] if len(epochs) == 1 else None,
+                  alignment_uncertainty_seconds=max(epoch["alignment_uncertainty_seconds"] for epoch in epochs))
+    return result
+
+
+def _pcm_pause_certificate(source, capture, rate, audio, previous, following, witnesses=None):
     pcm = audio["pcm_capture"]
     actions = pcm.get("actions", [])
     pair = [action for action in actions if action.get("kind") in ("pause", "resume")
@@ -394,6 +574,10 @@ def _pcm_pause_certificate(source, capture, rate, audio, previous, following):
     brackets = []
     for action in pair:
         before, after = action["before"], action["after"]
+        if witnesses is not None:
+            lower, upper = _graph_bounds(witnesses, before["performance_after_ms"], after["performance_after_ms"])
+            brackets.append([lower / graph_rate - origin, upper / graph_rate - origin])
+            continue
         if (not all(_finite(row.get("frame")) and _finite(row.get("performance_after_ms"))
                     for row in (before, after)) or after["frame"] < before["frame"]
                 or after["performance_after_ms"] < before["performance_after_ms"]
@@ -427,6 +611,14 @@ def _pcm_pause_certificate(source, capture, rate, audio, previous, following):
             return result
         anchor["capture_start_seconds"] = index / rate
         anchors.append(anchor)
+    if witnesses is not None:
+        for anchor, (begin, end) in zip(anchors, (
+                (round(anchors[0]["capture_start_seconds"] * rate), min(edge[0] for edge in edges) - round(.008 * rate)),
+                (max(edge[1] for edge in edges) + round(.008 * rate), round(anchors[1]["capture_start_seconds"] * rate) + round(.16 * rate)))):
+            offset = round((anchor["source_start_seconds"] - anchor["capture_start_seconds"]) * rate)
+            if begin >= end or not _trace_matches(source, capture, begin, end, offset):
+                result["reason"] = "causal_pause_edge_trace_unverified"
+                return result
     left, right = anchors
     gap_low = min(end - begin for begin, end in edges) / rate
     gap_high = max(end - begin for begin, end in edges) / rate
@@ -530,6 +722,7 @@ def _screen_artifacts(report_path, capture, language, ocr_executable, tessdata_d
     executable, data_dir = _resolve_ocr(ocr_executable, tessdata_dir)
     verified = []
     ocr_cache = {}
+    versions = set()
     for item in screenshots:
         path = _safe_artifact(report_path, item.get("path", ""))
         if _sha256(path) != item.get("sha256"):
@@ -584,6 +777,43 @@ def _screen_artifacts(report_path, capture, language, ocr_executable, tessdata_d
                 executable = None
             ocr_cache[crop_hash] = recognized
         ocr_text = ocr_cache[crop_hash]
+        immutable = item.get("immutable_caption")
+        if immutable is not None:
+            if not isinstance(immutable, dict):
+                raise EvidenceError("immutable_caption_contract_invalid")
+            version = immutable.get("version")
+            if (immutable.get("schema_version") != 1 or type(version) is not int
+                    or not 0 < version < 65536 or version in versions
+                    or immutable.get("held_version") != version
+                    or not all(_finite(immutable.get(key)) for key in (
+                        "create_before_ms", "create_after_ms", "install_before_ms", "install_after_ms",
+                        "screenshot_return_ms", "hold_release_ms"))
+                    or not immutable["create_before_ms"] <= immutable["create_after_ms"]
+                    <= immutable["install_before_ms"] <= immutable["install_after_ms"] <= item["observed_after_ms"]
+                    <= immutable["screenshot_return_ms"] <= immutable["hold_release_ms"]):
+                raise EvidenceError("immutable_caption_contract_invalid")
+            versions.add(version)
+            raster_path = _safe_artifact(report_path, immutable.get("raster_path", ""))
+            if raster_path == path:
+                raise EvidenceError("immutable_caption_independent_raster_missing")
+            if _sha256(raster_path) != immutable.get("raster_sha256"):
+                raise EvidenceError("immutable_caption_raster_hash_mismatch")
+            with av.open(str(raster_path), format="png_pipe") as image:
+                raster = next(image.decode(video=0)).to_ndarray(format="rgb24")
+            bounds = _bounds(immutable.get("raster_bounds"), viewport_before, "immutable_caption_bounds_invalid")
+            actual = pixels[bounds[1]:bounds[3], bounds[0]:bounds[2]]
+            if (actual.shape != raster.shape or raster.shape[0] < 8 or raster.shape[1] < 16
+                    or not np.array_equal(actual, raster)
+                    or not bounds[0] <= crop[0] < crop[2] <= bounds[2]
+                    or not bounds[1] <= crop[1] < crop[3] <= bounds[3]
+                    or crop[0] < bounds[0] + 16 and crop[1] < bounds[1] + 8):
+                raise EvidenceError("immutable_caption_pixels_mismatch")
+            marker = immutable.get("marker_bounds")
+            if marker != {"x": 0, "y": 0, "width": 16, "height": 8}:
+                raise EvidenceError("immutable_caption_marker_invalid")
+            for bit in range(16):
+                if not np.all(raster[:8, bit, :] == (255 if version & (1 << bit) else 0)):
+                    raise EvidenceError("immutable_caption_marker_mismatch")
         verified.append({**item, "_ocr_text": ocr_text,
                          "_pixel_text_match": (_text_matches(item["visible_text"],
                                                               ocr_text or "", language)
@@ -637,6 +867,7 @@ def _caption_episodes(report, screenshots, clock, audio, language):
             "ocr_text": screenshot["_ocr_text"],
             "pixel_text_match": screenshot["_pixel_text_match"],
             "crop_bounds": screenshot["ocr_crop_bounds"],
+            "immutable_caption": screenshot.get("immutable_caption"),
         })
     verified_transitions = []
     unused_screenshots = {screen["index"] for screen in screenshots_by_state}
@@ -668,6 +899,36 @@ def _caption_episodes(report, screenshots, clock, audio, language):
         # transition, but they are not substituted for the saved pixel evidence.
         screen_time_ms = selected["time_ms"]
         transition_time_ms = transition["time_ms"]
+        if audio.get("causal_graph_verified"):
+            immutable = selected["immutable_caption"]
+            if not immutable:
+                continue
+            pixel_start, pixel_end = immutable["create_before_ms"], immutable["screenshot_return_ms"]
+            epoch = next((candidate for candidate in audio["epochs"]
+                          if candidate["start_performance_after_ms"] <= pixel_start
+                          <= pixel_end <= candidate["end_performance_after_ms"]), None)
+            if epoch is None:
+                continue
+            lower, upper = _graph_bounds(audio["pcm_capture"]["causal_graph"]["witnesses"], pixel_start, pixel_end)
+            rate = audio["pcm_capture"]["sample_rate_hz"]
+            origin = round(start_context * rate)
+            offset = round(epoch["source_offset_seconds"] * rate)
+            proof_start, proof_end = epoch["complete_trace_samples"]
+            if not _trace_matches(audio["_source"], audio["_capture"],
+                                  min(lower - origin, proof_start), max(upper - origin, proof_end), offset):
+                continue
+            low = (lower - origin + offset) / rate
+            high = (upper - origin + offset) / rate
+            uncertainty = (high - low) / 2 + epoch["alignment_uncertainty_seconds"]
+            verified_transitions.append({"time_ms": transition_time_ms,
+                "screenshot_observed_after_ms": screen_time_ms,
+                "playback_epoch_index": epoch["index"], "text": transition["text"],
+                "visible": transition["visible"], "pixel_verification": "immutable_caption_and_version",
+                "graph_frame_interval": [lower, upper], "source_time": (low + high) / 2,
+                "uncertainty_seconds": uncertainty,
+                "uncertainty_components": {"causal_graph_join_half_width_seconds": (high - low) / 2,
+                    "independent_waveform_address_seconds": epoch["alignment_uncertainty_seconds"]}})
+            continue
         context = _context_time_at(transition_time_ms, clock)
         if context is None:
             continue
@@ -704,6 +965,10 @@ def _caption_episodes(report, screenshots, clock, audio, language):
 
 
 def _align_capture(source, capture, rate, items, report, audio, calibration=False):
+    if audio.get("pcm_capture", {}).get("causal_graph") is not None:
+        if not calibration:
+            raise EvidenceError("causal_graph_calibration_only")
+        return _align_causal_capture(source, capture, rate, items, report, audio)
     if source.size < rate or capture.size < rate:
         raise EvidenceError("audio_capture_too_short")
     start_context = audio.get("start_context_time_seconds")
@@ -1203,7 +1468,7 @@ def score(reference_path, source_path, spans_path, recording_path, report_path, 
     rate = reference.get("asset_sample_rate_hz")
     if not _finite(rate) or rate <= 0:
         raise EvidenceError("reference_sample_rate_missing")
-    source = _read_audio(source_path, int(rate))
+    source, source_timing = _read_audio(source_path, int(rate), include_timing=True)
     captured, decoded_timing = _read_audio(audio_path, int(rate), include_timing=True)
     if audio_data.get("pcm_capture") is not None:
         pcm = audio_data["pcm_capture"]
@@ -1213,6 +1478,10 @@ def score(reference_path, source_path, spans_path, recording_path, report_path, 
         captured, decoded_timing = _read_audio(pcm_path, int(rate), include_timing=True)
         start_context = _validate_pcm_bridge(pcm, decoded_timing)
         audio_data = {**audio_data, "start_context_time_seconds": start_context}
+        if pcm.get("causal_graph") is not None and (
+                source_timing["codec"] != "pcm_s16le" or source_timing["channels"] != 1
+                or source_timing["sample_rate_hz"] != 48000 or rate != 48000):
+            raise EvidenceError("causal_lossless_source_contract_unsupported")
     _check_source_energy(source, int(rate), items)
     alignment = _align_capture(source, captured, int(rate), items, report, audio_data,
                                calibration=calibration)
@@ -1235,14 +1504,17 @@ def score(reference_path, source_path, spans_path, recording_path, report_path, 
         return _apply_calibration_label(result, calibration)
     audio_data = dict(audio_data)
     audio_data.update(alignment)
-    clock, _clock_gap = _output_clock(audio_data)
-    start_output_context = _context_time_at(
-        float(audio_data["start_performance_after_ms"]), clock)
-    if start_output_context is None:
-        raise EvidenceError("audio_context_start_not_clock_calibrated")
-    start_bridge_delta = start_output_context - float(audio_data["start_context_time_seconds"])
-    audio_data["capture_start_output_context_delta_seconds"] = start_bridge_delta
-    alignment["capture_start_output_context_delta_seconds"] = start_bridge_delta
+    if audio_data.get("pcm_capture", {}).get("causal_graph") is not None:
+        audio_data.update(causal_graph_verified=True, _source=source, _capture=captured)
+        clock = None
+    else:
+        clock, _clock_gap = _output_clock(audio_data)
+        start_output_context = _context_time_at(float(audio_data["start_performance_after_ms"]), clock)
+        if start_output_context is None:
+            raise EvidenceError("audio_context_start_not_clock_calibrated")
+        start_bridge_delta = start_output_context - float(audio_data["start_context_time_seconds"])
+        audio_data["capture_start_output_context_delta_seconds"] = start_bridge_delta
+        alignment["capture_start_output_context_delta_seconds"] = start_bridge_delta
     episodes, transitions, verified = _caption_episodes(
         report, screenshots, clock, audio_data, language)
     mappings, _mapped_episodes = _episode_mapping(items, episodes, transitions, verified, language)
@@ -1274,7 +1546,8 @@ def score(reference_path, source_path, spans_path, recording_path, report_path, 
         "sync_gate_passed": True if passes else None if status == "unknown" else False,
         "acoustic_sync_assessed": status in ("passed", "failed"),
         "release_gate_passed": False,
-        "measurement_scope": "browser_audio_context_render_output",
+        "measurement_scope": ("browser_graph_pcm_and_immutable_caption_pixels"
+                              if audio_data.get("causal_graph_verified") else "browser_audio_context_render_output"),
         "physical_output_latency": capture_data.get("physical_output_latency", "unknown"),
         "audio_capture_element": audio_data.get("media_element_id"),
         "samples": len(items), "measured_item_count": len(measured),

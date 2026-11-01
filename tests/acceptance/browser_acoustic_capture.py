@@ -1,4 +1,5 @@
 """Optional capture of media-element output and visible transition screenshots."""
+import base64
 import hashlib
 from pathlib import Path
 import struct
@@ -48,19 +49,52 @@ AUDIO_CAPTURE_INSTALL = r"""async (mediaElementId = 'audioEl') => {
   let startContextTimeSeconds = null;
   let clockTimer = null;
   const sampler = () => window.__realAcceptanceSampler;
-  const pcmBlocks = [], pcmSamples = [], pcmActions = [];
+  const pcmBlocks = [], pcmSamples = [], pcmActions = [], witnesses = [];
+  const pendingWitnesses = new Map();
+  let witnessSequence = 0, witnessTimer;
+  let graphError = null;
+  // Operational failure deadline; recorded causal intervals retain their full width.
+  const graphReplyDeadlineMs = 1000;
+  const failGraph = reason => {
+    if (graphError) return new Error(graphError);
+    graphError = reason; status = reason;
+    clearInterval(witnessTimer); clearInterval(clockTimer);
+    for (const pending of pendingWitnesses.values()) {
+      clearTimeout(pending.timer); pending.reject(new Error(reason));
+    }
+    pendingWitnesses.clear();
+    if (stopPCM) {
+      clearTimeout(stopPCM.timer); stopPCM.reject(new Error(reason)); stopPCM = null;
+    }
+    if (window.__immutableCaptionFixture?.held) window.__immutableCaptionFixture.release();
+    if (recorder.state === 'recording') recorder.stop();
+    context.close().catch(() => {});
+    return new Error(reason);
+  };
+  const observe = () => {
+    if (graphError) return Promise.reject(new Error(graphError));
+    const nonce = 'graph-' + (++witnessSequence);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => failGraph('causal_graph_reply_timeout'), graphReplyDeadlineMs);
+      pendingWitnesses.set(nonce, {resolve, reject, timer,
+        send_after_ms: performance.now() - sampler().started});
+      worklet.port.postMessage({kind: 'observe', nonce});
+    });
+  };
   let worklet, stopPCM;
   try {
     const module = new Blob([`class Capture extends AudioWorkletProcessor {
-      constructor() { super(); this.sequence = 0; this.active = true;
-        this.port.onmessage = event => { if (event.data === 'stop') {
+      constructor() { super(); this.sequence = 0; this.active = true; this.nonces = [];
+        this.port.onmessage = event => { if (event.data?.kind === 'observe')
+          this.nonces.push(event.data.nonce); else if (event.data === 'stop') {
           this.active = false; this.port.postMessage({kind: 'stopped'}); } }; }
       process(inputs) {
         if (this.active) {
           const samples = new Float32Array(inputs[0]?.[0] || 128);
           this.port.postMessage({kind: 'block', sequence: this.sequence++,
             start_frame: currentFrame, frame_count: samples.length,
-            context_time_seconds: currentTime, samples}, [samples.buffer]);
+            context_time_seconds: currentTime, witness_nonces: this.nonces.splice(0),
+            samples}, [samples.buffer]);
         }
         return true;
       }
@@ -71,9 +105,23 @@ AUDIO_CAPTURE_INSTALL = r"""async (mediaElementId = 'audioEl') => {
     worklet = new AudioWorkletNode(context, 'acoustic-pcm', {channelCount: 1,
       channelCountMode: 'explicit'});
     worklet.port.onmessage = ({data}) => {
-      if (data.kind === 'stopped') { stopPCM?.(); return; }
+      if (graphError) return;
+      if (data.kind === 'stopped') {
+        if (stopPCM) { clearTimeout(stopPCM.timer); stopPCM.resolve(); stopPCM = null; }
+        return;
+      }
       const {samples, kind, ...block} = data;
       pcmBlocks.push(block); pcmSamples.push(samples);
+      for (const nonce of block.witness_nonces) {
+        const pending = pendingWitnesses.get(nonce);
+        if (!pending) { status = 'causal_nonce_invalid'; continue; }
+        const witness = {nonce, send_after_ms: pending.send_after_ms,
+          receive_after_ms: performance.now() - sampler().started,
+          sequence: block.sequence, start_frame: block.start_frame, frame_count: block.frame_count,
+          sample_rate_hz: context.sampleRate, channels: 1};
+        witnesses.push(witness); pendingWitnesses.delete(nonce);
+        clearTimeout(pending.timer); pending.resolve(witness);
+      }
     };
     const silent = context.createGain(); silent.gain.value = 0;
     source.connect(worklet); worklet.connect(silent); silent.connect(context.destination);
@@ -126,6 +174,8 @@ AUDIO_CAPTURE_INSTALL = r"""async (mediaElementId = 'audioEl') => {
     startContextTimeSeconds = context.currentTime;
     recordOutputTime();
     clockTimer = setInterval(recordOutputTime, 50);
+    if (window.__immutableCaptionFixture)
+      witnessTimer = setInterval(() => { observe().catch(() => {}); }, 10);
   });
   recorder.addEventListener('error', () => { status = 'recorder_error'; });
   start.addEventListener('click', () => {
@@ -134,19 +184,27 @@ AUDIO_CAPTURE_INSTALL = r"""async (mediaElementId = 'audioEl') => {
     }).catch(() => { status = 'audio_context_resume_failed'; });
   }, {once: true});
   window.__acousticCapture = {
+    observe,
     installation: {status: 'installed', mime_type: mimeType,
       media_element_id: media.id || null, clock_media_element_id: clockMedia?.id || null,
       sample_rate_hz: context.sampleRate,
       output_clock_supported: typeof context.getOutputTimestamp === "function",
       base_latency_seconds: Number.isFinite(context.baseLatency) ? context.baseLatency : null,
       output_latency_seconds: Number.isFinite(context.outputLatency) ? context.outputLatency : null},
-    status: () => ['recorder_error', 'audio_context_resume_failed'].includes(status)
-      ? status : (clockError ? 'clock_error' : status),
-    save: () => new Promise(resolve => {
+    status: () => graphError || (['recorder_error', 'audio_context_resume_failed'].includes(status)
+      ? status : (clockError ? 'clock_error' : status)),
+    save: () => new Promise((resolve, reject) => {
       const finish = async () => {
+        try {
         if (clockTimer) clearInterval(clockTimer);
+        if (witnessTimer) clearInterval(witnessTimer);
         recordOutputTime();
-        await new Promise(done => { stopPCM = done; worklet.port.postMessage('stop'); });
+        if (window.__immutableCaptionFixture) await observe();
+        await new Promise((done, fail) => {
+          stopPCM = {resolve: done, reject: fail,
+            timer: setTimeout(() => failGraph('pcm_stop_reply_timeout'), graphReplyDeadlineMs)};
+          worklet.port.postMessage('stop');
+        });
         const blob = new Blob(chunks, {type: mimeType});
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
@@ -166,8 +224,11 @@ AUDIO_CAPTURE_INSTALL = r"""async (mediaElementId = 'audioEl') => {
           output_latency_seconds: Number.isFinite(context.outputLatency) ? context.outputLatency : null,
           output_clock_samples: outputClockSamples,
           pcm_capture: {schema_version: 1, sample_rate_hz: context.sampleRate, channels: 1,
-            blocks: pcmBlocks, actions: pcmActions},
+            blocks: pcmBlocks, actions: pcmActions,
+            ...(window.__immutableCaptionFixture ? {causal_graph: {schema_version: 1,
+              sample_contract: 'pcm16_source_quantization_lsb1', witnesses}} : {})},
           physical_output_latency: 'unknown'});
+        } catch (error) { reject(failGraph(error.message)); }
       };
       if (recorder.state === 'recording') {
         recorder.addEventListener('stop', finish, {once: true});
@@ -208,12 +269,14 @@ AUDIO_CAPTURE_INSTALL = r"""async (mediaElementId = 'audioEl') => {
 VISIBLE_STATE = r"""() => {
   const caption = document.querySelector('#current');
   if (!caption) return {visible: false, visible_text: '', observed_after_ms: null};
-  const text = caption.innerText || '';
+  const text = window.__immutableCaptionFixture?.text ?? caption.innerText ?? '';
   const visible = !!text.trim() && !/(正在准备字幕|跳转中|正在跳转)/.test(text.trim())
     && !/^(⏳|⚠)/.test(text.trim()) && caption.getClientRects().length > 0;
   const rect = caption.getBoundingClientRect();
-  const captionBounds = rect.width > 0 && rect.height > 0
-    ? {x: rect.x, y: rect.y, width: rect.width, height: rect.height} : null;
+  const captionBounds = window.__immutableCaptionFixture
+    ? (visible ? window.__immutableCaptionFixture.metadata?.caption_bounds : null)
+    : rect.width > 0 && rect.height > 0
+      ? {x: rect.x, y: rect.y, width: rect.width, height: rect.height} : null;
   if (visible && captionBounds && window.__acousticCapture)
     window.__acousticCapture.lastVisibleCaptionBounds = captionBounds;
   const started = window.__realAcceptanceSampler?.started;
@@ -266,6 +329,19 @@ def save_audio_capture(page, output_path, report_root):
 
 def capture_visible_screenshot(page, output_dir, report_root, index):
     """Save a real screenshot only while the requested visible state stays stable."""
+    immutable = page.evaluate("() => window.__immutableCaptionFixture?.hold() || null")
+    completion = {}
+    try:
+        result = _capture_visible_screenshot(page, output_dir, report_root, index, immutable)
+    finally:
+        if immutable is not None:
+            completion = page.evaluate("() => window.__immutableCaptionFixture.release()")
+    if result is not None and immutable is not None:
+        result["immutable_caption"].update(completion)
+    return result
+
+
+def _capture_visible_screenshot(page, output_dir, report_root, index, immutable):
     before = page.evaluate(VISIBLE_STATE)
     if not isinstance(before, dict):
         return None
@@ -299,6 +375,13 @@ def capture_visible_screenshot(page, output_dir, report_root, index):
         destination.unlink(missing_ok=True)
         return None
     screenshot_width, screenshot_height = struct.unpack(">II", header[16:24])
+    if immutable is not None:
+        raster = directory / f"raster-{immutable['version']:04d}.png"
+        if raster.exists():
+            raise FileExistsError("refusing to overwrite an immutable caption raster")
+        raster.write_bytes(base64.b64decode(immutable.pop("raster_data_url").split(",", 1)[1], validate=True))
+        immutable.update(raster_path=raster.relative_to(Path(report_root).resolve()).as_posix(),
+                         raster_sha256=_sha256(raster))
     return {
         "path": destination.relative_to(Path(report_root).resolve()).as_posix(),
         "sha256": _sha256(destination),
@@ -314,6 +397,7 @@ def capture_visible_screenshot(page, output_dir, report_root, index):
         "ocr_crop_bounds": crop_bounds, "ocr_crop_source": crop_source,
         "screenshot_width_px": screenshot_width,
         "screenshot_height_px": screenshot_height,
+        **({"immutable_caption": immutable} if immutable is not None else {}),
     }
 
 
