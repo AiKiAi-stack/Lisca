@@ -222,7 +222,7 @@ async def run(path, label, output_path, server_url):
         if ticket.get("session"):
             secrets.add(ticket["session"])
         async with websockets.connect(websocket_url + "/ws?session=" + ticket["session"],
-                                      max_size=2**23) as socket:
+                                      max_size=2**23, close_timeout=1) as socket:
             while True:
                 message = await asyncio.wait_for(socket.recv(), timeout=90)
                 event = json.loads(message)

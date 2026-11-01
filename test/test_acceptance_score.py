@@ -1,5 +1,7 @@
 """Keep release accuracy scoring independent of provider output formatting."""
 import asyncio
+import base64
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import hashlib
 import os
@@ -81,6 +83,94 @@ class FakeRecognitionService:
         self.release_events.set()
         self.server.should_exit = True
         self.thread.join(timeout=5)
+
+
+class WithheldCloseService:
+    """A real WebSocket peer that requires a Pong but deliberately withholds close."""
+
+    def __init__(self):
+        self.connected = threading.Event()
+        self.close_received = threading.Event()
+        self.tcp_closed = threading.Event()
+        self.deleted = threading.Event()
+        self.stop = threading.Event()
+        peer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                body = b'{"session":"test-session"}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_DELETE(self):
+                peer.deleted.set()
+                self.send_response(204)
+                self.end_headers()
+
+            def do_GET(self):
+                key = self.headers["Sec-WebSocket-Key"]
+                accept = base64.b64encode(hashlib.sha1(
+                    (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
+                self.send_response(101)
+                self.send_header("Upgrade", "websocket")
+                self.send_header("Connection", "Upgrade")
+                self.send_header("Sec-WebSocket-Accept", accept.decode())
+                self.end_headers()
+                self.connection.settimeout(0.1)
+                self.connection.sendall(b"\x89\x05ready")
+                while not peer.stop.is_set():
+                    header = peer.read_exact(self.connection, 2)
+                    if header is None:
+                        return
+                    size = header[1] & 127
+                    assert header[1] & 128 and size <= 125
+                    mask = peer.read_exact(self.connection, 4)
+                    payload = peer.read_exact(self.connection, size)
+                    if mask is None or payload is None:
+                        return
+                    payload = bytes(value ^ mask[i % 4] for i, value in enumerate(payload))
+                    if header[0] & 15 == 10 and payload == b"ready":
+                        peer.connected.set()
+                    if header[0] & 15 == 8:
+                        peer.close_received.set()
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       kwargs={"poll_interval": 0.05})
+
+    def read_exact(self, connection, count):
+        data = bytearray()
+        while len(data) < count and not self.stop.is_set():
+            try:
+                part = connection.recv(count - len(data))
+            except socket.timeout:
+                continue
+            if not part:
+                self.tcp_closed.set()
+                return None
+            data.extend(part)
+        return bytes(data) if len(data) == count else None
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stop.set()
+        self.server.shutdown()
+        self.thread.join(timeout=2)
+        self.server.server_close()
+        assert not self.thread.is_alive()
 
 
 def write_wav(path, sample=b"\0\0"):
@@ -318,21 +408,33 @@ def test_recording_and_scoring_clis_preserve_remote_sample_identity_without_hash
     assert report["accuracy_gate_passed"] is False
 
 
-def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(tmp_path):
+@pytest.mark.parametrize("withhold_close", [False, True], ids=["cooperative", "withheld-close"])
+def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(tmp_path, withhold_close):
     input_path = tmp_path / "sample.wav"
     write_wav(input_path)
     recording_path = tmp_path / "recording.json"
-    with FakeRecognitionService([], hold_events=True) as service:
+    service = WithheldCloseService() if withhold_close else FakeRecognitionService([], hold_events=True)
+    with service:
         process = subprocess.Popen([
             sys.executable, str(Path(__file__).with_name("run_original_acceptance.py")),
             str(input_path), "--server-url", service.url, "--output", str(recording_path),
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if not service.connected.wait(5):
-            process.terminate()
-            stdout, stderr = process.communicate(timeout=5)
-            pytest.fail(f"recorder did not reach the fake WebSocket service: {stdout} {stderr}")
-        process.send_signal(signal.SIGINT)
-        stdout, stderr = process.communicate(timeout=10)
+        try:
+            assert service.connected.wait(5), "recorder did not become active at the WebSocket peer"
+            process.send_signal(signal.SIGINT)
+            stdout, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            if withhold_close:
+                assert service.close_received.is_set()
+            pytest.fail("recorder exceeded the 10-second cancellation deadline")
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
+        if withhold_close:
+            assert service.close_received.is_set()
+            assert service.tcp_closed.is_set()
+            assert service.deleted.is_set()
 
     recording = json.loads(recording_path.read_text(encoding="utf-8"))
     manifest = {"dataset": "fixed", "config": "en",
@@ -344,6 +446,8 @@ def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(tmp_pat
     assert process.returncode != 0, stdout + stderr
     assert recording["recording_status"] == "cancelled"
     assert recording["completion_signal"] == "cancelled"
+    assert recording["completion_reason"] == "cancelled"
+    assert recording["input_unchanged"] is True
     assert report["session_without_errors"] is False
     assert report["transcription_accuracy_passed"] is False
 
