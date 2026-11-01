@@ -968,12 +968,20 @@ def test_audio_capture_reports_recorder_failure_after_clock_failure():
             page.evaluate('''() => {
               window.__realAcceptanceSampler = {started: performance.now()};
               window.AudioContext = class {
-                constructor() { this.state = 'running'; this.sampleRate = 16000; this.currentTime = 0; }
+                constructor() {
+                  this.state = 'running'; this.sampleRate = 16000; this.currentTime = 0;
+                  this.audioWorklet = {addModule: async () => {}};
+                }
                 createMediaElementSource() { return {connect() {}}; }
                 createMediaStreamDestination() { return {stream: {}}; }
                 createAnalyser() { return {fftSize: 1024, connect() {}, getFloatTimeDomainData() {}}; }
+                createGain() { return {gain: {value: 1}, connect() {}}; }
                 getOutputTimestamp() { throw Error('clock failure'); }
                 resume() { return Promise.resolve(); }
+              };
+              window.AudioWorkletNode = class {
+                constructor() { this.port = {}; }
+                connect() {}
               };
               window.MediaRecorder = class extends EventTarget {
                 static isTypeSupported() { return true; }
