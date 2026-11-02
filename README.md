@@ -1,5 +1,7 @@
 # Live and video source-language captions
 
+**Experimental preview — the PRD first-release gate has not passed (2026-11-02).** The latest complete startup campaign measured P95 10.5135 s for Chinese and 5.9663 s for English against a 3 s target. Caption synchronization and voiced coverage remain unverified, current long-run acceptance is unfinished, and the English fast-speech reference remains unresolved. Clean Windows and a real second device are excluded from this round, not marked passed. See the [current quality and release decision](docs/research/original-caption-recovery-2026-11-02.md) for evidence versions and known text errors.
+
 Run on your Windows PC and watch in a browser with original-language subtitles: Chinese speech stays Chinese and English speech stays English. The current UI prioritizes speech recognition and caption timing; cross-language translation is paused. Cloud recognition uses your own mainland-China DashScope API key for FunASR.
 
 Install 64-bit Python 3.10–3.12 (3.12 recommended, including the Python Launcher), place the checkout on a drive with free space, and run `start-windows.cmd`. It creates a project-local environment, installs `requirements-webui.txt`, and opens <http://127.0.0.1:8002/>. Configure your key in Settings, open a live URL or local video, and choose Generate captions. Language detection is automatic by default; Chinese and English hints are optional.
@@ -8,7 +10,7 @@ Audio is sent to DashScope and billed to your API account. Keys are in memory by
 
 Local audio can be processed ahead of playback. Once recognition completes, pause and seek reuse the captions without another recognition request. Captions follow audio timestamps and appear as short phrases rather than word-by-word drafts. The supplied 30.12-second Chinese video took about 8.1 seconds to recognize on this machine; other files can differ. Recognition errors remain possible. Live-source coverage, other languages and long-running playback require further acceptance testing.
 
-The 2026-10-25 Ubuntu continuation records real corpus scores, control checks and live-source limitations in the [acceptance record](docs/plans/2026-10-24-original-caption-real-acceptance.md) and [source matrix](docs/research/2026-10-25-original-caption-support-matrix.md). Windows and independent timing acceptance remain separate.
+The 2026-10-25 Ubuntu continuation records historical real corpus scores, control checks and live-source limitations in the [acceptance record](docs/plans/2026-10-24-original-caption-real-acceptance.md) and [source matrix](docs/research/2026-10-25-original-caption-support-matrix.md). The current scope and unresolved timing acceptance are stated above.
 
 See the [Chinese getting-started guide](README_zh.md), [current product decision](docs/adr/0008-original-language-captions.md), [PRD](docs/plans/2026-10-21-live-translation-prd.md), and [UI acceptance record](docs/ui-design.md). The original toolkit documentation follows.
 
