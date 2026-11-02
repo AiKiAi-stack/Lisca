@@ -732,7 +732,8 @@ def collect(args):
                         page.locator("#start").click()
                         start_clicked = True
 
-                    no_start_deadline = started + 15
+                    # Remote HLS first awaits /channels, whose proxy request timeout is 20s.
+                    no_start_deadline = started + 15 + (20 if _is_remote_hls_source(args.media) else 0)
                     while preflight_ok:
                         drain()
                         write_progress()
@@ -818,7 +819,8 @@ def collect(args):
                         if not remote and time.monotonic() - started >= args.timeout:
                             errors.append({"type": "local_timeout"})
                             break
-                        if remote and time.monotonic() - started >= args.seconds + 15:
+                        if (remote and posts["started"] is not None
+                                and time.monotonic() - posts["started"] >= args.seconds + 15):
                             errors.append({"type": "live_start_timeout"})
                             break
                         page.wait_for_timeout(50 if acoustic_capture is not None else 200)
