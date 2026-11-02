@@ -19,16 +19,17 @@ Use the default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-
 
 This is a single-context repo. Read root `GLOSSARY.md` and relevant `docs/adr/` files. See `docs/agents/domain.md`.
 
-## 模型分工
+## 执行与验收
 
-以下约定适用于本仓库及其子目录。
+- 开始接续时核对父 Issue 和全部未完成产品指标；独立就绪的工作并行推进，只按真实依赖安排阻塞。
+- 每次实验先写明原验收项、待区分的假设和结果将改变的决定。同一问题最多尝试 3 次，跨代理、上下文累计；没有新增决策证据时提前停止该路径。
+- 歧义保留为 unknown，失败与原始证据另存；保持原门槛和用户已排除的范围，不把局部计量困难升级为全项目前置。
+- 分别报告代码、CI、运行时和产品验收，注明候选版本、输入身份及证据日期；历史结果只支持其原有范围。
+- 优先交付能独立审查的小切片，及时收束主题与上下文；工具修复和自动化绿灯不能代替尚未通过的观看体验。
+- 按用户授权的范围决定是否带已知问题发布，先同步支持清单和限制；明确正式版或 prerelease、未通过项与剩余风险，保持发布门槛的真实结论。
 
-- 主任务和主协调代理（Coordinator Agent）使用 **GPT-6.1-Sol**，模型 ID 为 `gpt-6.1-sol`，thinking effort 为 **Max**（`max`）。
-- 被分发任务的所有子代理（包括 Execution Agent、审查代理和继续分发的子代理）使用 **GPT-6-Luna**，模型 ID 为 `gpt-6-luna`，thinking effort 为 **Max**（`max`）。
-- 项目默认模型配置位于 `.codex/config.toml`，调整模型分工时同步更新该配置和本文件。
+## 模型偏好
 
-### 创建子代理
-
-- 创建子代理时显式指定 `model="gpt-6-luna"` 和 `reasoning_effort="max"`。
-- 使用当前宿主的 `spawn_agent` 时，设置 `fork_turns="none"`，以便指定独立的模型和思考强度；在任务消息中提供目标、工作目录、相关约束和完成标准。
-- 所需模型或 Max 思考强度不可用时，如实说明限制，由用户决定替代配置。
+- 主任务和协调优先 **GPT-6.1-Sol / Max**（`gpt-6.1-sol` / `max`）；写作和电脑操作优先 **GPT-6.1-Terra / Max**（`gpt-6.1-terra` / `max`）。
+- 允许委派时，其他子代理优先 **GPT-6-Luna / Max**（`gpt-6-luna` / `max`）。通过 `spawn_agent` 显式指定模型与强度，并设置 `fork_turns="none"`，提供目标、目录、约束和完成标准。
+- 默认配置位于 `.codex/config.toml`。这些是偏好；如不可用，如实说明实际模型、强度和影响，继续已授权的可行工作。
