@@ -187,7 +187,8 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                                    observe_recovery=True, media=None,
                                    playback_evidence=False, browser_clock_samples=None,
                                    monotonic_ns_samples=None, captured_audio=None, installation=None, pixel_failure=False, runtime_audio_failure=False, runtime_clock_failure=False,
-                                   acoustic_sync=False, save_failure=False, status_sequence=None):
+                                   acoustic_sync=False, save_failure=False, status_sequence=None,
+                                   stop_file=None):
     clock = {"now": 100.0}
 
     class Request:
@@ -282,8 +283,9 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                 return None
             raise AssertionError(f"Unexpected collector page evaluation: {script}")
 
-        def _sample(self):
-            elapsed = max(0.0, clock["now"] - self.sampler_started_at)
+        def _sample(self, observed_at=None):
+            observed_at = clock["now"] if observed_at is None else observed_at
+            elapsed = max(0.0, observed_at - self.sampler_started_at)
             self.sample_buffer.append({
                 "observed_after_ms": round(elapsed * 1000),
                 "media_time": elapsed,
@@ -307,19 +309,20 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                 "height_clipped": False,
             })
 
-        def _post(self, method):
-            url = (acceptance.BASE + "/api/cloud/sessions" if method == "POST" else
-                   acceptance.BASE + "/api/cloud/sessions/TEST_ONLY_SESSION_CAPABILITY")
-            request = Request(method, url)
+        def _request(self, method, *, path=None, status=200):
+            path = path or ("/api/cloud/sessions" if method == "POST" else
+                            "/api/cloud/sessions/TEST_ONLY_SESSION_CAPABILITY")
+            request = Request(method, acceptance.BASE + path)
             if method == "POST":
                 for callback in self.routes:
                     callback(type("Route", (), {"request": request,
                                                     "continue_": lambda _self: None})())
-            for callback in self.handlers.get("response", []):
-                callback(Response(request, 200))
+            if status is not None:
+                for callback in self.handlers.get("response", []):
+                    callback(Response(request, status))
 
-        def open_session(self):
-            self._post("POST")
+        def open_session(self, *, response_status=200):
+            self._request("POST", status=response_status)
             return self.open_socket()
 
         def open_socket(self, url="ws://127.0.0.1:8002/ws?session=TEST_ONLY_SOCKET_CAPABILITY"):
@@ -335,7 +338,7 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
 
         def stop(self):
             self.active = False
-            self._post("DELETE")
+            self._request("DELETE")
 
         def schedule(self, after_seconds, callback):
             self.scheduled.append((clock["now"] + after_seconds, callback))
@@ -349,7 +352,7 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                 callback()
             clock["now"] = target
             while self.next_sample_at is not None and self.next_sample_at <= target:
-                self._sample()
+                self._sample(self.next_sample_at)
                 self.next_sample_at += 0.05
 
     page = Page()
@@ -414,11 +417,104 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
     if acoustic_sync:
         argv.extend(["--capture-acoustic-sync", "--reference", str(tmp_path / "ref.json"),
                      "--language", "en"])
+    if stop_file is not None:
+        argv.extend(["--stop-file", str(stop_file)])
     args = acceptance.parse_args(argv)
     result = acceptance.collect(args)
     report = json.loads((tmp_path / f"{label}.report.json").read_text(encoding="utf-8"))
     recording = json.loads((tmp_path / f"{label}.recording.json").read_text(encoding="utf-8"))
     return result, report, recording, page, clock
+
+
+@pytest.mark.parametrize("observe_recovery", [False, True])
+def test_remote_channel_precheck_can_finish_before_session_observation(
+        tmp_path, monkeypatch, observe_recovery):
+    precheck_responses = []
+
+    def on_start(page):
+        def finish_precheck():
+            # Single HLS sources continue to the session POST after this public response.
+            page._request("GET", path="/channels", status=422)
+            precheck_responses.append(422)
+            page.open_session()
+        page.schedule(20, finish_precheck)
+
+    result, report, recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label=f"slow-precheck-{observe_recovery}", seconds=1,
+        on_start=on_start, observe_recovery=observe_recovery)
+
+    assert precheck_responses == [422]
+    assert report["session_post_start_count"] == 1
+    assert report["live_seconds_cap_reached"] is True
+    assert report["operator_stop"]["trigger"] == "observation_cap"
+    assert report["operator_stop"]["delete_status"] == 200
+    assert result["exit_ok"] is True
+    assert recording["completion_reason"] == "cancelled"
+    assert not recording["errors"]
+    assert 21 <= clock["now"] - 100 < 21.5
+
+
+@pytest.mark.parametrize(("remote", "deadline"), [(False, 15), (True, 35)])
+def test_collector_bounds_a_genuinely_missing_session(tmp_path, monkeypatch, remote, deadline):
+    media = None
+    if not remote:
+        media_path = tmp_path / "sample.wav"
+        media_path.write_bytes(b"fixed local test input")
+        media = str(media_path)
+    result, report, recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label=f"missing-session-{remote}", seconds=1,
+        on_start=lambda _page: None, media=media, observe_recovery=False)
+
+    assert report["session_post_start_count"] == 0
+    assert report["live_seconds_cap_reached"] is False
+    assert result["exit_ok"] is False
+    assert {error["type"] for error in recording["errors"]} == {"session_start_missing"}
+    assert deadline <= clock["now"] - 100 < deadline + .5
+
+
+def test_remote_response_budget_starts_after_delayed_precheck(tmp_path, monkeypatch):
+    def on_start(page):
+        page.schedule(20, lambda: page.open_session(response_status=None))
+
+    result, report, recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="missing-response-after-precheck", seconds=1,
+        on_start=on_start, observe_recovery=False)
+
+    assert report["session_post_start_count"] == 1
+    assert result["exit_ok"] is False
+    assert {error["type"] for error in recording["errors"]} == {"session_start_response_missing"}
+    assert 35 <= clock["now"] - 100 < 35.5
+
+
+def test_remote_precheck_still_stops_on_ui_error(tmp_path, monkeypatch):
+    def on_start(page):
+        page.schedule(.2, lambda: setattr(page, "status_is_error", True))
+
+    result, report, recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="precheck-ui-error", seconds=1,
+        on_start=on_start, observe_recovery=False)
+
+    assert report["session_post_start_count"] == 0
+    assert result["exit_ok"] is False
+    assert {error["type"] for error in recording["errors"]} == {"ui_fatal"}
+    assert clock["now"] - 100 < 1
+
+
+def test_remote_precheck_still_honors_operator_stop(tmp_path, monkeypatch):
+    stop_file = tmp_path / "operator-stop"
+
+    def on_start(page):
+        page.schedule(1, lambda: stop_file.write_text("stop", encoding="utf-8"))
+
+    _result, report, recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="precheck-operator-stop", seconds=1,
+        on_start=on_start, observe_recovery=False, stop_file=stop_file)
+
+    assert report["session_post_start_count"] == 0
+    assert report["operator_stop"]["trigger"] == "operator_signal"
+    assert report["operator_stop"]["delete_status"] == 200
+    assert not recording["errors"]
+    assert 1 <= clock["now"] - 100 < 1.5
 
 
 
@@ -729,7 +825,7 @@ def test_opt_in_observation_stops_on_media_only_ui_exhaustion_and_keeps_delete_e
 
     def media_recovery_exhausted(page):
         # showCaptionRecovery cancels the session, awaits its DELETE, then hides Stop.
-        page._post("DELETE")
+        page._request("DELETE")
         page.active = False
         page.retry_visible = True
         page.status = "media recovery exhausted"
