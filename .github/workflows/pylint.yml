@@ -25,5 +25,8 @@ jobs:
         # E0110 为 test_engines 故意实例化抽象类断言 TypeError
         # init-hook 让 pylint 认识运行时 sys.path（tools/ 与 vendored whisper_streaming）
         # whisper_streaming 为 vendored 上游，不归本仓库 lint
+        # DashScope 的 ASR 路径为动态别名；先验证实际符号，再跳过该别名的静态路径查找。
+        python -c "from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult"
         pylint --errors-only --init-hook="import sys; sys.path.insert(0,'whisper_streaming'); sys.path.insert(0,'tools')" \
+          --ignored-modules=dashscope.audio.asr \
           --disable=E0611,E1101,E0110 $(git ls-files '*.py' | grep -v '^whisper_streaming/')
