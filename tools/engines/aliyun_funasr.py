@@ -113,14 +113,17 @@ class AliyunFunASREngine(Engine):
         """只取积压句子（不推音频）：快推场景下把所有已确认句子逐条取出"""
         return self._drain()
 
-    def finish(self) -> Subtitle:
-        """流结束：停止 WS 等服务端处理完所有已推音频（句子进 buffer），
-        返回第一条；剩余句子由调用方 finish 后循环 poll() 取尽。"""
+    def finalize(self) -> None:
+        """Close audio input without consuming results, so callers can keep polling."""
         if not getattr(self, "_stopped", False):
             self.client.stop()
             self._stopped = True
         self._close_monitor()
         self.client.raise_if_error()
+
+    def finish(self) -> Subtitle:
+        """Finalize input and return the first remaining result."""
+        self.finalize()
         return self._drain()
 
     def close(self) -> None:

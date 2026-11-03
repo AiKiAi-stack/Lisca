@@ -9,7 +9,7 @@ from dashscope.audio.asr import RecognitionCallback, RecognitionResult
 
 from streamparser.asr_config import ASRSettings
 from streamparser.recognition_process import (RecognitionProcess as Recognition,
-                                              RecognitionProviderError)
+                                              RecognitionCapacityError, RecognitionProviderError)
 from streamparser.subtitle import SubtitleEntry
 
 CANCEL_TIMEOUT_SECONDS = 5.0
@@ -211,7 +211,7 @@ class ASRClient:
             try:
                 self._input_queue.put(data, timeout=0.5)
             except Full:
-                raise RuntimeError("ASR audio queue is full; please check the connection") from None
+                raise RecognitionCapacityError("ASR audio input queue exceeded its capacity") from None
 
     def _worker_loop(self) -> None:
         while True:

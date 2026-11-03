@@ -779,3 +779,22 @@ test('draft history cannot claim visible caption coverage or announce ready',()=
    is_final:true,text:'A stable clause, with its ending.'});
  assert.equal(covered.length,2);
 });
+
+test('wide original captions keep readable phrase lengths instead of filling the whole screen',()=>{
+ const b=browser({playerWidth:1500,fontSize:30});
+ const text='It seems clear to me that ever since President Trump arrived in Michigan to campaign and rally the weekend before last here in Port Huron on behalf of Mike Rogers, the polls have shown a decline in support from Republicans.';
+ const tokens=text.split(' ');
+ const words=tokens.map((token,i)=>{const beg=i*.3;return [beg,beg+.3,(i?' ':'')+token];});
+ const segments=b.context.captionSegments({beg:0,end:tokens.length*.3,text,words,isFinal:true});
+ assert.ok(segments.every(s=>s.text.length<=100),JSON.stringify(segments));
+ assert.equal(segments.map(s=>s.text).join('').replace(/\s/g,''),text.replace(/\s/g,''));
+});
+
+test('a sub-100ms final fragment joins its adjacent phrase without extending the speech range',()=>{
+ const b=browser({playerWidth:1500,fontSize:30});
+ const pages=b.context.captionSegments({beg:0,end:2,text:'Really? Yes.',isFinal:true,
+   words:[[0,1.9,'Really?'],[1.92,2,' Yes.']]});
+ assert.ok(pages.every(p=>p.end-p.beg>=.6),JSON.stringify(pages));
+ assert.equal(pages[0].beg,0);assert.equal(pages.at(-1).end,2);
+ assert.equal(pages.map(p=>p.text).join('').replace(/\s/g,''),'Really?Yes.');
+});

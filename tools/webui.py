@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from itertools import chain
 from urllib.error import HTTPError, URLError
@@ -1181,13 +1182,13 @@ async def ws_endpoint(ws: WebSocket):
                         break
                     # Pace by the actual PCM duration (including a short tail).
                     chunk_sec = len(chunk) / (16000 * 2)
-                    if not batch_mode and not (original_mode and is_live_hls):
+                    if not batch_mode:
                         # Keep local files at most two seconds ahead so playback
-                        # can start before EOF. Live HLS is paced by its source:
-                        # throttling buffered segments again leaves ASR behind playback.
+                        # can start before EOF. Bound buffered HLS too: an unpaced
+                        # segment burst can overflow the ASR input queue at startup.
                         # One cumulative deadline lets delayed reads catch up without
                         # turning source or recognizer time into permanent feed lag.
-                        lead_sec = 2.0 if prefetch_local else 0.0
+                        lead_sec = 2.0 if prefetch_local or (original_mode and is_live_hls) else 0.0
                         wait = fed_sec + chunk_sec - lead_sec - (active_session_time() - feed_clock)
                         if wait > 0:
                             if cloud and _session_wait(stop, wait):
@@ -1236,6 +1237,20 @@ async def ws_endpoint(ws: WebSocket):
                 if stop.is_set():
                     return
                 phase = "recognition"
+                finalize = getattr(engine, "finalize", None)
+                if callable(finalize):
+                    # SDK shutdown waits for callbacks; deliver them while it waits.
+                    with ThreadPoolExecutor(max_workers=1) as finalizer:
+                        completion = finalizer.submit(call_provider, finalize)
+                        while not completion.done() and not stop.is_set():
+                            result = call_provider(engine.poll)
+                            if result[0] is not None:
+                                emit(result)
+                            else:
+                                _session_wait(stop, 0.02)
+                        completion.result()
+                if stop.is_set():
+                    return
                 o = call_provider(engine.finish)
                 if stop.is_set():
                     return

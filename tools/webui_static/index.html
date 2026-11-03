@@ -579,7 +579,8 @@
     const maxBoxWidth = Number.isFinite(percentMaxWidth) ? playerWidth * percentMaxWidth
       : Number.isFinite(pixelMaxWidth) ? Math.min(playerWidth, pixelMaxWidth) : playerWidth * .90;
     const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-    const maxWidth = Math.max(1, (maxBoxWidth - padding - border) * .97);
+    const fontSize = parseFloat(style.fontSize) || 30;
+    const maxWidth = Math.max(1, Math.min((maxBoxWidth - padding - border) * .97, fontSize * 24));
     return {maxWidth,
       measureText:CaptionLayout.createTextMeasurer(font, parseFloat(style.letterSpacing) || 0),
       maxLines:2, key:`${maxWidth}|${font}|${style.letterSpacing}|2`};
@@ -687,7 +688,19 @@
             flushClause();
         }
         flushClause();
-        if (result.length > 1) return rememberCaptionSegments(s, layout.key, result);
+        // Join tiny punctuation fragments to adjacent speech, never extend them
+        // past the source interval or carry them over unrelated speech.
+        for (let i = 0; i < result.length && result.length > 1; i++) {
+          if (result[i].end - result[i].beg >= .6) continue;
+          const first = i + 1 < result.length ? i : i - 1;
+          const left = result[first], right = result[first + 1];
+          if (right.beg - left.end > .15 || right.end - left.beg > 6) continue;
+          const merged = CaptionLayout.paginateText(`${left.text} ${right.text}`, layout);
+          if (merged.length !== 1) continue;
+          result.splice(first, 2, {beg:left.beg, end:right.end, text:merged[0].text});
+          i = Math.max(-1, first - 1);
+        }
+        return rememberCaptionSegments(s, layout.key, result);
       }
     }
 

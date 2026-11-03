@@ -132,3 +132,21 @@ def test_aliyun_preserves_empty_final_revision_for_caption_withdrawal(monkeypatc
         start_time=1.0, end_time=2.0, text="", words=None, is_final=True, sentence_id=7)])
     assert engine.poll() == (1.0, 2.0, "", None, True, 7)
     engine.close()
+
+
+def test_finalize_closes_input_once_without_consuming_pending_captions(monkeypatch):
+    from engines import create_engine
+
+    FakeClient = _patch_deps(monkeypatch)
+    engine = create_engine('aliyun-funasr', api_key='test-private-key')
+    client = FakeClient.instances[-1]
+    stops = []
+    client.stop = lambda: stops.append(True)
+    client.subtitle_buffer = deque([types.SimpleNamespace(
+        text='This result is already ready.', start_time=0, end_time=2,
+        words=None, is_final=True, sentence_id=1)])
+    engine.finalize()
+    assert len(client.subtitle_buffer) == 1
+    assert engine.finish()[2] == 'This result is already ready.'
+    assert stops == [True]
+    engine.close()
