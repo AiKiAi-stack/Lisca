@@ -1,0 +1,27 @@
+{
+  "sources": [
+    {
+      "language": "zh",
+      "title": "20260925 公視晚間新聞 完整版（無網路版權內容除外）｜中秋連假首日東琉線湧人潮 國1、國3多路段壅塞",
+      "channel": "公視新聞網",
+      "source_url": "https://www.youtube.com/watch?v=gnF2NFYjRPE",
+      "duration_seconds": 3127.031293,
+      "sha256": "4927686198cea2060679b988d56c502a30ff8bba7c546089d767e7f7a119372c",
+      "local_file": "/media/wbb/KEKE/StreamASRTestMedia/20261103/zh/gnF2NFYjRPE.mp4",
+      "download_origin": "YouTube"
+    },
+    {
+      "language": "en",
+      "title": "PBS News Hour full episode, Sept. 25, 2025",
+      "channel": "PBS NewsHour",
+      "source_url": "https://www.youtube.com/watch?v=TSM3yOPmscI",
+      "duration_seconds": 3405.067029,
+      "sha256": "096f665ff5454129c7a1ecefb9f7abda6da3079a6ed03ae22c3025c0456e6b56",
+      "local_file": "/media/wbb/KEKE/StreamASRTestMedia/20261103/en/pbs-newshour-TSM3yOPmscI.mp4",
+      "download_origin": "YouTube"
+    }
+  ],
+  "media_in_git": false,
+  "simulated_media_only": true,
+  "recognition": "real cloud ASR when explicitly started"
+}
