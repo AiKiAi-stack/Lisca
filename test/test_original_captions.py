@@ -1153,6 +1153,41 @@ def test_provider_results_are_delivered_while_finalization_is_still_waiting(tmp_
         release.set()
 
 
+def test_stable_preview_preserves_only_its_clause_word_times(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    words = [(0.2, 1.5, 'Hello'), (1.6, 2.0, 'there.'),
+             (3.0, 4.5, 'Next'), (4.6, 5.0, 'sentence.')]
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self): yield b'\x00\x10' * 1600
+        def close(self): pass
+
+    class Engine:
+        def __init__(self):
+            self.results = iter([(0., 5., 'Hello there. Next sentence.', words, False, 1)] * 2)
+        def transcribe_chunk(self, _audio): return next(self.results)
+        def poll(self): return next(self.results, (None, None, '', None))
+        def finish(self): return (None, None, '', None)
+        def close(self): pass
+
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put('/api/cloud', json={'api_key':'test-private-key'})
+        token = client.post('/api/cloud/sessions', json={'url':'https://media.test/live.m3u8'}).json()['session']
+        with client.websocket_connect('/ws?session=' + token) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event['type'] == 'end': break
+    previews = [event for event in events if event['type'] == 'preview']
+    assert [event['text'] for event in previews] == ['Hello there.', 'Next sentence.']
+    assert [event.get('words') for event in previews] == [[list(w) for w in words[:2]], [list(w) for w in words[2:]]]
+
+
 def test_live_buffered_audio_keeps_a_bounded_two_second_lead(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
     monkeypatch.setattr(webui, '_CLOUD_JOBS', {})

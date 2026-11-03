@@ -573,3 +573,15 @@ def test_share_proxy_rejects_media_not_registered_to_the_session(monkeypatch):
         )
         assert response.status_code == 404
         assert host.post(f"/share/stop/{share['token']}").status_code == 200
+
+
+def test_local_viewer_can_watch_when_no_lan_ipv4_address_is_available(monkeypatch):
+    monkeypatch.setattr(webui, '_lan_ipv4_candidates', lambda: [])
+    monkeypatch.setattr(webui, '_SHARES', {})
+    with TestClient(webui.app) as client:
+        response = client.post('/share/start', json={'url':SOURCE_URL})
+        assert response.status_code == 200, response.text
+        share = response.json()
+        assert share['url'].startswith('http://127.0.0.1:')
+        assert client.get('/share/' + share['token']).status_code == 200
+        assert client.post('/share/stop/' + share['token']).json() == {'ok':True}

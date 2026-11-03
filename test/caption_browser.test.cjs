@@ -324,6 +324,22 @@ test('preview messages use the same timed two-line pagination as final captions'
  assert.deepEqual(Array.from(segments.flatMap(segment=>segment.text.match(/[\p{Script=Latin}\p{N}]+(?:[-’'][\p{Script=Latin}\p{N}]+)*/gu)||[])),
   Array.from(text.match(/[\p{Script=Latin}\p{N}]+(?:[-’'][\p{Script=Latin}\p{N}]+)*/gu)||[]));
 });
+test('stable previews paginate with speech word times rather than text-length timing',()=>{
+ const b=browser({playerWidth:288,fontSize:30}),c=b.context;
+ const tokens='This first phrase is spoken slowly while the remaining words are spoken much faster without losing their timing.'.split(' ');
+ const words=tokens.map((token,index)=>index<4
+   ? [index*2,index*2+1.8,token] : [8+(index-4)*.2,8+(index-3)*.2,token]);
+ const cue={sentence_id:'timed-preview',beg:0,end:words.at(-1)[1],text:tokens.join(' '),words};
+ const expected=c.captionSegments(cue);
+ b.preview(cue);
+ const actual=c.captionSegments(c.previewSubs[0]);
+ assert.deepEqual(Array.from(actual,s=>[s.beg,s.end,s.text]),Array.from(expected,s=>[s.beg,s.end,s.text]));
+ assert.equal(actual[0].end,7.8);
+ for(const segment of actual){
+   c.player.currentTime=(segment.beg+segment.end)/2;b.tick(0);
+   assert.equal(b.current.textContent,segment.text);
+ }
+});
 test('word-timed original pages retain quotes, punctuation, and symbols outside ASR tokens',()=>{
  const b=browser({playerWidth:260,fontSize:30});
  const text='“One very long sentence reached 100% on Friday, then every durable filter passed.”';

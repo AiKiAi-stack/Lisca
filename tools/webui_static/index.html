@@ -1031,7 +1031,7 @@
 
   function onPreview(msg) {
     if (!msg.text || !Number.isFinite(msg.beg) || !Number.isFinite(msg.end)) return;
-    previewSubs.push({beg:msg.beg, end:msg.end, text:msg.text,
+    previewSubs.push({beg:msg.beg, end:msg.end, text:msg.text, words:msg.words,
       sentenceId:msg.sentence_id});
     if (previewSubs.length > 200) previewSubs.shift();
     syncSubtitle();

@@ -288,11 +288,7 @@ async def start_share(request: Request):
         share.video_id = share.register_media(url, "video")
         share.audio_id = share.register_media(url, "audio")
         _SHARES[share.token] = share
-    addresses = _lan_ipv4_candidates()
-    if not addresses:
-        with _SHARE_LOCK:
-            _SHARES.pop(share.token, None)
-        raise HTTPException(status_code=500, detail="无法确定本机局域网 IPv4 地址")
+    addresses = _lan_ipv4_candidates() or ["127.0.0.1"]
     port = request.url.port or 8002
     urls = [f"http://{ip}:{port}/share/{share.token}" for ip in addresses]
     return {"token": share.token, "url": urls[0], "urls": urls,
@@ -1024,6 +1020,11 @@ async def ws_endpoint(ws: WebSocket):
                         caption_seen = True
                         put({"type": "preview", "beg": clause_beg + timeline_offset,
                              "end": clause_end + timeline_offset, "text": clause_text,
+                             "words": [(word_beg + timeline_offset, word_end + timeline_offset, token)
+                                       for word_beg, word_end, token in words or []
+                                       if isinstance(word_beg, (int, float))
+                                       and isinstance(word_end, (int, float))
+                                       and word_beg >= clause_beg and word_end <= clause_end],
                              "sentence_id": sentence_id})
                 shifted_words = None
                 if words:
