@@ -1188,7 +1188,7 @@ def test_stable_preview_preserves_only_its_clause_word_times(tmp_path, monkeypat
     assert [event.get('words') for event in previews] == [[list(w) for w in words[:2]], [list(w) for w in words[2:]]]
 
 
-def test_live_buffered_audio_keeps_a_bounded_two_second_lead(tmp_path, monkeypatch):
+def test_live_buffered_audio_keeps_a_bounded_six_second_lead(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
     monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
     clock = [0.0]
@@ -1221,4 +1221,4 @@ def test_live_buffered_audio_keeps_a_bounded_two_second_lead(tmp_path, monkeypat
         with client.websocket_connect('/ws?session=' + token) as socket:
             while socket.receive_json()['type'] != 'end': pass
     assert len(lead) == 120
-    assert max(lead) <= 2.0 + 1e-6, 'buffered HLS must not flood the ten-second ASR input queue'
+    assert max(lead) <= 6.0 + 1e-6, 'buffered HLS must not flood the ten-second ASR input queue'

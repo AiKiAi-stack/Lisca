@@ -340,6 +340,35 @@ test('stable previews paginate with speech word times rather than text-length ti
    assert.equal(b.current.textContent,segment.text);
  }
 });
+test('a final revision does not replace an already visible preview for its last 100ms',()=>{
+ const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
+ c.player.currentTime=.5;
+ b.preview({sentence_id:7,beg:0,end:3,text:'We are ready.',words:[[0,1,'We'],[1,2,'are'],[2,3,'ready.']]});
+ assert.equal(b.current.textContent,'We are ready.');
+ c.player.currentTime=2.9;
+ b.push({translated:false,sentence_id:7,beg:0,end:5,text:'We are already ready. Next words.',
+  words:[[0,1,'We'],[1,1.5,'are'],[1.5,2.5,'already'],[2.5,3,'ready.'],[3,3.5,'Next'],[3.5,5,'words.']]});
+ assert.equal(b.current.textContent,'We are ready.');
+ c.player.currentTime=3.1;b.tick(0);
+ assert.equal(b.current.textContent,'Next words.');
+});
+test('withdrawing or replacing a preview clears its held page immediately',()=>{
+ const b=browser(),c=b.context;c.player.currentTime=1;
+ b.preview({sentence_id:7,beg:0,end:3,text:'The old preview.'});
+ assert.ok(b.current.textContent);
+ c.previewSubs=[];c.subs=[];b.tick(0);
+ assert.equal(b.current.textContent,'');
+ b.preview({sentence_id:7,beg:0,end:3,text:'The new source.'});
+ assert.equal(b.current.textContent,'The new\nsource.');
+});
+test('a preview retired by a final cannot reappear after a seek or outlast its revised interval',()=>{
+ const b=browser(),c=b.context;c.player.currentTime=.5;
+ b.preview({sentence_id:1,beg:0,end:2,text:'Old incorrect preview.'});
+ b.push({translated:false,sentence_id:1,beg:0,end:1,text:'Correct final.'});
+ c.player.currentTime=1.5;b.tick(0);assert.equal(b.current.textContent,'');
+ c.player.currentTime=2.1;b.tick(0);
+ c.player.currentTime=1.5;b.tick(0);assert.equal(b.current.textContent,'');
+});
 test('word-timed original pages retain quotes, punctuation, and symbols outside ASR tokens',()=>{
  const b=browser({playerWidth:260,fontSize:30});
  const text='“One very long sentence reached 100% on Friday, then every durable filter passed.”';

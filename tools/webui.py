@@ -1099,6 +1099,7 @@ async def ws_endpoint(ws: WebSocket):
             phase = "media_open"
             src = StreamSource(real_url, **source_kwargs)
             timeline_offset = getattr(src, "timeline_offset_sec", 0.0)
+            source_reader = None
             try:
                 parsed_real_url = urlparse(real_url)
                 is_hls = parsed_real_url.path.lower().endswith(".m3u8")
@@ -1113,19 +1114,7 @@ async def ws_endpoint(ws: WebSocket):
                 if stop.is_set():
                     return
 
-                def decoded_chunks():
-                    nonlocal phase
-                    chunks = iter(src.iter_chunks())
-                    while True:
-                        phase = "media_preflight" if engine is None else "media_decode"
-                        try:
-                            chunk = next(chunks)
-                        except StopIteration:
-                            return
-                        phase = "media_ready"
-                        yield chunk
-
-                chunks = iter(decoded_chunks())
+                chunks = iter(src.iter_chunks())
                 phase = "media_preflight"
                 try:
                     first_chunk = next(chunks)
@@ -1161,7 +1150,71 @@ async def ws_endpoint(ws: WebSocket):
                 silence_run = 0.0
                 feed_clock = active_session_time()
                 playback_ceiling = timeline_offset
-                for chunk in chain((first_chunk,), chunks):
+
+                def publish_buffer():
+                    nonlocal playback_ceiling, ready_sent
+                    if not batch_mode and (not cloud or original_mode):
+                        # Keep the configured live delay as a floor. If ASR has an
+                        # unfinished sentence, hold before it; when final arrives,
+                        # resume at real time without jumping over buffered A/V.
+                        feed_target = timeline_offset + max(0.0, fed_sec - delay_sec)
+                        pending_target = min(
+                            (timeline_offset + item["preview"].emitted_end
+                             for item in pending_sentences),
+                            default=float("inf"),
+                        )
+                        playback_ceiling = max(playback_ceiling, min(feed_target, pending_target))
+                        put({"type": "buffer", "play_at": playback_ceiling,
+                             "local_silence_from": timeline_offset + fed_sec - silence_run
+                             if original_mode and silence_run >= 1.5 else None,
+                             "local_silence_through": timeline_offset + fed_sec
+                             if original_mode and silence_run >= 1.5 else None})
+                        if not ready_sent and (not original_mode or caption_seen or silence_run >= 1.5) and fed_sec >= delay_sec \
+                                and playback_ceiling >= timeline_offset + 0.25:
+                            put({"type": "ready", "delay": delay_sec,
+                                 "start_at": timeline_offset, "original": original_mode,
+                                 "buffered": True, "silent": not caption_seen})
+                            ready_sent = True
+
+                def decoded_chunks():
+                    nonlocal phase
+                    exhausted = object()
+                    while True:
+                        phase = "media_decode"
+                        chunk = next(chunks, exhausted)
+                        if chunk is exhausted:
+                            return
+                        yield chunk
+
+                def polled_chunks():
+                    nonlocal phase
+                    yield first_chunk
+                    exhausted = object()
+                    while not stop.is_set():
+                        # At most one read is pending; SDK calls stay on this worker.
+                        pending = source_reader.submit(next, chunks, exhausted)
+                        while not pending.done() and not stop.is_set():
+                            phase = "recognition"
+                            result = call_provider(engine.poll)
+                            if result[0] is not None:
+                                emit(result)
+                                publish_buffer()
+                            check_no_progress()
+                            stop.wait(0.02)
+                        if stop.is_set():
+                            return
+                        phase = "media_decode"
+                        chunk = pending.result()
+                        if chunk is exhausted:
+                            return
+                        yield chunk
+
+                if original_mode and is_live_hls:
+                    source_reader = ThreadPoolExecutor(max_workers=1, thread_name_prefix="audio-source")
+                    streaming_chunks = polled_chunks()
+                else:
+                    streaming_chunks = chain((first_chunk,), decoded_chunks())
+                for chunk in streaming_chunks:
                     phase = "recognition"
                     if stop.is_set():
                         break
@@ -1189,7 +1242,9 @@ async def ws_endpoint(ws: WebSocket):
                         # segment burst can overflow the ASR input queue at startup.
                         # One cumulative deadline lets delayed reads catch up without
                         # turning source or recognizer time into permanent feed lag.
-                        lead_sec = 2.0 if prefetch_local or (original_mode and is_live_hls) else 0.0
+                        # Stable live phrases need headroom while staying below
+                        # the existing ten-second recognizer input queue.
+                        lead_sec = 6.0 if original_mode and is_live_hls else 2.0 if prefetch_local else 0.0
                         wait = fed_sec + chunk_sec - lead_sec - (active_session_time() - feed_clock)
                         if wait > 0:
                             if cloud and _session_wait(stop, wait):
@@ -1213,28 +1268,7 @@ async def ws_endpoint(ws: WebSocket):
                     if original_mode and silence_run >= 1.5:
                         advance_progress(timeline_offset + fed_sec)
                     check_no_progress()
-                    if not batch_mode and (not cloud or original_mode):
-                        # Keep the configured live delay as a floor. If ASR has an
-                        # unfinished sentence, hold before it; when final arrives,
-                        # resume at real time without jumping over buffered A/V.
-                        feed_target = timeline_offset + max(0.0, fed_sec - delay_sec)
-                        pending_target = min(
-                            (timeline_offset + item["preview"].emitted_end
-                             for item in pending_sentences),
-                            default=float("inf"),
-                        )
-                        playback_ceiling = max(playback_ceiling, min(feed_target, pending_target))
-                        put({"type": "buffer", "play_at": playback_ceiling,
-                             "local_silence_from": timeline_offset + fed_sec - silence_run
-                             if original_mode and silence_run >= 1.5 else None,
-                             "local_silence_through": timeline_offset + fed_sec
-                             if original_mode and silence_run >= 1.5 else None})
-                        if not ready_sent and (not original_mode or caption_seen or silence_run >= 1.5) and fed_sec >= delay_sec \
-                                and playback_ceiling >= timeline_offset + 0.25:
-                            put({"type": "ready", "delay": delay_sec,
-                                 "start_at": timeline_offset, "original": original_mode,
-                                 "buffered": True, "silent": not caption_seen})
-                            ready_sent = True
+                    publish_buffer()
                 if stop.is_set():
                     return
                 phase = "recognition"
@@ -1274,7 +1308,20 @@ async def ws_endpoint(ws: WebSocket):
                          "prepared": prefetch_local})
                     ready_sent = True
             finally:
-                src.close()
+                if source_reader is None:
+                    src.close()
+                else:
+                    try:
+                        interrupt = getattr(src, "interrupt", None)
+                        if callable(interrupt):
+                            interrupt()
+                    finally:
+                        # PyAV decode and container.close must never run concurrently.
+                        closing = source_reader.submit(src.close)
+                        try:
+                            closing.result()
+                        finally:
+                            source_reader.shutdown(wait=True)
         except Exception as exc:  # noqa: BLE001 - 用户可见错误信息
             if stop.is_set():
                 return

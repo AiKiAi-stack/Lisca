@@ -751,6 +751,17 @@
       currentEl.textContent = '正在准备字幕…';
       return;
     }
+    const displayed = currentEl.originalPage;
+    if (displayed) {
+      if (previewSubs.includes(displayed.source) && !player.seeking && !seekPending
+          && t >= displayed.beg && t < displayed.end && t >= displayed.at - .15
+          && displayed.layoutKey === captionLayoutOptions().key) {
+        currentEl.textContent = displayed.text;
+        displayed.at = t;
+        return;
+      }
+      currentEl.originalPage = null;
+    }
     // 按识别句真实时间范围显示整句：句子开始时出现，结束时自然消失。
     const sortedSubs = [...subs].sort((a, b) => a.beg - b.beg);
     const nextBegBySubtitle = new Map();
@@ -790,9 +801,9 @@
         && s.captionBeg <= t && s.captionEnd > t && s.text.trim())
         .sort((a, b) => a.captionBeg - b.captionBeg);
     if (!candidates.length) {
-      candidates = previewSubs.filter(s => s.beg <= t && s.end > t)
+      candidates = previewSubs.filter(s => !s.retired && s.beg <= t && s.end > t)
         .flatMap((s, index) => captionSegments(s).map((segment, segmentIndex) => ({
-          ...s, text:segment.text,
+          ...s, text:segment.text, previewSource:s,
           sourceId:`preview-${s.sentenceId ?? index}`, segmentIndex,
           captionBeg:Number.isFinite(segment.beg) ? segment.beg : s.beg,
           captionEnd:Number.isFinite(segment.end) ? segment.end : s.end,
@@ -823,6 +834,11 @@
       const sourceText = [...new Set(candidates.map(c => c.sourceText).filter(Boolean))].join(' ');
       if (sourceText) currentEl.textContent = sourceText + '\n' + currentEl.textContent;
     }
+    const preview = candidates.length === 1 ? candidates[0] : null;
+    currentEl.originalPage = preview?.previewSource ? {
+      source:preview.previewSource, beg:preview.captionBeg, end:preview.captionEnd,
+      text:currentEl.textContent, at:t, layoutKey:captionLayoutOptions().key,
+    } : null;
     return;
   }
 
@@ -1021,9 +1037,22 @@
       logEvent('sub', `beg=${msg.beg.toFixed(1)} ${msg.text.slice(0, 24)}`);
     }
     if (msg.is_final !== false) {
-      previewSubs = previewSubs.filter(s => msg.sentence_id != null && s.sentenceId != null
-        ? s.sentenceId !== msg.sentence_id
-        : s.end < msg.beg || (Number.isFinite(msg.end) && s.beg > msg.end));
+      const displayed = currentEl.originalPage;
+      previewSubs = previewSubs.filter(s => {
+        const replaced = msg.sentence_id != null && s.sentenceId != null
+          ? s.sentenceId === msg.sentence_id
+          : !(s.end < msg.beg || (Number.isFinite(msg.end) && s.beg > msg.end));
+        if (!replaced) return true;
+        if (displayed?.source === s) {
+          displayed.beg = Math.max(displayed.beg, msg.beg);
+          if (Number.isFinite(msg.end)) displayed.end = Math.min(displayed.end, msg.end);
+          if (displayed.beg <= player.currentTime && player.currentTime < displayed.end) {
+            s.retired = true;
+            return true;
+          }
+        }
+        return false;
+      });
     }
     syncSubtitle();
     return true;
