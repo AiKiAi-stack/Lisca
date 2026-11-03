@@ -49,6 +49,8 @@ cd /home/wbb/.local/share/stream-with-asr/checkouts/p0-live-source
 
 完整 CI 首轮发现四个既有恢复回归失败：创建音频迭代器时抛出的首次解码异常被归为“无法打开来源”。将 `media_preflight` 阶段设置移到迭代器创建之前后，本地全部 33 个恢复回归通过。原失败日志保留；该后续修正只恢复异常分类，三分钟实测的成功路径没有重新收费运行。
 
+随后完整 Python 回归为 **539 passed / 1 skipped**，`82db3e7` 的远端 **9/9 CI 通过**。对上述两例录制事件继续回放，定位到预览结束后终稿重新显示已读整页，剩余仅约 0.4/0.48 秒。最后前端修正让终稿沿用稳定词组边界，英文边界后仅显示 `table.`，中文仅显示 `阶段。`；原词区间、全文和完整拼写保持，当前已读文字不重复。新增回归先红后绿，全部 Node **116 项通过**。这一步只用同一批真实事件离线回放，未追加付费识别；原实测短闪/空白数字保留为修正前的观察，新精确提交 CI 单独核对。
+
 ## 原始证据
 
 本机目录 `/home/wbb/.local/share/stream-with-asr/notes/local-live-20261103/` 保存 `baseline-01`、`en-before`、`en-after`、`en-final`、`zh-final`，每例包括真实事件、50ms 采样、固定间隔截图和浏览器音频。`news-final-service.json` 记录运行文件 SHA256，`attempt-ledger.md` 保留原失败、假设与最后一次组合决策。

@@ -352,6 +352,44 @@ test('a final revision does not replace an already visible preview for its last 
  c.player.currentTime=3.1;b.tick(0);
  assert.equal(b.current.textContent,'Next words.');
 });
+test('real final handoffs keep only table and 阶段 after their held previews',()=>{
+ const fixtures=[{
+  offset:10.010023611111137,cut:171.57,end:171.97,
+  preview:'that gets to this idea of riffs being on the',
+  previewWords:[[169.13,169.29,'that'],[169.29,169.53,' gets'],[169.53,169.77,' to'],[169.77,170.05,' this'],[170.05,170.33,' idea'],[170.33,170.65,' of'],[170.77,171.01,' riffs'],[171.01,171.25,' being'],[171.25,171.41,' on'],[171.41,171.57,' the']],
+  final:'Federal employees are not bargaining chips and that gets to this idea of rifts being on the table.',
+  words:[[166.73,167.01,'Federal'],[167.01,167.49,' employees'],[167.49,167.73,' are'],[167.73,168.37,' not'],[168.37,168.73,' bargaining'],[168.73,168.97,' chips'],[168.97,169.13,' and'],[169.13,169.29,' that'],[169.29,169.53,' gets'],[169.53,169.77,' to'],[169.77,170.05,' this'],[170.05,170.33,' idea'],[170.33,170.65,' of'],[170.65,170.95,' rift'],[170.95,171.01,'s'],[171.01,171.25,' being'],[171.25,171.41,' on'],[171.41,171.57,' the'],[171.57,171.97,' table']],remaining:'table.'
+ },{
+  offset:9.993347222222212,cut:67.61,end:68.09,
+  preview:'并在明年度进入实质产制',
+  previewWords:[[65.37,65.53,'并'],[65.53,65.69,'在'],[65.69,65.81,'明'],[65.81,66.33,'年度'],[66.33,66.77,'进入'],[66.77,67.21,'实质'],[67.21,67.41,'产'],[67.41,67.61,'制']],
+  final:'十九万，并，并在明年度进入实值产质阶段。',
+  words:[[64.57,64.93,'十九'],[64.93,65.17,'万'],[65.37,65.53,'并'],[65.61,65.65,'并'],[65.65,65.69,'在'],[65.69,65.81,'明'],[65.81,66.33,'年度'],[66.33,66.77,'进入'],[66.77,67.01,'实'],[67.01,67.21,'值'],[67.21,67.41,'产'],[67.41,67.61,'质'],[67.61,68.09,'阶段']],remaining:'阶段。'
+ }];
+ for(const f of fixtures){
+  const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
+  const shifted=words=>words.map(([beg,end,text])=>[beg+f.offset,end+f.offset,text]);
+  c.player.currentTime=f.cut+f.offset-.1;
+  b.preview({sentence_id:7,beg:f.previewWords[0][0]+f.offset,end:f.cut+f.offset,text:f.preview,words:shifted(f.previewWords)});
+  assert.equal(b.current.textContent.replace(/\s+/gu,' '),f.preview);
+  const displayed=b.current.textContent;
+  b.push({translated:false,sentence_id:7,beg:f.words[0][0]+f.offset,end:f.end+f.offset,text:f.final,words:shifted(f.words)});
+  assert.equal(b.current.textContent,displayed);
+  c.player.currentTime=f.cut+f.offset+.01;b.tick(0);
+  assert.equal(b.current.textContent,f.remaining);
+  const pages=c.captionSegments(c.subs[0]);
+  assert.equal(pages.map(p=>p.text).join('').replace(/\s/gu,''),f.final.replace(/\s/gu,''));
+  assert.equal(pages.at(-1).beg,f.cut+f.offset);assert.equal(pages.at(-1).end,f.end+f.offset);
+ }
+});
+test('learned preview cuts invalidate cached final pages and preserve complete spellings',()=>{
+ const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
+ const cue={beg:0,end:4,text:'They hear whistles again.',words:[[0,1,'They'],[1,2,' hear'],[2,2.4,' wh'],[2.4,3,'istles'],[3,4,' again']]};
+ const original=c.captionSegments(cue);cue.previewBreaks=[2.4];
+ const split=c.captionSegments(cue);
+ assert.notStrictEqual(split,original);
+ assert.deepEqual(Array.from(split,p=>p.text),['They hear','whistles again.']);
+});
 test('withdrawing or replacing a preview clears its held page immediately',()=>{
  const b=browser(),c=b.context;c.player.currentTime=1;
  b.preview({sentence_id:7,beg:0,end:3,text:'The old preview.'});
