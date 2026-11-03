@@ -47,6 +47,8 @@ cd /home/wbb/.local/share/stream-with-asr/checkouts/p0-live-source
 
 最终组合相关 Python 82 项、Node 114 项及全仓错误级 Pylint 通过；另有来源相关 121 项检查通过（含重叠）。GitHub 精确提交 CI 单独核对。
 
+完整 CI 首轮发现四个既有恢复回归失败：创建音频迭代器时抛出的首次解码异常被归为“无法打开来源”。将 `media_preflight` 阶段设置移到迭代器创建之前后，本地全部 33 个恢复回归通过。原失败日志保留；该后续修正只恢复异常分类，三分钟实测的成功路径没有重新收费运行。
+
 ## 原始证据
 
 本机目录 `/home/wbb/.local/share/stream-with-asr/notes/local-live-20261103/` 保存 `baseline-01`、`en-before`、`en-after`、`en-final`、`zh-final`，每例包括真实事件、50ms 采样、固定间隔截图和浏览器音频。`news-final-service.json` 记录运行文件 SHA256，`attempt-ledger.md` 保留原失败、假设与最后一次组合决策。

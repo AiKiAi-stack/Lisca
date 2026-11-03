@@ -1114,8 +1114,8 @@ async def ws_endpoint(ws: WebSocket):
                 if stop.is_set():
                     return
 
-                chunks = iter(src.iter_chunks())
                 phase = "media_preflight"
+                chunks = iter(src.iter_chunks())
                 try:
                     first_chunk = next(chunks)
                 except StopIteration:
