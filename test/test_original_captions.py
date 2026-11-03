@@ -501,7 +501,7 @@ def test_local_audio_is_bounded_ahead_of_the_realtime_recognizer(tmp_path, monke
     assert sent[-1]-sent[0] >= .85, 'three seconds of audio must not be sent in one burst'
 
 
-def test_live_pacing_catches_up_after_segment_read_delays(tmp_path, monkeypatch):
+def test_live_hls_buffer_is_not_throttled_again_after_segment_reads(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
     monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
     clock = [0.0]
@@ -554,9 +554,9 @@ def test_live_pacing_catches_up_after_segment_read_delays(tmp_path, monkeypatch)
                 pass
 
     assert len(sent_at) == 30
-    assert sent_at[:10] == pytest.approx([index / 10 for index in range(1, 11)])
-    assert sent_at[10:20] == pytest.approx([3.0] * 10)
-    assert sent_at[20:] == pytest.approx([5.0] * 10)
+    assert sent_at[:10] == pytest.approx([0.0] * 10), "buffered live audio must reach ASR before playback overtakes it"
+    assert sent_at[10:20] == pytest.approx([2.0] * 10)
+    assert sent_at[20:] == pytest.approx([4.0] * 10)
 
 
 def test_live_pacing_excludes_user_pause_and_stop_drops_unsent_audio(tmp_path, monkeypatch):
@@ -663,7 +663,7 @@ def test_live_pacing_excludes_user_pause_and_stop_drops_unsent_audio(tmp_path, m
         release_third.set()
 
     assert len(sent_at) == 2
-    assert sent_at[1] - sent_at[0] == pytest.approx(10.1)
+    assert sent_at[1] - sent_at[0] == pytest.approx(10.0)
     assert events[-1] == {'type': 'end', 'reason': 'cancelled'}
 
 

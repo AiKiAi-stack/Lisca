@@ -761,3 +761,21 @@ test('late first ready never rewinds an already playing live source, but initial
   assert.equal(c.playStarted,true);
  }
 });
+
+test('draft history cannot claim visible caption coverage or announce ready',()=>{
+ const {context:c}=shareHistoryViewer();
+ c.originalCaptionMode=true;c.sharedViewerActive=false;c.playStarted=true;c.activeInput='live.m3u8';
+ const covered=[];c.playbackGuard.captionProgress=(...args)=>covered.push(args);
+ c.receiveMessage({type:'subtitle',sentence_id:900,revision:1,beg:0,end:4,
+   is_final:false,text:'An unfinished hypothesis'});
+ assert.equal(covered.length,0);
+ assert.equal(c.captionHasSpeech,false);
+ assert.equal(c.currentEl.textContent,'');
+ c.receiveMessage({type:'preview',sentence_id:900,beg:0,end:2,text:'A stable clause,'});
+ assert.equal(covered.length,1);
+ assert.equal(c.captionHasSpeech,true);
+ assert.match(c.currentEl.textContent,/stable clause/);
+ c.receiveMessage({type:'subtitle',sentence_id:900,revision:2,beg:0,end:4,
+   is_final:true,text:'A stable clause, with its ending.'});
+ assert.equal(covered.length,2);
+});

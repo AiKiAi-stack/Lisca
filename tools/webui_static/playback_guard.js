@@ -74,7 +74,7 @@
         this.recoveryCandidate = null;
         this.externalPauseAt = null;
       }
-      if (!ready || !this.live) {
+      if (!this.live) {
         if (now - this.lastProgress >= 15000) {
           this.failed = true;
           return 'timeout';

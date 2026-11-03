@@ -1181,9 +1181,10 @@ async def ws_endpoint(ws: WebSocket):
                         break
                     # Pace by the actual PCM duration (including a short tail).
                     chunk_sec = len(chunk) / (16000 * 2)
-                    if not batch_mode:
+                    if not batch_mode and not (original_mode and is_live_hls):
                         # Keep local files at most two seconds ahead so playback
-                        # can start before EOF; live streams have no lead allowance.
+                        # can start before EOF. Live HLS is paced by its source:
+                        # throttling buffered segments again leaves ASR behind playback.
                         # One cumulative deadline lets delayed reads catch up without
                         # turning source or recognizer time into permanent feed lag.
                         lead_sec = 2.0 if prefetch_local else 0.0

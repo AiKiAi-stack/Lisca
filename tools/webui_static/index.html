@@ -9,10 +9,12 @@
 <body>
 <header>
  <div class="brand-row"><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>原文字幕</h1><small>识别声音，保留原话</small></div></div><button id="settingsBtn" class="quiet"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 3-1 3-3 1-3 3 2 2-1 4 3 3 3-1 2 3 4-1 1-3 3-1 1-4-3-2 1-3-3-3-3 1z"/></svg>设置</button></div>
- <div class="source-row"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或打开本地视频" autocomplete="off"><button id="uploadBtn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM3 7V4h6l3 3"/></svg>打开文件</button><span id="modeBadge" class="mode-badge">原文字幕 · 自动识别</span><button id="start" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>生成字幕</button><button id="stop">停止识别</button></div>
+ <h2 class="step-title">1. 选择内容</h2>
+ <div class="source-row"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或打开本地视频" autocomplete="off"><button id="uploadBtn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM3 7V4h6l3 3"/></svg>打开文件</button><button id="chBtn">选择频道</button></div>
  <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
 </header>
 <main>
+ <div class="watch-row"><h2 class="step-title">2. 播放与字幕</h2><span id="selectionStatus" role="status">尚未选择内容</span><span id="modeBadge" class="mode-badge">原文字幕 · 自动识别</span><button id="start" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>播放并生成字幕</button><button id="stop">停止识别</button></div>
  <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开内容，生成原文字幕</h2><p>中文语音出中文字幕，英文语音出英文字幕</p></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
  <div class="player-footer"><div><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div id="shareHistoryNotice" role="status" hidden></div><div id="sourceBufferStatus" role="status" hidden></div></div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关原文字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
  <div id="captionActions" hidden><button id="retryCaptions">重试字幕</button><button id="playOnly">仅播放（停止识别）</button></div>
@@ -59,9 +61,9 @@
     <option value="1">音视频延迟 1s</option>
     <option value="5">音视频延迟 5s</option>
   </select>
-<div><button id="chBtn">频道列表</button><button id="logBtn">诊断日志</button></div><div><button id="shareCopy">复制观众链接</button><select id="shareAddress" aria-label="观众设备所在局域网" hidden></select><p class="help">开始播放后，可将只读链接分享给同一局域网内的设备。</p></div></section></div></dialog>
+<div><button id="logBtn">诊断日志</button></div><div><button id="shareCopy">复制观众链接</button><select id="shareAddress" aria-label="观众设备所在局域网" hidden></select><p class="help">开始播放后，可将只读链接分享给同一局域网内的设备。</p></div></section></div></dialog>
 <dialog id="historyDialog" aria-labelledby="historyDialogTitle"><div class="dialog-head"><h2 id="historyDialogTitle">字幕记录</h2><button class="quiet" data-close="historyDialog" aria-label="关闭字幕记录">关闭</button></div><div class="dialog-body"><div id="history"></div></div></dialog>
-<dialog id="channelsDialog" aria-labelledby="channelsDialogTitle"><div class="dialog-head"><h2 id="channelsDialogTitle">频道列表</h2><button class="quiet" data-close="channelsDialog" aria-label="关闭频道列表">关闭</button></div><div class="dialog-body"><p class="help">在顶部输入 M3U 频道列表地址，再加载频道。</p><button id="loadChannelsBtn">加载输入的频道列表</button>  <div id="chPanel">
+<dialog id="channelsDialog" aria-labelledby="channelsDialogTitle"><div class="dialog-head"><h2 id="channelsDialogTitle">频道列表</h2><button class="quiet" data-close="channelsDialog" aria-label="关闭频道列表">关闭</button></div><div class="dialog-body"><label for="channelListUrl">M3U 频道列表地址</label><div class="source-row"><input id="channelListUrl" type="url" placeholder="https://…/channels.m3u"><button id="loadChannelsBtn">加载频道</button></div><p id="channelStatus" role="status"></p>  <div id="chPanel">
     <div class="ch-head">
       <span id="chInfo">未加载频道列表</span>
       <button id="chProbeBtn" title="批量检测所有频道的连通性与延迟（手动触发，并发 20，逐条显示）">🔍 批量检测</button>
@@ -364,6 +366,8 @@
   let loadedChannelListUrl = '';
 
   async function loadChannels(m3uUrl) {
+    const channelStatus = document.getElementById('channelStatus');
+    channelStatus.textContent = '加载频道列表…';
     setStatus('加载频道列表…');
     logEvent('channels_load', m3uUrl.slice(0, 100));
     channels = [];
@@ -379,15 +383,18 @@
       }
       channels = await resp.json();
     } catch (e) {
-      setStatus('频道列表加载失败: ' + e, true);
+      channelStatus.textContent = '频道列表加载失败：' + e.message;
+      setStatus(channelStatus.textContent, true);
       return;
     }
-    if (!channels.length) { setStatus('频道列表为空（源可能失效）', true); return; }
+    if (!channels.length) { channelStatus.textContent = '频道列表为空（源可能失效）'; setStatus(channelStatus.textContent, true); return; }
     loadedChannelListUrl = m3uUrl;
+    document.getElementById('channelListUrl').value = m3uUrl;
+    channelStatus.textContent = `共 ${channels.length} 个频道，选择后再开始播放`;
     renderChannels();
     chPanel.hidden = false;
     openDialog('channelsDialog');
-    setStatus(`频道列表 ${channels.length} 个，点击频道开始观看`);
+    setStatus(`频道列表 ${channels.length} 个，选择后再开始播放`);
   }
 
   function renderChannels() {
@@ -409,7 +416,7 @@
         row.className = 'ch-row';
         const status = document.createElement('span');
         status.className = 'ch-status';
-        const name = document.createElement('span');
+        const name = document.createElement('button');
         name.className = 'ch-name';
         name.textContent = ch.name;
         name.title = ch.url;
@@ -420,12 +427,15 @@
         row.appendChild(status);
         row.appendChild(name);
         row.appendChild(btn);
-        row.onclick = () => {
+        row.onclick = async () => {
+          if (activeInput) await stopBtn.onclick();
           urlEl.value = ch.url;
           for (const [, r] of chRows) r.row.classList.remove('active');
           row.classList.add('active');
           document.getElementById('channelsDialog').close();
-          connect(ch.url);
+          document.getElementById('selectionStatus').textContent = ch.name;
+          setStatus(`已选择 ${ch.name}，点击“播放并生成字幕”开始观看`);
+          startBtn.focus();
           logEvent('channel_pick', ch.name);
         };
         chList.appendChild(row);
@@ -475,21 +485,14 @@
     for (let k = 0; k < Math.min(20, total); k++) run();
   };
   chBtn.onclick = async () => {
-    if (!chPanel.hidden) { chPanel.hidden = true; return; }
+    openDialog('channelsDialog');
+    chPanel.hidden = !channels.length;
     const u = urlEl.value.trim();
-    // Selecting a channel replaces the playback input with its stream URL.
-    // Reopen the original IPTV list instead of parsing that stream's segments.
-    if (channels.length && (u === loadedChannelListUrl || channels.some(ch => ch.url === u))) {
-      chPanel.hidden = false;
-      setStatus(`频道列表 ${channels.length} 个，点击频道开始观看`);
-      return;
+    if (channels.length && (u === loadedChannelListUrl || channels.some(ch => ch.url === u))) return;
+    if (/\.m3u8?(?:$|[?#])/i.test(u)) {
+      document.getElementById('channelListUrl').value = u;
+      await loadChannels(u);
     }
-    if (!/\.m3u8?(?:$|[?#])/i.test(u)) {
-      chPanel.hidden = true;
-      setStatus('请先在输入框粘贴 .m3u 或 .m3u8 频道列表地址', true);
-      return;
-    }
-    await loadChannels(u);
   };
 
   // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 损坏时视频无声卡死
@@ -1110,8 +1113,7 @@
       : ((typeof forceUrl === 'string' && forceUrl) || urlEl.value).trim();
     if (!url) { setStatus('请输入流地址', true); return; }
     activeInput = url;
-    cloudPlayback = !sharedViewerActive && engineEl.value === 'aliyun-funasr';
-    originalCaptionMode = cloudPlayback;
+    if (!preserveLiveMedia) cloudPlayback = false;
     if (!preserveLiveMedia)
       playbackGuard.reset({now:performance.now(),live:/\.m3u8/i.test(url) && /^https?:/i.test(url)});
     pendingStartAt = startAt > 0 ? startAt : null;
@@ -1130,6 +1132,8 @@
         }
       } catch (error) { setStatus('来源检查失败：' + error.message, true); return; }
     }
+    cloudPlayback = !sharedViewerActive && engineEl.value === 'aliyun-funasr';
+    originalCaptionMode = cloudPlayback;
     logEvent('connect', url.slice(0, 120));
     // 旧会话清理：不关旧 WS 则旧 worker 继续推流串字幕；
     // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
@@ -1409,13 +1413,13 @@
       } else if (msg.type === 'subtitle') {
         const accepted = onSubtitle(msg);
         if (accepted) {
-          if (!msg.translated) {
+          if (!msg.translated && msg.is_final !== false) {
             const beg = Number.isFinite(msg.beg) ? msg.beg : msg.words?.[0]?.[0];
             const end = msg.end ?? msg.words?.at(-1)?.[1] ?? msg.beg;
             playbackGuard.captionProgress(msg.sentence_id, beg, end, performance.now());
             if (originalCaptionMode && msg.is_final !== false) markSessionRecoveryProgress(end);
           }
-          if (msg.text) {
+          if (msg.text && msg.is_final !== false) {
             const firstSpeech = !captionHasSpeech;
             captionHasSpeech = true;
             if (firstSpeech && originalCaptionMode && playStarted && !playbackGuard.degraded && !holdingForBuffer)
@@ -1424,6 +1428,13 @@
         }
       } else if (msg.type === 'preview') {
         onPreview(msg);
+        if (msg.text && Number.isFinite(msg.beg) && Number.isFinite(msg.end)) {
+          const sentence = subs.find(s => s.sentenceId === msg.sentence_id);
+          playbackGuard.captionProgress(msg.sentence_id, sentence?.beg ?? msg.beg,
+            msg.end, performance.now());
+          captionHasSpeech = true;
+          if (originalCaptionMode) markSessionRecoveryProgress(msg.end);
+        }
       } else if (msg.type === 'buffer') {
         if (Number.isFinite(msg.local_silence_from) && Number.isFinite(msg.local_silence_through)) {
           playbackGuard.verifiedSilence(msg.local_silence_from, msg.local_silence_through, performance.now());
@@ -1453,7 +1464,7 @@
         playStarted = true;
         holdingForSync = false;
         if (currentEl.textContent.includes('准备字幕')) currentEl.textContent = '';
-        if (!preserveLiveMedia) setStatus(msg.silent ? '暂未识别到语音，继续播放' : msg.original ? '原文字幕已就绪，开始播放' : msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
+        if (!preserveLiveMedia && !playbackGuard.degraded) setStatus(msg.silent ? '暂未识别到语音，继续播放' : msg.original ? '原文字幕已就绪，开始播放' : msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
         logEvent('ready', `附加播放缓冲=${msg.delay}s，开始播放`);
         if (!uiPaused && !holdingForBuffer) player.play().catch(() => {});
         // 播放卡顿看门狗（ticket-19 复验）：IPTV 源带宽不足或 TS 时间轴损坏时，
@@ -1581,8 +1592,10 @@
 
   function syncPlaybackToBuffer() {
     if (cloudPlayback && originalCaptionMode) {
+      const limit = Number.isFinite(playbackLimit) ? playbackLimit
+        : playbackGuard.live && player.readyState >= 2 ? player.currentTime : null;
       const action = playbackGuard.tick({now:performance.now(), time:player.currentTime,
-        limit:(useCaptionBuffer || playbackGuard.live) ? playbackLimit : null,
+        limit:(useCaptionBuffer || playbackGuard.live) ? limit : null,
         ready:playStarted, userPaused:uiPaused, sourceBuffering:sourceBufferingSince != null});
       if (action === 'timeout') { showRecognitionFailure('识别 15 秒没有进展，已停止新音频处理。可重试或仅播放。'); return; }
       if (action === 'hold') {
@@ -1919,9 +1932,11 @@
       const resp = await fetch('/upload', { method: 'POST', body: fd });
       const data = await resp.json();
       if (resp.ok && data.path) {
+        if (activeInput) await stopBtn.onclick();
         urlEl.value = data.path;
-        setStatus(`已上传 ${data.name}，开始识别`);
-        connect();
+        document.getElementById('selectionStatus').textContent = data.name;
+        setStatus(`已选择 ${data.name}，点击“播放并生成字幕”开始观看`);
+        startBtn.focus();
       } else {
         setStatus('上传失败: ' + (data.detail || resp.status), true);
       }
@@ -1930,7 +1945,16 @@
     }
     fileEl.value = '';
   });
-  urlEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+  urlEl.addEventListener('input', () => {
+    document.getElementById('selectionStatus').textContent = urlEl.value.trim() ? '已填写来源' : '尚未选择内容';
+    if (activeInput) startBtn.style.display = urlEl.value.trim() === activeInput ? 'none' : 'inline-block';
+  });
+  document.getElementById('channelListUrl').addEventListener('keydown', event => {
+    if (event.key === 'Enter') loadChannels(event.currentTarget.value.trim());
+  });
+  urlEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); startBtn.focus(); }
+  });
 
   function openDialog(id) {
     document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
@@ -1949,8 +1973,7 @@
     ['cloudSettings','captionSettings','moreSettings'].forEach(id => { document.getElementById(id).hidden = id !== button.dataset.pane; });
   }; });
   logBtn.onclick = () => { logPanel.hidden = false; logText.value = logBuffer.join('\n'); openDialog('logsDialog'); };
-  chBtn.onclick = () => openDialog('channelsDialog');
-  document.getElementById('loadChannelsBtn').onclick = () => loadChannels(urlEl.value.trim());
+  document.getElementById('loadChannelsBtn').onclick = () => loadChannels(document.getElementById('channelListUrl').value.trim());
   document.getElementById('fullscreenBtn').onclick = async () => {
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
