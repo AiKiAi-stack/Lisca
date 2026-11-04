@@ -184,3 +184,11 @@ test('source buffering does not consume the live application hold or progress ti
   assert.equal(guard.tick({now:21500, time:10, limit:10, ready:false, userPaused:false}), 'degrade');
   assert.equal(guard.heldForSessionMs, 2000);
 });
+
+test('live startup uses its media hold budget instead of the local 15s recognition timeout',()=>{
+ const {CaptionPlaybackGuard}=require('../tools/webui_static/playback_guard.js');
+ const guard=new CaptionPlaybackGuard();guard.reset({now:0,live:true});
+ assert.equal(guard.tick({now:16000,time:15,limit:15,ready:false,userPaused:false}),'hold');
+ assert.equal(guard.tick({now:18000,time:15,limit:15,ready:false,userPaused:false}),'degrade');
+ assert.equal(guard.failed,false);
+});

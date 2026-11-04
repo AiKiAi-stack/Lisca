@@ -244,6 +244,13 @@ class StreamSource:
             self._buf = self._buf[self.chunk_samples * 2:]
         return chunks
 
+    def interrupt(self):
+        """Cancel network waits; the decoder owner must still call close()."""
+        self._hls_open_retry_cancel.set()
+        session = self._hls_http
+        if session is not None:
+            session.interrupt()
+
     def close(self):
         with self._hls_open_lock:
             if self._closed:
@@ -453,6 +460,18 @@ class _HlsHttpSession:
     def _response_closed(self, response):
         with self._lock:
             self._responses.discard(response)
+
+    def interrupt(self):
+        # Leave decoder-owned playlist state intact until the read has returned.
+        with self._lock:
+            responses = list(self._responses)
+            transports = list(self._transports.values())
+        try:
+            for response in responses:
+                response.close()
+        finally:
+            for transport in transports:
+                transport.close()
 
     def close(self):
         with self._lock:

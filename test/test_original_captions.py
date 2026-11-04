@@ -501,7 +501,7 @@ def test_local_audio_is_bounded_ahead_of_the_realtime_recognizer(tmp_path, monke
     assert sent[-1]-sent[0] >= .85, 'three seconds of audio must not be sent in one burst'
 
 
-def test_live_pacing_catches_up_after_segment_read_delays(tmp_path, monkeypatch):
+def test_bounded_live_hls_prefetch_catches_up_after_segment_reads(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
     monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
     clock = [0.0]
@@ -554,9 +554,9 @@ def test_live_pacing_catches_up_after_segment_read_delays(tmp_path, monkeypatch)
                 pass
 
     assert len(sent_at) == 30
-    assert sent_at[:10] == pytest.approx([index / 10 for index in range(1, 11)])
-    assert sent_at[10:20] == pytest.approx([3.0] * 10)
-    assert sent_at[20:] == pytest.approx([5.0] * 10)
+    assert sent_at[:10] == pytest.approx([0.0] * 10), "the initial one-second segment fits within the bounded two-second prefetch"
+    assert sent_at[10:20] == pytest.approx([2.0] * 10)
+    assert sent_at[20:] == pytest.approx([4.0] * 10)
 
 
 def test_live_pacing_excludes_user_pause_and_stop_drops_unsent_audio(tmp_path, monkeypatch):
@@ -663,7 +663,7 @@ def test_live_pacing_excludes_user_pause_and_stop_drops_unsent_audio(tmp_path, m
         release_third.set()
 
     assert len(sent_at) == 2
-    assert sent_at[1] - sent_at[0] == pytest.approx(10.1)
+    assert sent_at[1] - sent_at[0] == pytest.approx(10.0)
     assert events[-1] == {'type': 'end', 'reason': 'cancelled'}
 
 
@@ -1104,3 +1104,136 @@ def test_audio_timeline_error_is_terminal_and_stops_source(
         'audio_sent': int(raise_after_first),
         'engine_closed': int(raise_after_first),
     }
+
+
+@pytest.mark.parametrize('local_file', [False, True])
+def test_provider_results_are_delivered_while_finalization_is_still_waiting(tmp_path, monkeypatch, local_file):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    finishing = threading.Event()
+    release = threading.Event()
+    returned = threading.Event()
+    delivered = threading.Event()
+    observed = {'caption': False, 'buffer': False, 'ready': False}
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self): yield b'\x00\x10' * 16000
+        def close(self): pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio): return (None, None, '', None)
+        def poll(self):
+            if finishing.is_set() and not delivered.is_set():
+                delivered.set()
+                return (0.0, 1.0, '已经返回的字幕不能等收尾结束。', None, True, 1)
+            return (None, None, '', None)
+        def finalize(self):
+            finishing.set()
+            release.wait(2)
+            returned.set()
+        def finish(self):
+            if not returned.is_set(): self.finalize()
+            return (None, None, '', None)
+        def close(self): release.set()
+
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    media_url = 'https://media.test/live.m3u8'
+    if local_file:
+        media = tmp_path / 'local.mp4'
+        media.touch()
+        media_url = str(media)
+    try:
+        with TestClient(webui.app) as client:
+            client.put('/api/cloud', json={'api_key':'test-private-key'})
+            token = client.post('/api/cloud/sessions', json={'url':media_url}).json()['session']
+            with client.websocket_connect('/ws?session=' + token) as socket:
+                while True:
+                    event = socket.receive_json()
+                    if event['type'] == 'subtitle':
+                        assert not returned.is_set(), 'caption waited until the blocking provider finalize returned'
+                        observed['caption'] = True
+                    if event['type'] == 'buffer' and event['play_at'] >= .8:
+                        observed['buffer'] = True
+                    if event['type'] == 'ready':
+                        assert not returned.is_set(), 'playback waited until the blocking provider finalize returned'
+                        assert observed['caption'] and observed['buffer']
+                        observed['ready'] = True
+                        release.set()
+                    if event['type'] == 'end': break
+        assert delivered.is_set()
+        assert observed['ready']
+    finally:
+        release.set()
+
+
+def test_stable_preview_preserves_only_its_clause_word_times(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    words = [(0.2, 1.5, 'Hello'), (1.6, 2.0, 'there.'),
+             (3.0, 4.5, 'Next'), (4.6, 5.0, 'sentence.')]
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self): yield b'\x00\x10' * 1600
+        def close(self): pass
+
+    class Engine:
+        def __init__(self):
+            self.results = iter([(0., 5., 'Hello there. Next sentence.', words, False, 1)] * 2)
+        def transcribe_chunk(self, _audio): return next(self.results)
+        def poll(self): return next(self.results, (None, None, '', None))
+        def finish(self): return (None, None, '', None)
+        def close(self): pass
+
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put('/api/cloud', json={'api_key':'test-private-key'})
+        token = client.post('/api/cloud/sessions', json={'url':'https://media.test/live.m3u8'}).json()['session']
+        with client.websocket_connect('/ws?session=' + token) as socket:
+            events = []
+            while True:
+                event = socket.receive_json()
+                events.append(event)
+                if event['type'] == 'end': break
+    previews = [event for event in events if event['type'] == 'preview']
+    assert [event['text'] for event in previews] == ['Hello there.', 'Next sentence.']
+    assert [event.get('words') for event in previews] == [[list(w) for w in words[:2]], [list(w) for w in words[2:]]]
+
+
+def test_live_buffered_audio_keeps_a_bounded_six_second_lead(tmp_path, monkeypatch):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    clock = [0.0]
+    sent = [0.0]
+    lead = []
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            for _ in range(120): yield b'\x00\x10' * 1600
+        def close(self): pass
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            sent[0] += .1
+            lead.append(sent[0] - clock[0])
+            return (None, None, '', None)
+        def poll(self): return (None, None, '', None)
+        def finish(self): return self.poll()
+        def close(self): pass
+    def advance(stop, seconds):
+        clock[0] += seconds
+        return stop.is_set()
+    monkeypatch.setattr(webui, '_session_monotonic', lambda: clock[0])
+    monkeypatch.setattr(webui, '_session_wait', advance)
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    with TestClient(webui.app) as client:
+        client.put('/api/cloud', json={'api_key':'test-private-key'})
+        token = client.post('/api/cloud/sessions', json={'url':'https://media.test/live.m3u8'}).json()['session']
+        with client.websocket_connect('/ws?session=' + token) as socket:
+            while socket.receive_json()['type'] != 'end': pass
+    assert len(lead) == 120
+    assert max(lead) <= 6.0 + 1e-6, 'buffered HLS must not flood the ten-second ASR input queue'

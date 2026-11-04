@@ -324,6 +324,89 @@ test('preview messages use the same timed two-line pagination as final captions'
  assert.deepEqual(Array.from(segments.flatMap(segment=>segment.text.match(/[\p{Script=Latin}\p{N}]+(?:[-’'][\p{Script=Latin}\p{N}]+)*/gu)||[])),
   Array.from(text.match(/[\p{Script=Latin}\p{N}]+(?:[-’'][\p{Script=Latin}\p{N}]+)*/gu)||[]));
 });
+test('stable previews paginate with speech word times rather than text-length timing',()=>{
+ const b=browser({playerWidth:288,fontSize:30}),c=b.context;
+ const tokens='This first phrase is spoken slowly while the remaining words are spoken much faster without losing their timing.'.split(' ');
+ const words=tokens.map((token,index)=>index<4
+   ? [index*2,index*2+1.8,token] : [8+(index-4)*.2,8+(index-3)*.2,token]);
+ const cue={sentence_id:'timed-preview',beg:0,end:words.at(-1)[1],text:tokens.join(' '),words};
+ const expected=c.captionSegments(cue);
+ b.preview(cue);
+ const actual=c.captionSegments(c.previewSubs[0]);
+ assert.deepEqual(Array.from(actual,s=>[s.beg,s.end,s.text]),Array.from(expected,s=>[s.beg,s.end,s.text]));
+ assert.equal(actual[0].end,7.8);
+ for(const segment of actual){
+   c.player.currentTime=(segment.beg+segment.end)/2;b.tick(0);
+   assert.equal(b.current.textContent,segment.text);
+ }
+});
+test('a final revision does not replace an already visible preview for its last 100ms',()=>{
+ const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
+ c.player.currentTime=.5;
+ b.preview({sentence_id:7,beg:0,end:3,text:'We are ready.',words:[[0,1,'We'],[1,2,'are'],[2,3,'ready.']]});
+ assert.equal(b.current.textContent,'We are ready.');
+ c.player.currentTime=2.9;
+ b.push({translated:false,sentence_id:7,beg:0,end:5,text:'We are already ready. Next words.',
+  words:[[0,1,'We'],[1,1.5,'are'],[1.5,2.5,'already'],[2.5,3,'ready.'],[3,3.5,'Next'],[3.5,5,'words.']]});
+ assert.equal(b.current.textContent,'We are ready.');
+ c.player.currentTime=3.1;b.tick(0);
+ assert.equal(b.current.textContent,'Next words.');
+});
+test('real final handoffs keep only table and 阶段 after their held previews',()=>{
+ const fixtures=[{
+  offset:10.010023611111137,cut:171.57,end:171.97,
+  preview:'that gets to this idea of riffs being on the',
+  previewWords:[[169.13,169.29,'that'],[169.29,169.53,' gets'],[169.53,169.77,' to'],[169.77,170.05,' this'],[170.05,170.33,' idea'],[170.33,170.65,' of'],[170.77,171.01,' riffs'],[171.01,171.25,' being'],[171.25,171.41,' on'],[171.41,171.57,' the']],
+  final:'Federal employees are not bargaining chips and that gets to this idea of rifts being on the table.',
+  words:[[166.73,167.01,'Federal'],[167.01,167.49,' employees'],[167.49,167.73,' are'],[167.73,168.37,' not'],[168.37,168.73,' bargaining'],[168.73,168.97,' chips'],[168.97,169.13,' and'],[169.13,169.29,' that'],[169.29,169.53,' gets'],[169.53,169.77,' to'],[169.77,170.05,' this'],[170.05,170.33,' idea'],[170.33,170.65,' of'],[170.65,170.95,' rift'],[170.95,171.01,'s'],[171.01,171.25,' being'],[171.25,171.41,' on'],[171.41,171.57,' the'],[171.57,171.97,' table']],remaining:'table.'
+ },{
+  offset:9.993347222222212,cut:67.61,end:68.09,
+  preview:'并在明年度进入实质产制',
+  previewWords:[[65.37,65.53,'并'],[65.53,65.69,'在'],[65.69,65.81,'明'],[65.81,66.33,'年度'],[66.33,66.77,'进入'],[66.77,67.21,'实质'],[67.21,67.41,'产'],[67.41,67.61,'制']],
+  final:'十九万，并，并在明年度进入实值产质阶段。',
+  words:[[64.57,64.93,'十九'],[64.93,65.17,'万'],[65.37,65.53,'并'],[65.61,65.65,'并'],[65.65,65.69,'在'],[65.69,65.81,'明'],[65.81,66.33,'年度'],[66.33,66.77,'进入'],[66.77,67.01,'实'],[67.01,67.21,'值'],[67.21,67.41,'产'],[67.41,67.61,'质'],[67.61,68.09,'阶段']],remaining:'阶段。'
+ }];
+ for(const f of fixtures){
+  const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
+  const shifted=words=>words.map(([beg,end,text])=>[beg+f.offset,end+f.offset,text]);
+  c.player.currentTime=f.cut+f.offset-.1;
+  b.preview({sentence_id:7,beg:f.previewWords[0][0]+f.offset,end:f.cut+f.offset,text:f.preview,words:shifted(f.previewWords)});
+  assert.equal(b.current.textContent.replace(/\s+/gu,' '),f.preview);
+  const displayed=b.current.textContent;
+  b.push({translated:false,sentence_id:7,beg:f.words[0][0]+f.offset,end:f.end+f.offset,text:f.final,words:shifted(f.words)});
+  assert.equal(b.current.textContent,displayed);
+  c.player.currentTime=f.cut+f.offset+.01;b.tick(0);
+  assert.equal(b.current.textContent,f.remaining);
+  const pages=c.captionSegments(c.subs[0]);
+  assert.equal(pages.map(p=>p.text).join('').replace(/\s/gu,''),f.final.replace(/\s/gu,''));
+  assert.equal(pages.at(-1).beg,f.cut+f.offset);assert.equal(pages.at(-1).end,f.end+f.offset);
+ }
+});
+test('learned preview cuts invalidate cached final pages and preserve complete spellings',()=>{
+ const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
+ const cue={beg:0,end:4,text:'They hear whistles again.',words:[[0,1,'They'],[1,2,' hear'],[2,2.4,' wh'],[2.4,3,'istles'],[3,4,' again']]};
+ const original=c.captionSegments(cue);cue.previewBreaks=[2.4];
+ const split=c.captionSegments(cue);
+ assert.notStrictEqual(split,original);
+ assert.deepEqual(Array.from(split,p=>p.text),['They hear','whistles again.']);
+});
+test('withdrawing or replacing a preview clears its held page immediately',()=>{
+ const b=browser(),c=b.context;c.player.currentTime=1;
+ b.preview({sentence_id:7,beg:0,end:3,text:'The old preview.'});
+ assert.ok(b.current.textContent);
+ c.previewSubs=[];c.subs=[];b.tick(0);
+ assert.equal(b.current.textContent,'');
+ b.preview({sentence_id:7,beg:0,end:3,text:'The new source.'});
+ assert.equal(b.current.textContent,'The new\nsource.');
+});
+test('a preview retired by a final cannot reappear after a seek or outlast its revised interval',()=>{
+ const b=browser(),c=b.context;c.player.currentTime=.5;
+ b.preview({sentence_id:1,beg:0,end:2,text:'Old incorrect preview.'});
+ b.push({translated:false,sentence_id:1,beg:0,end:1,text:'Correct final.'});
+ c.player.currentTime=1.5;b.tick(0);assert.equal(b.current.textContent,'');
+ c.player.currentTime=2.1;b.tick(0);
+ c.player.currentTime=1.5;b.tick(0);assert.equal(b.current.textContent,'');
+});
 test('word-timed original pages retain quotes, punctuation, and symbols outside ASR tokens',()=>{
  const b=browser({playerWidth:260,fontSize:30});
  const text='“One very long sentence reached 100% on Friday, then every durable filter passed.”';
@@ -760,4 +843,41 @@ test('late first ready never rewinds an already playing live source, but initial
   assert.equal(c.player.currentTime,state.expected,JSON.stringify(state));
   assert.equal(c.playStarted,true);
  }
+});
+
+test('draft history cannot claim visible caption coverage or announce ready',()=>{
+ const {context:c}=shareHistoryViewer();
+ c.originalCaptionMode=true;c.sharedViewerActive=false;c.playStarted=true;c.activeInput='live.m3u8';
+ const covered=[];c.playbackGuard.captionProgress=(...args)=>covered.push(args);
+ c.receiveMessage({type:'subtitle',sentence_id:900,revision:1,beg:0,end:4,
+   is_final:false,text:'An unfinished hypothesis'});
+ assert.equal(covered.length,0);
+ assert.equal(c.captionHasSpeech,false);
+ assert.equal(c.currentEl.textContent,'');
+ c.receiveMessage({type:'preview',sentence_id:900,beg:0,end:2,text:'A stable clause,'});
+ assert.equal(covered.length,1);
+ assert.equal(c.captionHasSpeech,true);
+ assert.match(c.currentEl.textContent,/stable clause/);
+ c.receiveMessage({type:'subtitle',sentence_id:900,revision:2,beg:0,end:4,
+   is_final:true,text:'A stable clause, with its ending.'});
+ assert.equal(covered.length,2);
+});
+
+test('wide original captions keep readable phrase lengths instead of filling the whole screen',()=>{
+ const b=browser({playerWidth:1500,fontSize:30});
+ const text='It seems clear to me that ever since President Trump arrived in Michigan to campaign and rally the weekend before last here in Port Huron on behalf of Mike Rogers, the polls have shown a decline in support from Republicans.';
+ const tokens=text.split(' ');
+ const words=tokens.map((token,i)=>{const beg=i*.3;return [beg,beg+.3,(i?' ':'')+token];});
+ const segments=b.context.captionSegments({beg:0,end:tokens.length*.3,text,words,isFinal:true});
+ assert.ok(segments.every(s=>s.text.length<=100),JSON.stringify(segments));
+ assert.equal(segments.map(s=>s.text).join('').replace(/\s/g,''),text.replace(/\s/g,''));
+});
+
+test('a sub-100ms final fragment joins its adjacent phrase without extending the speech range',()=>{
+ const b=browser({playerWidth:1500,fontSize:30});
+ const pages=b.context.captionSegments({beg:0,end:2,text:'Really? Yes.',isFinal:true,
+   words:[[0,1.9,'Really?'],[1.92,2,' Yes.']]});
+ assert.ok(pages.every(p=>p.end-p.beg>=.6),JSON.stringify(pages));
+ assert.equal(pages[0].beg,0);assert.equal(pages.at(-1).end,2);
+ assert.equal(pages.map(p=>p.text).join('').replace(/\s/g,''),'Really?Yes.');
 });

@@ -340,3 +340,15 @@ class TestASRClient:
         }))
         entry2 = cb._subtitle_buffer.popleft()  # noqa: SLF001
         assert entry2.words[-1] == (1.5, None, "好")
+
+
+def test_full_local_audio_queue_is_a_capacity_failure_not_an_unknown_provider_error():
+    from streamparser.recognition_process import RecognitionCapacityError
+
+    with patch('streamparser.asr_client.Recognition'):
+        client = ASRClient(ASRSettings(api_key='fake-test-key'))
+    client._running.set()
+    client._input_queue = Mock()
+    client._input_queue.put.side_effect = queue.Full()
+    with pytest.raises(RecognitionCapacityError):
+        client.feed_audio(b'\x01\x00' * 1600)

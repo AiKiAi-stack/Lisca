@@ -1,6 +1,6 @@
 """Exercise channel selection and reopening against a running WebUI.
 
-Uses a local IPTV/HLS fixture server. Playback is disabled so no ASR is called.
+Uses a local IPTV/HLS fixture server. Selection must not create playback or ASR sessions.
 Run: python test/e2e_channel_reopen.py http://127.0.0.1:8002/
 """
 import json
@@ -49,9 +49,9 @@ def main():
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page()
             page.goto(BASE, wait_until="domcontentloaded")
-            # Only playback/ASR is replaced. Real row handlers, panel handlers,
-            # fetches, and the running server's playlist parser remain in use.
-            page.evaluate("connect = () => {}")
+            session_requests = []
+            page.on("request", lambda request: session_requests.append(request.url)
+                    if "/api/cloud/sessions" in request.url else None)
             page.locator("#url").fill(origin + "/channels.m3u8")
             page.locator("#chBtn").click()
             page.wait_for_function("document.querySelectorAll('.ch-name').length === 2")
@@ -61,11 +61,11 @@ def main():
             cycles = []
             for _ in range(3):
                 page.locator("#chBtn").click()
-                page.wait_for_timeout(150)
-                page.locator("#chBtn").click()
-                page.wait_for_timeout(150)
                 cycles.append({"visible": page.locator("#chPanel").is_visible(),
                                "names": page.locator(".ch-name").all_text_contents()})
+                page.get_by_role("button", name="关闭频道列表", exact=True).click()
+            assert session_requests == [], session_requests
+            assert page.locator("#start").is_visible()
             ui_requests = list(requests)
             response = page.request.get(BASE.rstrip("/") + "/channels?url="
                                         + quote(origin + "/station1.m3u8", safe=""))
