@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title description">
+  <title id="title">Stream with ASR</title>
+  <desc id="description">Original-language captions for live streams and local video. A waveform leads into two caption lines.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101d31"/><stop offset="1" stop-color="#172f40"/></linearGradient>
+    <linearGradient id="accent"><stop stop-color="#65dfc0"/><stop offset="1" stop-color="#89c5f6"/></linearGradient>
+    <clipPath id="frame"><rect width="1200" height="300" rx="20"/></clipPath>
+  </defs>
+  <rect width="1200" height="300" rx="20" fill="url(#bg)"/>
+  <circle cx="1120" cy="34" r="220" fill="#24495c" opacity=".32" clip-path="url(#frame)"/>
+  <g font-family="Inter, Segoe UI, Arial, sans-serif">
+    <rect x="48" y="44" width="8" height="8" rx="4" fill="#65dfc0"/>
+    <text x="70" y="55" fill="#a5c5d8" font-size="15" letter-spacing="2">LIVE STREAMS + LOCAL VIDEO</text>
+    <text x="46" y="132" fill="#f5fafc" font-size="58" font-weight="700" letter-spacing="-2">Stream with ASR</text>
+    <text x="49" y="176" fill="#bed1df" font-size="24">Hear it. Read it in the original language.</text>
+    <text x="49" y="247" fill="#87a9bf" font-size="17">Chinese / English</text>
+    <path d="M239 233v18" stroke="#476477"/>
+    <text x="260" y="247" fill="#87a9bf" font-size="17">Browser player</text>
+  </g>
+  <g transform="translate(815 59)">
+    <rect width="326" height="182" rx="16" fill="#0d1929" stroke="#39566a"/>
+    <g stroke="url(#accent)" stroke-width="5" stroke-linecap="round">
+      <path d="M47 61v14m16-30v46m16-56v66m16-48v50m16-72v94m16-64v34m16-57v80m16-63v46m16-72v95m16-70v49m16-60v69m16-48v30m16-48v66m16-39v12"/>
+    </g>
+    <rect x="40" y="132" width="246" height="10" rx="5" fill="#e4f1f8"/>
+    <rect x="71" y="151" width="184" height="7" rx="3.5" fill="#7999b2"/>
+  </g>
+</svg>

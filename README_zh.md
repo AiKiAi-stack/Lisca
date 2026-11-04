@@ -1,270 +1,144 @@
-[English](./README.md) | [中文](./README_zh.md)
-
-# 直播与视频原文字幕
-
-**实验预览版，尚未通过 PRD 正式首版门槛（2026-11-03）。** 最新完整启动批次的 P95 为中文 10.5135 秒、英文 5.9663 秒，均超过 3 秒目标。30 分钟本地文件正常 EOF 和完成后的缓存跳转已验证；直播、控制与完整质量验收仍未通过，字幕同步、有声覆盖未验证，英文快语速参考仍未解决。干净 Windows 与真实第二设备已移出本轮范围，不计通过。证据版本、已知文字错误与发布选择见[当前质量与发布决定](docs/research/original-caption-recovery-2026-11-02.md)。
-
-在自己的 Windows 电脑运行，通过浏览器观看直播或本地视频，识别音频并显示原语言字幕：中文语音显示中文，英文语音显示英文。当前优先做好原文识别与同步，主界面已暂停跨语言翻译。云端模式使用阿里云百炼 FunASR，用户提供自己的中国内地 API Key。
-
-## Windows 开始使用
-
-1. 安装 64 位 Python 3.10–3.12（推荐 3.12，启用 Python Launcher），将本仓库放到有空间的目录，例如 D 盘。
-2. 双击 `start-windows.cmd`。首次启动会在项目的 `.venv` 安装 WebUI 依赖，不下载本地模型；随后打开 `http://127.0.0.1:8002/`。
-3. 在「设置」填写并应用百炼 Key，确保已开通 `fun-asr-realtime`。当前识别与连接检查均不需要翻译模型。
-4. 输入直播链接或打开本地视频，点击「生成字幕」。默认自动识别语种，也可在设置中指定中文或英文。
-5. 播放器按音频时间显示短句。已完成识别的本地视频可暂停、继续及跳转并复用字幕；识别未完成时跳转可能需要重新建立识别会话。
-
-音频会发送给百炼，费用由用户 API 账户承担。「检查连接」也会连接云端识别服务。Key 默认只在本次运行中使用，可选择通过 Windows DPAPI 加密保存；「删除配置」会删除保存文件并停止云端会话。Key 不存入浏览器 localStorage、URL 或普通日志。
-
-本地视频在当前位置的字幕就绪后即可播放，后续音频继续处理；静音也能放行，无需等待长文件全部识别结束。识别完成后的暂停和跳转复用本次字幕；尚未准备的位置会先提示可能再次调用识别服务。正式字幕按语音时间切成短句，不逐词滚动，也不把迟到的长段字幕排队挤到后续画面。识别仍可能有错字或截断；真实中英文质量、公共直播和长时间稳定性仍需分别验证。详见[当前产品决策](docs/adr/0008-original-language-captions.md)、[实施状态](docs/plans/2026-10-23-original-caption-implementation-status.md)与[发布证据核对](docs/plans/2026-10-24-original-caption-release-evidence.md)。
-
-2026-10-24 的自动回归使用真实播放器和模拟识别，不能当作真实语音准确率通过。当时干净 Windows 安装及第二台局域网设备验收尚未完成；本轮范围和发布门槛以顶部更新为准。
-
-2026-10-25追加的Ubuntu真实识别、控制与直播结果见[验收记录](docs/plans/2026-10-24-original-caption-real-acceptance.md)与[逐来源支持边界](docs/research/2026-10-25-original-caption-support-matrix.md)；各项失败、未测同步和外部验收单独保留。
-
-平台页面与公开 IPTV 清单仅是来源候选，不能保证所有地址始终可播；已知网络、账号和地区限制需按来源验证。参见[来源调研](docs/research/2026-10-21-media-source-baseline.md)和[产品需求](docs/plans/2026-10-21-live-translation-prd.md)。
-
-启动诊断：从项目目录运行 `.venv\Scripts\python.exe tools\windows_launcher.py --check`，或直接使用 `.venv\Scripts\python.exe tools\webui.py --port 8002`；依赖清单是 `requirements-webui.txt`。启动日志位于 `logs/webui-windows.log`，配置位于项目的 `.data/`，视频副本位于 `uploads/`。
-
-## 原有流媒体工具包
-
-以下为原有 streamparser 命令行功能与开发接口；WebUI 云端首版不要求本地 GPU 或本地识别模型。
-
 <p align="center">
-  <img src="docs/streamparser.svg" alt="streamparser" width="800"/>
+  <img src="docs/assets/readme-banner.svg" alt="Stream with ASR：直播与本地视频原文字幕" width="1200">
 </p>
 
-# streamparser
+<h1 align="center">直播与视频原文字幕</h1>
 
-高性能流媒体处理与解析工具包，支持实时 ASR 字幕生成。
+<p align="center">在浏览器里观看直播或本地视频，听中文看中文，听英文看英文。</p>
 
-一站式处理直播流（RTSP/RTMP/HLS）或本地媒体文件，按需转码，并可接入阿里云 DashScope 实时语音识别，将字幕实时烧录到视频画面中。
+<p align="center">
+  <a href="https://github.com/AiKiAi-stack/stream-with-asr/actions/workflows/test.yml"><img src="https://github.com/AiKiAi-stack/stream-with-asr/actions/workflows/test.yml/badge.svg" alt="自动测试"></a>
+  <img src="https://img.shields.io/badge/Python-3.10–3.12-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10 至 3.12">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-4c9b77" alt="MIT 许可证"></a>
+  <img src="https://img.shields.io/badge/Status-Experimental_preview-d5a34a" alt="实验预览版">
+</p>
 
-## 特性
+<p align="center">
+  <a href="README.md">English</a> · <b>简体中文</b><br>
+  <a href="#快速开始">快速开始</a> · <a href="#使用方式">使用方式</a> · <a href="#当前进展与边界">当前进展</a> · <a href="#开发与文档">开发与文档</a>
+</p>
 
-### 核心流处理
+## 可以做什么
 
-- **多协议支持** — RTSP、RTMP、HLS、HTTP、UDP、TCP、本地文件
-- **硬件加速** — CUDA、VAAPI、QSV、Vulkan、VideoToolbox
-- **灵活编码** — 视频：H.264、H.265、VP9、AV1；音频：AAC、MP3、FLAC、WAV
-- **画质预设** — LOW（2Mbps/15fps）、MEDIUM（4Mbps/30fps）、HIGH（8Mbps/60fps）
-- **自动分段** — 按时长或文件大小自动轮转容器
-- **帧过滤器链** — 可插拔的帧处理管道
-- **流健康检测** — 启动前连通性检查 + 帧质量分析
-- **自动重连** — 可配置的指数退避重试机制
+- 播放直播链接或本地视频，通过百炼 FunASR 生成原文字幕，默认自动识别中文、英文。
+- 先选频道或文件，再点击播放；画面显示按语音时间切分的稳定短句，完整内容可在字幕记录查看。
+- 本地字幕识别完成后，暂停、继续和跳转复用已有结果。
+- 将直播的只读观众链接分享给同一局域网内的设备，复用主机的识别会话。
 
-### ASR 实时字幕
-
-- **实时语音识别** — 基于阿里云 DashScope `fun-asr-realtime` 模型
-- **画面烧录字幕** — 通过 Pillow 将中文文本直接渲染到视频帧上
-- **SRT 文件输出** — 与输出视频容器同步分段生成 `.srt` 字幕文件
-- **字级时间戳** — 精确的句级和字级对齐，实现精准字幕
-- **自动重连** — WebSocket 断开后指数退避自动恢复
-- **CJK 字体支持** — 自动探测系统字体（文泉驿正黑、Droid Sans Fallback），可配置自定义字体路径
-
-## 安装
-
-需要 Python 3.10–3.12 和 FFmpeg 运行时库。
-
-```bash
-git clone https://github.com/your-org/streamparser.git
-cd streamparser
-pip install .
-```
-
-使用 ASR 字幕功能需要 DashScope API Key：
-
-```bash
-export DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxx
-```
+> **实验预览版。** 当前主界面专注原文字幕，跨语言翻译暂停。启动和固定输入长时回放已有预览验收记录；独立声学同步与覆盖率仍未通过正式验收。[查看当前进展](#当前进展与边界)。
 
 ## 快速开始
 
-### 基础流处理
+需要 **64 位 Python 3.10–3.12**（推荐 3.12）和已开通 `fun-asr-realtime` 的**百炼中国内地 API Key**。云端 WebUI 不要求本地 GPU、本地模型或另装系统 FFmpeg。
 
-读取 RTSP 流，以中等画质保存为 H.264 MP4：
-
-```bash
-streamparser rtsp://192.168.1.100:554/live
-```
-
-### YAML 配置文件
-
-完整控制编解码器、画质和输出参数：
-
-```yaml
-# config.yml
-url: rtsp://192.168.1.100:554/live
-type: BOTH
-codec:
-  video: h264
-  audio: aac
-quality:
-  read: null
-  write: high
-directory: output
-max_container_duration: 1800
-max_retry_count: 5
-```
+下载并解压本仓库，或克隆：
 
 ```bash
-streamparser config.yml
+git clone https://github.com/AiKiAi-stack/stream-with-asr.git
+cd stream-with-asr
 ```
 
-### 实时字幕
+### Windows
 
-通过独立配置文件启用 ASR 字幕：
+安装 Python 时启用 Python Launcher，然后双击 **`start-windows.cmd`**。
+
+首次启动会创建项目内的 `.venv` 并安装 WebUI 依赖，随后自动打开 [http://127.0.0.1:8002/](http://127.0.0.1:8002/)。在「设置」填入并应用 Key，即可选择内容。
+
+### Linux / 手动启动
+
+在项目目录执行：
 
 ```bash
-streamparser rtsp://192.168.1.100:554/live --asr examples/asr_config.example.yml
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-webui.txt
+python tools/webui.py --host 127.0.0.1 --port 8002
 ```
 
-输出目录中视频与字幕文件成对出现：
+使用 Python 3.10 或 3.11 时，替换第一行的解释器名称。浏览器打开 [http://127.0.0.1:8002/](http://127.0.0.1:8002/)，在「设置」应用 Key。
 
-```
-output/
-├── 0_20260709_143000.mp4
-├── 0_20260709_143000.srt
-├── 1_20260709_143030.mp4
-└── 1_20260709_143030.srt
-```
+## 使用方式
 
-### 在局域网内分享实时字幕直播
+| 步骤 | 操作 |
+| --- | --- |
+| **1. 选择内容** | 粘贴直播链接；若是 M3U 频道清单，点击「选择频道」选台。也可点击「打开文件」选择本地视频。 |
+| **2. 播放与字幕** | 点击「播放并生成字幕」，字幕就绪后开始播放。选台本身不会发起识别。 |
 
-在运行 WebUI 的电脑上启动服务后，输入直播地址并点击「开始」。服务默认监听局域网接口；管理页面仍只允许在主机本机打开。直播开始后点击「复制观众链接」，即可发给同一 Wi-Fi/局域网内的设备。若电脑有多块网卡，先在下拉菜单中选择观众设备能访问的主机地址。观众用浏览器打开链接即可加入当前直播，无需单独配置直播源或 ASR。
+播放器下方可开关字幕、查看字幕记录或进入全屏；字号与位置在「设置」调整。
 
-每场直播最多允许 3 台观众设备同时观看。观众链接只读，停止直播后立即失效；下一场直播会生成新链接。视频流量经主机转发，请确保主机防火墙允许 WebUI 端口（默认 `8002`）在专用/家庭网络中接收连接。此链接不能从局域网外访问。
+识别完成的本地文件可以直接跳转。尚未准备的位置可能需要重新识别，界面会提示。直播遇到字幕尚未就绪时，音视频可能一起短暂停下等待；公共源也可能受网络、地区或账号限制影响。
 
-### 本地 FunASR Vulkan（无 API Key，文件模式）
+### 局域网观看
 
-Windows Vulkan GGUF 安装可通过本机 HTTP 服务接入 WebUI。该模式对本地音视频文件整段转写，完成后开始播放；不支持直播实时字幕。服务启动与 WebUI 使用步骤见[本地 FunASR Vulkan 指南](docs/funasr-vulkan.md)。
+以 `python tools/webui.py --host 0.0.0.0 --port 8002` 启动，主机仍从本机地址打开管理页面。开始直播后，在设置中复制观众链接；多网卡时选择观众可访问的地址，并允许家庭/专用网络访问端口 `8002`。
 
-## 配置说明
+每场直播最多 3 台观众设备。观众无需另填 Key 或重复启动识别，链接在直播停止后失效。
 
-### 流媒体设置 (`config.yml`)
+### 没有稳定的直播源？
 
-| 字段 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `url` | string | — | 流地址或本地文件路径 |
-| `type` | enum | `BOTH` | `VIDEO`、`AUDIO` 或 `BOTH` |
-| `protocol` | enum | 自动 | 强制协议：`RTSP`、`RTMP`、`HLS`、`HTTP`、`TCP`、`UDP`、`FILE` |
-| `codec.video` | string/enum | `h264` | 视频编码：`h264`、`h265`、`vp9`、`av1` |
-| `codec.audio` | string/enum | `aac` | 音频编码：`aac`、`mp3`、`wav`、`flac` |
-| `quality.read` | enum | `null` | 读取质量：`null`、`low`、`medium`、`high` |
-| `quality.write` | enum | `medium` | 写入质量：`low`、`medium`、`high` |
-| `directory` | string | `results` | 输出目录 |
-| `max_container_duration` | int | `1800` | 最大分段时长（秒） |
-| `max_container_byte_size` | int | `4GB` | 最大分段大小（字节） |
-| `max_retry_count` | int | `5` | 最大重连次数 |
-| `max_retry_wait_time` | float | `60.0` | 重连最大等待时间（秒） |
-| `timeout` | float | `10.0` | 打开流超时（秒） |
-| `queue_size` | int | `100` | 内部帧队列大小 |
+可先用本地长视频验证观看流程。开发测试还可将文件按实时速度转为滚动 HLS；仓库附有[公开频道清单](examples/public-live-channels.m3u)和[中英文新闻回放方法](docs/research/p0-local-news-2026-11-04.md)。公开地址不保证随时可用，测试媒体需自行准备。
 
-### 硬件加速
+## 云端费用与 Key
 
-在编解码器配置中添加 `hwaccel_type`：
+音频会发送至百炼，识别费用由你的 API 账户承担；「检查连接」也会连接云端识别服务。当前默认流程不调用翻译模型。
 
-```yaml
-codec:
-  video:
-    name: h264
-    encoder: libx264
-    decoder: libx264
-    format: mp4
-    type: VIDEO
-    hwaccel_type: CUDA    # CUDA、VAAPI、QSV、VULKAN 或 VIDEOTOOLBOX
-```
+Key 默认仅在服务内存中使用。Windows 可选择通过用户绑定的 DPAPI 加密保存；Key 不写入浏览器 localStorage、URL 或普通日志。「删除配置」会清除保存文件并停止云端会话。
 
-### ASR 字幕设置 (`asr_config.yml`)
+本地离线转写可参考 [FunASR Vulkan 指南](docs/funasr-vulkan.md)，该模式须等待整段文件转写完成，不支持直播字幕。
 
-| 字段 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `provider` | string | `dashscope` | ASR 服务商 |
-| `api_key` | string | `${DASHSCOPE_API_KEY}` | API Key（支持 `${环境变量}` 语法） |
-| `workspace_id` | string | `""` | 百炼业务空间 ID |
-| `region` | string | `cn-beijing` | 服务地域 |
-| `model` | string | `fun-asr-realtime` | ASR 模型 |
-| `reconnect.max_retries` | int | `10` | WebSocket 最大重连次数 |
-| `reconnect.base_delay` | float | `1.0` | 初始重连等待（秒） |
-| `reconnect.max_delay` | float | `30.0` | 重连等待上限（秒） |
-| `subtitle.font_path` | string | `""` | 自定义字体路径（留空自动探测） |
-| `subtitle.font_size` | int | `32` | 字幕字号 |
-| `subtitle.max_lines` | int | `2` | 最大同时显示行数 |
-| `subtitle.position` | string | `bottom` | 位置：`bottom` 或 `top` |
-| `subtitle.offset_y` | int | `20` | 距边缘垂直偏移（像素） |
-| `subtitle.text_color` | list | `[255,255,255]` | 文字颜色 RGB |
-| `subtitle.stroke_color` | list | `[0,0,0]` | 描边颜色 RGB |
-| `subtitle.stroke_width` | int | `2` | 描边宽度（像素） |
+## 当前进展与边界
 
-## 架构
+以下为 **2026-11-04** 对 PR #89 候选的验证范围；预览版门槛见 [ADR-0009](docs/adr/0009-pr89-preview-acceptance-2026-11-04.md)。
 
-```
-                         StreamProcessor
-┌──────────────────────────────────────────────────────────────┐
-│                                                              │
-│  StreamReader ── 队列 ── _process() ── 队列 ── Writer       │
-│      │                       │                               │
-│      │ 音频帧 → ASR filter    │ 视频帧 → SubtitleOverlay     │
-│      │                       │                               │
-│      └───────┬───────────────┘                               │
-│              ▼                                               │
-│  ┌─────────────────────────────┐                            │
-│  │   ASRSubtitlePipeline        │                            │
-│  │  ┌───────────────────────┐  │                            │
-│  │  │  ASRClient             │  │                            │
-│  │  │  DashScope WebSocket   │  │                            │
-│  │  │  AudioProcessor        │  │                            │
-│  │  └───────────┬───────────┘  │                            │
-│  │              ▼               │                            │
-│  │  ┌───────────────────────┐  │                            │
-│  │  │   subtitle_buffer      │  │                            │
-│  │  └─────┬─────────┬───────┘  │                            │
-│  │        ▼         ▼           │                            │
-│  │  SubtitleOverlay  SRTWriter  │                            │
-│  │  (Pillow 渲染)    (文件 I/O) │                            │
-│  └─────────────────────────────┘                            │
-└──────────────────────────────────────────────────────────────┘
+| 项目 | 当前结果 |
+| --- | --- |
+| 启动 | 每语种 20 次固定 HLS 实测：中文 P95 **5.014 秒**、英文 **4.470 秒**，达到预览版 5.5 秒门槛；原 3 秒目标仍保留。 |
+| 长时回放 | 固定中英文新闻各 **30 分钟**，0 公开错误；应用时间轴延迟代理增长均不超过 1 秒。该代理不代表独立声学同步。 |
+| 音画字幕同步与有声覆盖 | **尚未验证通过**；少量短暂页面、空字幕及识别错误仍需继续改善。 |
+| 公网来源与设备 | 公网直播需逐源验证；干净 Windows 安装与真实第二设备不在本轮验收范围，不计通过。 |
+
+预览范围可用，正式首版门槛仍未全部通过。完整数据见[验收复测](docs/plans/2026-11-04-pr89-acceptance-recheck.md)；历史失败与已知质量问题保留在[恢复记录](docs/research/original-caption-recovery-2026-11-02.md)。
+
+## 常见问题
+
+<details>
+<summary>有画面，却没有字幕？</summary>
+
+先检查是否已在设置中应用 Key，以及是否点击了「播放并生成字幕」。确认播放器未关闭字幕，再查看状态提示与字幕记录。公共源可以换成本地视频对照；页面仍有错误时，打开设置中的「诊断日志」，反馈时不要附带 Key。
+
+</details>
+
+<details>
+<summary>Windows 启动失败，怎样查看原因？</summary>
+
+从项目目录执行：
+
+```powershell
+.venv\Scripts\python.exe tools\windows_launcher.py --check
 ```
 
-系统运行在三个线程上：
-- **Reader 线程** — PyAV 解码 + 帧过滤器链
-- **Writer 线程** — PyAV 编码 + 容器封装
-- **ASR 工作线程** — 音频重采样、WebSocket 收发、回调分发
+启动日志位于 `logs/webui-windows.log`，配置位于 `.data/`，上传的视频副本位于 `uploads/`。
 
-### 数据流
+</details>
 
-1. `StreamReader` 通过 PyAV 从源解码音视频帧
-2. 音频帧经过 `AudioProcessor`（重采样到 16kHz 单声道 s16）
-3. PCM 数据以 100ms 为单位通过 WebSocket 发送到 DashScope
-4. ASR 识别结果通过回调异步返回 → 存入 `subtitle_buffer`
-5. `SubtitleOverlay`（注册为帧过滤器）读取缓冲区，用 Pillow 将文本渲染到视频帧上
-6. `SRTWriter` 将完成的句子写入 `.srt` 文件，与输出容器分段同步
-7. `StreamWriter` 将修改后的帧（含烧录字幕）编码写入输出文件
-
-## 开发
+## 开发与文档
 
 ```bash
-# 安装开发依赖
-pip install -e ".[dev]"
-
-# 运行全部测试
-pytest test/ -v
-
-# 运行单个测试文件
-pytest test/test_asr_client.py -v
+python -m pip install -e . pytest playwright
+python -m pytest test/ -v
+node --test test/*.test.cjs
 ```
 
-测试遵循严格的 TDD 流程，外部依赖通过 `unittest.mock` 隔离，单元测试不产生真实 API 调用。
+前端检查使用 Node.js（CI 使用 22）。单元回归不需要真实 Key；真实识别验收单独执行并产生云端费用。
 
-## 依赖
+| 文档 | 内容 |
+| --- | --- |
+| [产品决策](docs/adr/0008-original-language-captions.md) · [术语](GLOSSARY.md) | 原文字幕的范围、行为与术语 |
+| [预览验收调整](docs/adr/0009-pr89-preview-acceptance-2026-11-04.md) | 预览版门槛及正式发布缺口 |
+| [新闻回放测试](docs/research/p0-local-news-2026-11-04.md) | 固定长视频、滚动 HLS 与字幕修正证据 |
+| [Issues](https://github.com/AiKiAi-stack/stream-with-asr/issues) | 问题反馈与功能讨论；请附复现步骤、系统版本和脱敏日志 |
+| [原工具包文档存档](docs/archive/streamparser_zh.md) | 旧流处理、配置与架构参考，含已不再提供的命令和组件 |
 
-| 包 | 用途 |
-|---|---|
-| `av` (PyAV) | FFmpeg 绑定 — 音视频编解码 |
-| `opencv-python` | 视频帧处理 |
-| `numpy` | 数组运算 |
-| `librosa` | 音频分析 |
-| `dashscope` | 阿里云 ASR SDK |
-| `Pillow` | CJK 字幕文字渲染 |
-| `pyyaml` | 配置文件解析 |
-| `concurrent-log-handler` | 多进程安全日志 |
+## 许可证
+
+[MIT](LICENSE) · 云端识别由阿里云百炼 / DashScope 提供，项目包含基于 PyAV 的音视频处理代码。
