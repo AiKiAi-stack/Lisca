@@ -51,6 +51,8 @@ cd /home/wbb/.local/share/stream-with-asr/checkouts/p0-live-source
 
 随后完整 Python 回归为 **539 passed / 1 skipped**，`82db3e7` 的远端 **9/9 CI 通过**。对上述两例录制事件继续回放，定位到预览结束后终稿重新显示已读整页，剩余仅约 0.4/0.48 秒。最后前端修正让终稿沿用稳定词组边界，英文边界后仅显示 `table.`，中文仅显示 `阶段。`；原词区间、全文和完整拼写保持，当前已读文字不重复。新增回归先红后绿，全部 Node **116 项通过**。这一步只用同一批真实事件离线回放，未追加付费识别；原实测短闪/空白数字保留为修正前的观察，新精确提交 CI 单独核对。
 
+合入前的规范与需求审查还发现收尾期间仅交付字幕、未同步推进播放上限的问题。补齐三个终稿交付路径的 buffer/ready 更新，本地文件与 HLS 的公开回归均先失败后通过；相关 70 项检查通过。该修正不改变原播放等待预算，正式产品验收仍独立保留。
+
 ## 原始证据
 
 本机目录 `/home/wbb/.local/share/stream-with-asr/notes/local-live-20261103/` 保存 `baseline-01`、`en-before`、`en-after`、`en-final`、`zh-final`，每例包括真实事件、50ms 采样、固定间隔截图和浏览器音频。`news-final-service.json` 记录运行文件 SHA256，`attempt-ledger.md` 保留原失败、假设与最后一次组合决策。

@@ -1281,6 +1281,7 @@ async def ws_endpoint(ws: WebSocket):
                             result = call_provider(engine.poll)
                             if result[0] is not None:
                                 emit(result)
+                                publish_buffer()
                             else:
                                 _session_wait(stop, 0.02)
                         completion.result()
@@ -1291,12 +1292,14 @@ async def ws_endpoint(ws: WebSocket):
                     return
                 if o[0] is not None:
                     emit(o)
+                    publish_buffer()
                 # finish 后仍可能有剩余句子（异步引擎），poll 取尽
                 while True:
                     o2 = call_provider(engine.poll)
                     if o2[0] is None:
                         break
                     emit(o2)
+                    publish_buffer()
                 if translation:
                     translation.finish()
                 normal_completion = True

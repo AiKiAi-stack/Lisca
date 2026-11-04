@@ -1106,17 +1106,19 @@ def test_audio_timeline_error_is_terminal_and_stops_source(
     }
 
 
-def test_provider_results_are_delivered_while_finalization_is_still_waiting(tmp_path, monkeypatch):
+@pytest.mark.parametrize('local_file', [False, True])
+def test_provider_results_are_delivered_while_finalization_is_still_waiting(tmp_path, monkeypatch, local_file):
     monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
     monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
     finishing = threading.Event()
     release = threading.Event()
     returned = threading.Event()
     delivered = threading.Event()
+    observed = {'caption': False, 'buffer': False, 'ready': False}
 
     class Source:
         def __init__(self, *_args, **_kwargs): pass
-        def iter_chunks(self): yield b'\x00\x10' * 1600
+        def iter_chunks(self): yield b'\x00\x10' * 16000
         def close(self): pass
 
     class Engine:
@@ -1137,18 +1139,31 @@ def test_provider_results_are_delivered_while_finalization_is_still_waiting(tmp_
 
     monkeypatch.setattr(webui, 'StreamSource', Source)
     monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    media_url = 'https://media.test/live.m3u8'
+    if local_file:
+        media = tmp_path / 'local.mp4'
+        media.touch()
+        media_url = str(media)
     try:
         with TestClient(webui.app) as client:
             client.put('/api/cloud', json={'api_key':'test-private-key'})
-            token = client.post('/api/cloud/sessions', json={'url':'https://media.test/live.m3u8'}).json()['session']
+            token = client.post('/api/cloud/sessions', json={'url':media_url}).json()['session']
             with client.websocket_connect('/ws?session=' + token) as socket:
                 while True:
                     event = socket.receive_json()
                     if event['type'] == 'subtitle':
                         assert not returned.is_set(), 'caption waited until the blocking provider finalize returned'
+                        observed['caption'] = True
+                    if event['type'] == 'buffer' and event['play_at'] >= .8:
+                        observed['buffer'] = True
+                    if event['type'] == 'ready':
+                        assert not returned.is_set(), 'playback waited until the blocking provider finalize returned'
+                        assert observed['caption'] and observed['buffer']
+                        observed['ready'] = True
                         release.set()
                     if event['type'] == 'end': break
         assert delivered.is_set()
+        assert observed['ready']
     finally:
         release.set()
 
