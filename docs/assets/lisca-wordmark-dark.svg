@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="368" height="120" viewBox="0 0 368 120" role="img" aria-labelledby="title desc">
+  <title id="title">Lisca</title>
+  <desc id="desc">Live Stream Captions. A speech window with two caption lines next to the Lisca wordmark.</desc>
+  <path d="M20 27a12 12 0 0 1 12-12h61a12 12 0 0 1 12 12v49a12 12 0 0 1-12 12H52l-20 17V88a12 12 0 0 1-12-12z" fill="none" stroke="#f0f3f6" stroke-width="6" stroke-linejoin="round"/>
+  <circle cx="88" cy="16" r="12" fill="#ed6a3b"/>
+  <path d="M39 45h47M39 62h32" fill="none" stroke="#f0f3f6" stroke-width="6" stroke-linecap="round"/>
+  <text x="132" y="90" fill="#f0f3f6" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="91" font-weight="750" letter-spacing="-4">Lisca</text>
+</svg>
