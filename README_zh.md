@@ -21,7 +21,7 @@
   <a href="#当前状态"><img src="https://img.shields.io/badge/status-preview-ed6a3b" alt="实验预览版"></a>
 </p>
 
-**Lisca**（**LI**ve **S**tream **CA**ptions）让你在浏览器里观看带原文字幕的直播，也支持本地视频。粘贴直播地址、选好频道，就能一边看节目一边读字幕：中文语音出中文，英文语音出英文。
+Lisca（LIve Stream CAptions）为浏览器中的直播生成原文字幕。粘贴直播地址，或从频道清单中选台，就能边看边读：中文语音出中文字幕，英文语音出英文字幕。也支持打开本地视频。
 
 ## 观看效果
 
@@ -36,13 +36,13 @@
 
 ![英文新闻实时回放与自动字幕](docs/assets/live-captions-en.png)
 
-英文语音保留英文。节目来源：[PBS NewsHour](https://www.youtube.com/watch?v=TSM3yOPmscI)。两张截图来自固定新闻视频的实时回放，测试方法见[回放记录](docs/research/p0-local-news-2026-11-04.md)。
+节目来源：[PBS NewsHour](https://www.youtube.com/watch?v=TSM3yOPmscI)。两张截图均来自固定新闻视频的实时回放，方法见[回放记录](docs/research/p0-local-news-2026-11-04.md)。
 
 </details>
 
 ## 开始使用
 
-需要 **64 位 Python 3.10–3.12**（推荐 3.12）和已开通 `fun-asr-realtime` 的**百炼中国内地 API Key**。云端模式无需本地 GPU、模型或单独安装系统 FFmpeg。
+需要 64 位 Python 3.10–3.12（推荐 3.12），以及已开通 `fun-asr-realtime` 的百炼中国内地 API Key。云端模式不需要本地 GPU，也不用下载模型或单独安装系统 FFmpeg。
 
 ### 安装与启动
 
@@ -53,12 +53,12 @@ git clone https://github.com/AiKiAi-stack/stream-with-asr.git
 cd stream-with-asr
 ```
 
-**Windows：**安装 Python 时启用 Python Launcher，双击 `start-windows.cmd`。首次运行会安装依赖，随后自动打开 [127.0.0.1:8002](http://127.0.0.1:8002/)。
+Windows 用户安装 Python 时需启用 Python Launcher，然后双击 `start-windows.cmd`。首次运行会安装依赖，随后自动打开 [127.0.0.1:8002](http://127.0.0.1:8002/)。
 
 <details>
 <summary>Linux / 手动启动</summary>
 
-在项目目录执行；使用 Python 3.10 或 3.11 时，替换首行解释器名称：
+在项目目录执行以下命令。使用 Python 3.10 或 3.11 时，替换首行的解释器名称：
 
 ```bash
 python3.12 -m venv .venv
@@ -75,35 +75,35 @@ python tools/webui.py --host 127.0.0.1 --port 8002
 
 1. 打开「设置」，填写并应用百炼 Key。
 2. 粘贴直播地址。若是 M3U 频道清单，点击「选择频道」选台。
-3. 点击「播放并生成字幕」，等待字幕就绪后观看。
+3. 点击「播放并生成字幕」，等待字幕就绪。
 
-选台不会启动识别。字幕开关、记录和全屏位于播放器下方，字号与位置可在设置中调整。可从[公开频道清单](examples/public-live-channels.m3u)寻找来源；地址是否可播取决于网络与来源自身。
+选台不会启动识别。播放器下方可以开关字幕、查看记录和进入全屏，字幕字号与位置可在设置中调整。可以试试[公开频道清单](examples/public-live-channels.m3u)，能否播放取决于网络和来源。
 
 音频会发送到百炼，费用由你的 API 账户承担；「检查连接」也会连接云端识别服务。Key 默认仅保留在服务内存，Windows 可选择通过 DPAPI 加密保存。
 
 ## 功能
 
-- **直播原文字幕。** 支持直播链接与 M3U 选台，自动识别中文、英文；画面按语音时间显示稳定短句。
-- **在浏览器里观看。** 调整字幕样式、查看完整记录，或进入全屏。
-- **本地视频。** 点击「打开文件」即可使用同一播放器；识别完成后，暂停和跳转复用已有字幕。
-- **局域网分享。** 主机识别一份，最多 3 台观众设备通过只读链接加入观看。
+- 打开直播链接或从 M3U 清单中选台，自动识别中文、英文，按语音时间显示稳定短句。
+- 在浏览器里调整字幕样式、查看完整记录，或全屏观看。
+- 点击「打开文件」，在同一播放器中观看本地视频。识别完成后，暂停和跳转会使用已有字幕。
+- 在局域网内分享直播：由一台主机处理识别，最多 3 台观众设备通过只读链接加入观看。
 
 <details>
 <summary>如何分享给同一局域网的设备？</summary>
 
-以 `python tools/webui.py --host 0.0.0.0 --port 8002` 启动。主机从本机地址打开管理页面，开始直播后在设置中复制观众链接；多网卡时选择观众能访问的地址，并允许家庭/专用网络访问端口 `8002`。观众无需另填 Key，直播停止后链接失效。
+以 `python tools/webui.py --host 0.0.0.0 --port 8002` 启动服务。在主机上通过本机地址打开管理页面，开始直播后，从设置中复制观众链接。有多张网卡时，选择观众设备能访问的地址，并在防火墙中允许家庭/专用网络访问端口 `8002`。观众无需另填 Key，直播停止后链接失效。
 
 </details>
 
 ## 当前状态
 
-Lisca 目前是实验预览版，专注原文字幕，跨语言翻译暂停。中英文固定新闻源均完成了 30 分钟实时回放；启动达到当前预览门槛。独立声学同步和有声覆盖仍未验证通过，部分短暂页面、空字幕及识别错误还需改善。详见[预览范围](docs/adr/0009-pr89-preview-acceptance-2026-11-04.md)与[实际测试记录](docs/plans/2026-11-04-pr89-acceptance-recheck.md)。
+Lisca 目前是原文字幕的实验预览版，跨语言翻译暂停。中英文固定新闻源各完成了 30 分钟实时回放，启动耗时达到当前预览门槛。独立声学同步和有声片段的字幕覆盖仍未验证通过；部分字幕停留过短，有些时段没有字幕，识别也仍有错误。详见[预览范围](docs/adr/0009-pr89-preview-acceptance-2026-11-04.md)与[实际测试记录](docs/plans/2026-11-04-pr89-acceptance-recheck.md)。
 
-公共直播源受网络、地区和账号限制影响。没有稳定来源时，可先用本地视频，或参考[新闻模拟直播方法](docs/research/p0-local-news-2026-11-04.md)。本地离线整段转写另见 [FunASR Vulkan 指南](docs/funasr-vulkan.md)。
+公共直播源可能受到网络、地区或账号限制。找不到稳定来源时，可先用本地视频，或参考[新闻模拟直播方法](docs/research/p0-local-news-2026-11-04.md)。本地离线整段转写另见 [FunASR Vulkan 指南](docs/funasr-vulkan.md)。
 
 ## 帮助与贡献
 
-遇到问题请在 [Issues](https://github.com/AiKiAi-stack/stream-with-asr/issues) 附上复现步骤、系统版本与脱敏日志。设置中的「诊断日志」可辅助排查；请勿公开 API Key。
+遇到问题，请到 [Issues](https://github.com/AiKiAi-stack/stream-with-asr/issues) 反馈，附上复现步骤、系统版本和脱敏日志。日志可从设置中的「诊断日志」获取。请勿公开 API Key。
 
 <details>
 <summary>开发与运行测试</summary>
@@ -114,7 +114,7 @@ python -m pytest test/ -v
 node --test test/*.test.cjs
 ```
 
-前端检查需要 Node.js（CI 使用 22）。单元回归不需要真实 Key，真实识别验收单独执行并产生费用。
+前端检查需要 Node.js（CI 使用 22）。单元测试不需要真实 Key。使用真实识别服务的验收单独执行，会产生云端费用。
 
 [产品决策](docs/adr/0008-original-language-captions.md) · [术语](GLOSSARY.md) · [原工具包存档](docs/archive/streamparser_zh.md)
 

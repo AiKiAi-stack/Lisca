@@ -21,7 +21,7 @@
   <a href="#status"><img src="https://img.shields.io/badge/status-preview-ed6a3b" alt="Experimental preview"></a>
 </p>
 
-**Lisca** (**LI**ve **S**tream **CA**ptions) adds original-language captions to live streams in your browser, with local video support too. Paste a stream URL, pick your channel and watch with captions. Chinese speech stays Chinese; English speech stays English.
+Lisca (LIve Stream CAptions) adds original-language captions to live streams in your browser. Paste a stream URL or choose a channel from a playlist to start watching. Chinese speech produces Chinese captions; English speech produces English captions. You can also open a local video.
 
 ## See it in action
 
@@ -36,13 +36,13 @@
 
 ![Chinese news replay with generated captions](docs/assets/live-captions-zh.png)
 
-Chinese speech stays Chinese. Program source: [PTS News](https://www.youtube.com/watch?v=gnF2NFYjRPE). Both screenshots come from fixed news videos replayed in real time; see the [replay record](docs/research/p0-local-news-2026-11-04.md) for the method.
+Program source: [PTS News](https://www.youtube.com/watch?v=gnF2NFYjRPE). Both screenshots show fixed news videos replayed in real time. See the [replay record](docs/research/p0-local-news-2026-11-04.md) for details.
 
 </details>
 
 ## Get started
 
-You need **64-bit Python 3.10–3.12** (3.12 recommended) and a **mainland-China DashScope API key** with `fun-asr-realtime` enabled. Cloud mode needs no local GPU, model download or separate system FFmpeg installation.
+You need 64-bit Python 3.10–3.12 (3.12 recommended) and a DashScope API key for the mainland China region with `fun-asr-realtime` enabled. Cloud mode does not require a local GPU, model downloads or a separate system FFmpeg installation.
 
 ### Install and launch
 
@@ -53,12 +53,12 @@ git clone https://github.com/AiKiAi-stack/stream-with-asr.git
 cd stream-with-asr
 ```
 
-**Windows:** enable the Python Launcher when installing Python, then double-click `start-windows.cmd`. The first run installs dependencies and opens [127.0.0.1:8002](http://127.0.0.1:8002/).
+On Windows, enable the Python Launcher when installing Python, then double-click `start-windows.cmd`. The first run installs dependencies and opens [127.0.0.1:8002](http://127.0.0.1:8002/).
 
 <details>
 <summary>Linux / manual setup</summary>
 
-Run from the repository directory. Substitute your interpreter name on the first line if using Python 3.10 or 3.11:
+Run these commands from the repository directory. If you use Python 3.10 or 3.11, change the interpreter name on the first line:
 
 ```bash
 python3.12 -m venv .venv
@@ -73,37 +73,37 @@ Open [127.0.0.1:8002](http://127.0.0.1:8002/) in your browser.
 
 ### Watch your first stream
 
-1. Open Settings (**设置**) and apply your DashScope key.
-2. Paste a stream URL. For an M3U playlist, click Select channel (**选择频道**).
-3. Click Play and generate captions (**播放并生成字幕**), then wait for captions to become ready.
+1. Open Settings (设置), enter your DashScope key and apply it.
+2. Paste a stream URL. For an M3U playlist, click Select channel (选择频道).
+3. Click Play and generate captions (播放并生成字幕), then wait for captions to be ready.
 
-Choosing a channel does not start recognition. Caption controls, history and fullscreen are below the player; size and position are in Settings. The UI currently uses Chinese labels. Try the [public channel list](examples/public-live-channels.m3u); availability depends on your network and the source itself.
+Choosing a channel does not start recognition. Below the player, you can toggle captions, view the transcript and enter fullscreen. Adjust caption size and position in Settings. The UI currently uses Chinese labels. You can try the [public channel list](examples/public-live-channels.m3u), though availability depends on your network and the source.
 
 Audio is sent to DashScope and billed to your API account. The connection check also connects to cloud ASR. Keys stay in server memory by default; Windows offers optional DPAPI-encrypted persistence.
 
 ## Features
 
-- **Live captions.** Open a stream or select an M3U channel. Chinese and English are detected automatically; stable phrases follow speech timestamps.
-- **Browser playback.** Adjust caption styling, read the full transcript or watch in fullscreen.
-- **Local video.** Open a file in the same player. Once transcription finishes, pause and seek reuse existing captions.
-- **LAN sharing.** One host runs recognition; up to three viewer devices join through read-only links.
+- Open a live stream or choose an M3U channel. Lisca detects Chinese and English automatically and displays stable phrases using speech timestamps.
+- Adjust caption styling, read the full transcript or watch in fullscreen.
+- Open local videos in the same player. Once transcription finishes, pausing and seeking use the existing captions.
+- Share a live session over your LAN. One host runs recognition, and up to three viewer devices can join through read-only links.
 
 <details>
 <summary>How do I share with devices on my LAN?</summary>
 
-Start with `python tools/webui.py --host 0.0.0.0 --port 8002`. Open the management page locally on the host, start a live session and copy its viewer link from Settings. Choose a reachable address if you have multiple adapters, and allow port `8002` through your private-network firewall. Viewers need no separate key. The link expires when the session stops.
+Launch the server with `python tools/webui.py --host 0.0.0.0 --port 8002`. Open the management page locally on the host, start a live session and copy its viewer link from Settings. Choose a reachable address if you have multiple adapters, and allow port `8002` through your private-network firewall. Viewers need no separate key. The link expires when the session stops.
 
 </details>
 
 ## Status
 
-Lisca is an experimental preview focused on original-language captions; cross-language translation is paused. Fixed Chinese and English news inputs have each completed 30 minutes of real-time replay, and startup meets the current preview threshold. Independent acoustic synchronization and voiced coverage have not passed validation. Some short caption pages, blank intervals and recognition errors still need improvement. See the [preview scope](docs/adr/0009-pr89-preview-acceptance-2026-11-04.md) and [test record](docs/plans/2026-11-04-pr89-acceptance-recheck.md).
+Lisca is an experimental preview for original-language captions. Cross-language translation is paused. Fixed Chinese and English news inputs have each completed 30 minutes of real-time replay, and startup meets the current preview threshold. Independent acoustic synchronization and caption coverage during speech have not passed validation. Some captions appear too briefly, some intervals have no captions, and recognition errors remain. See the [preview scope](docs/adr/0009-pr89-preview-acceptance-2026-11-04.md) and [test record](docs/plans/2026-11-04-pr89-acceptance-recheck.md).
 
-Public streams can have network, regional or account restrictions. Start with a local video if you need a reliable input, or use the [news replay method](docs/research/p0-local-news-2026-11-04.md). For offline whole-file transcription, see the [FunASR Vulkan guide](docs/funasr-vulkan.md).
+Public streams may be restricted by network, region or account. If you cannot find a reliable source, try a local video or use the [news replay method](docs/research/p0-local-news-2026-11-04.md). For offline whole-file transcription, see the [FunASR Vulkan guide](docs/funasr-vulkan.md).
 
 ## Help and contribute
 
-Report problems in [Issues](https://github.com/AiKiAi-stack/stream-with-asr/issues) with reproduction steps, your OS version and redacted logs. The diagnostic log in Settings can help; never publish your API key.
+To report a problem, open an [Issue](https://github.com/AiKiAi-stack/stream-with-asr/issues) with steps to reproduce it, your OS version and redacted logs. You can find the diagnostic log in Settings. Never publish your API key.
 
 <details>
 <summary>Development and tests</summary>
@@ -114,7 +114,7 @@ python -m pytest test/ -v
 node --test test/*.test.cjs
 ```
 
-Frontend checks need Node.js (CI uses 22). Unit regressions need no real key; real recognition acceptance runs separately and incurs cloud charges.
+Frontend checks need Node.js (CI uses 22). Unit tests do not need a real key. Acceptance tests with real speech recognition run separately and incur cloud charges.
 
 [Product decision](docs/adr/0008-original-language-captions.md) · [Glossary](GLOSSARY.md) · [Historical toolkit archive](docs/archive/streamparser.md)
 
