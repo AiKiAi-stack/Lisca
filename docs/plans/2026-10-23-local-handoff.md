@@ -45,7 +45,7 @@ Linux 启动命令（重启前仍须检查 8002 端口所属进程）：
 
 ```bash
 .scratch/linux-venv/bin/python -m pytest test/ -q -o cache_dir=.scratch/pytest-cache
-node test/caption_browser.test.cjs
+node tests/frontend/caption_browser.test.cjs
 ```
 
 `node` 不在当前 shell PATH 时，使用宿主提供的 Node.js 绝对路径。现有 Windows 环境仍使用 `.venv/Scripts/`，不可把 Linux 测试路径当作 Windows 安装说明。

@@ -1,5 +1,9 @@
 ## Agent skills
 
+### Repository layout
+
+When locating code, tests, acceptance tools or historical documents, read `docs/README.md`.
+
 ### Local WebUI
 
 Use the existing WebUI at `http://127.0.0.1:8002/` for local checks. After updating

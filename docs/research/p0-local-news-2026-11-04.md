@@ -13,11 +13,11 @@
 
 两份均为完整下载的 H.264/AAC，已检查音视频轨和末尾可解码；来源与 SHA256 见 [素材清单](local-news-test-sources-2026-11-03.json)。媒体和完整下载元数据留在 Git 外。最初 PBS 另一视频的三次下载失败保留；备用公开视频成功，未使用登录或 Cookie。中文经过一次断点续传完成。
 
-`test/local_live_replay.py` 将实际文件按 `-re` 速度转为两秒滚动 HLS，通过普通 WebUI 的同一个 8002 提供媒体。只模拟媒体来源，页面、播放器、真实云端识别和计费会话继续使用产品链路。最多两个编码器，每个两线程；临时分片有界，退出时清理，不自动开始识别。
+`tests/acceptance/local_live_replay.py` 将实际文件按 `-re` 速度转为两秒滚动 HLS，通过普通 WebUI 的同一个 8002 提供媒体。只模拟媒体来源，页面、播放器、真实云端识别和计费会话继续使用产品链路。最多两个编码器，每个两线程；临时分片有界，退出时清理，不自动开始识别。
 
 ```bash
 cd /home/wbb/.local/share/stream-with-asr/checkouts/p0-live-source
-/home/wbb/.local/share/stream-with-asr/notes/recovery-20261102/preview-install-venv/bin/python test/local_live_replay.py \
+/home/wbb/.local/share/stream-with-asr/notes/recovery-20261102/preview-install-venv/bin/python tests/acceptance/local_live_replay.py \
   --ffmpeg /home/wbb/.local/share/stream-with-asr/dev-venv/lib/python3.12/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v9.0.2 \
   --source /media/wbb/KEKE/StreamASRTestMedia/20261103/zh/gnF2NFYjRPE.mp4 --label '中文新闻回放 · 公视' \
   --source /media/wbb/KEKE/StreamASRTestMedia/20261103/en/pbs-newshour-TSM3yOPmscI.mp4 --label 'English news replay · PBS' --loop

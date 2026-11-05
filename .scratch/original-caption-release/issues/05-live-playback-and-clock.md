@@ -25,4 +25,4 @@
 
 **External prerequisites:** 自动化使用本地 HLS，不代表公网可播或 30 分钟真实识别通过；这些由 10 验证。
 
-**集成验证（2026-10-24）:** `test/e2e_original_live.py`正常/迟到链，`test/e2e_original_live_failures.py`3项及source_buffer真实播放器模拟回归通过；2秒逻辑预算不被迟到链重置，缺失提示持续到实际追上，来源缓冲独立。纯识别恢复保留媒体及3代同ID字幕历史；晚到PTS与正常结束队列由公共浏览器消息链测试覆盖。 所有浏览器识别均为离线替身，不代表PRD真实质量或发布门槛通过。最终代码、复审和日志索引见[实施状态](../../../docs/plans/2026-10-23-original-caption-implementation-status.md)。
+**集成验证（2026-10-24）:** `tests/browser/e2e_original_live.py`正常/迟到链，`tests/browser/e2e_original_live_failures.py`3项及source_buffer真实播放器模拟回归通过；2秒逻辑预算不被迟到链重置，缺失提示持续到实际追上，来源缓冲独立。纯识别恢复保留媒体及3代同ID字幕历史；晚到PTS与正常结束队列由公共浏览器消息链测试覆盖。 所有浏览器识别均为离线替身，不代表PRD真实质量或发布门槛通过。最终代码、复审和日志索引见[实施状态](../../../docs/plans/2026-10-23-original-caption-implementation-status.md)。

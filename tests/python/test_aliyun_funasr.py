@@ -1,0 +1,150 @@
+"""ticket-05: AliyunFunASREngine 测试（mock dashscope/streamparser，无需真实 key）"""
+import sys
+import types
+from collections import deque
+
+import pytest
+
+
+
+def _patch_deps(monkeypatch, with_client=True):
+    fake_dashscope = types.ModuleType("dashscope")
+    monkeypatch.setitem(sys.modules, "dashscope", fake_dashscope)
+
+    fake_streamparser = types.ModuleType("streamparser")
+    monkeypatch.setitem(sys.modules, "streamparser", fake_streamparser)
+
+    fake_client_mod = types.ModuleType("streamparser.asr_client")
+
+    class FakeClient:
+        instances = []
+
+        def __init__(self, settings, chunk_size=3200, **kwargs):
+            self.settings = settings
+            self.kwargs = kwargs
+            self.started = False
+            FakeClient.instances.append(self)
+
+        def start(self):
+            self.started = True
+
+        def stop(self):
+            pass
+
+        def raise_if_error(self):
+            pass
+
+    fake_client_mod.ASRClient = FakeClient
+    monkeypatch.setitem(sys.modules, "streamparser.asr_client", fake_client_mod)
+
+    fake_config_mod = types.ModuleType("streamparser.asr_config")
+
+    class FakeSettings:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    fake_config_mod.ASRSettings = FakeSettings
+    monkeypatch.setitem(sys.modules, "streamparser.asr_config", fake_config_mod)
+    return FakeClient
+
+
+def test_aliyun_without_key_raises(monkeypatch):
+    from engines import create_engine
+
+    _patch_deps(monkeypatch)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="DASHSCOPE_API_KEY"):
+        create_engine("aliyun-funasr", workspace_id="ws-1")
+
+
+def test_aliyun_without_workspace_ok(monkeypatch):
+    """新版 SDK 支持默认业务空间，workspace_id 可选"""
+    from engines import create_engine
+
+    FakeClient = _patch_deps(monkeypatch)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    eng = create_engine("aliyun-funasr")
+    assert FakeClient.instances and FakeClient.instances[-1].started
+    eng.close()
+
+
+def test_aliyun_success_constructs_client(monkeypatch):
+    from engines import create_engine
+
+    FakeClient = _patch_deps(monkeypatch)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    eng = create_engine("aliyun-funasr", workspace_id="ws-1", region="cn-beijing")
+    assert FakeClient.instances, "ASRClient 应被构造"
+    client = FakeClient.instances[-1]
+    assert client.started, "start() 应被调用"
+    assert client.settings.api_key == "sk-test"
+    assert client.settings.workspace_id == "ws-1"
+    assert hasattr(eng, "transcribe_chunk") and hasattr(eng, "finish")
+    eng.close()
+
+
+def test_aliyun_passes_recognition_kwargs(monkeypatch):
+    """断句灵敏度/心跳/语种应透传 ASRClient → Recognition（ticket-10）"""
+    from engines import create_engine
+
+    FakeClient = _patch_deps(monkeypatch)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    eng = create_engine("aliyun-funasr", max_sentence_silence=800)
+    client = FakeClient.instances[-1]
+    assert client.kwargs["max_sentence_silence"] == 800
+    assert client.kwargs["multi_threshold_mode_enabled"] is True
+    assert client.kwargs["heartbeat"] is True
+    assert client.kwargs["language_hints"] == ["zh"]
+    eng.close()
+
+
+def test_aliyun_preserves_missing_sentence_end(monkeypatch):
+    """Unknown ASR end times must not be shortened to a fabricated one-second cue."""
+    from engines import create_engine
+
+    FakeClient = _patch_deps(monkeypatch)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    eng = create_engine("aliyun-funasr")
+    FakeClient.instances[-1].subtitle_buffer = deque()
+    FakeClient.instances[-1].subtitle_buffer.append(types.SimpleNamespace(
+        start_time=20.2, end_time=0.0,
+        text="A long partial sentence while the speaker is still talking.",
+        words=None, is_final=False,
+    ))
+
+    assert eng.poll() == (
+        20.2, None,
+        "A long partial sentence while the speaker is still talking.", None, False,
+            None,
+    )
+    eng.close()
+
+
+def test_aliyun_preserves_empty_final_revision_for_caption_withdrawal(monkeypatch):
+    from engines import create_engine
+
+    fake_client = _patch_deps(monkeypatch)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    engine = create_engine("aliyun-funasr")
+    fake_client.instances[-1].subtitle_buffer = deque([types.SimpleNamespace(
+        start_time=1.0, end_time=2.0, text="", words=None, is_final=True, sentence_id=7)])
+    assert engine.poll() == (1.0, 2.0, "", None, True, 7)
+    engine.close()
+
+
+def test_finalize_closes_input_once_without_consuming_pending_captions(monkeypatch):
+    from engines import create_engine
+
+    FakeClient = _patch_deps(monkeypatch)
+    engine = create_engine('aliyun-funasr', api_key='test-private-key')
+    client = FakeClient.instances[-1]
+    stops = []
+    client.stop = lambda: stops.append(True)
+    client.subtitle_buffer = deque([types.SimpleNamespace(
+        text='This result is already ready.', start_time=0, end_time=2,
+        words=None, is_final=True, sentence_id=1)])
+    engine.finalize()
+    assert len(client.subtitle_buffer) == 1
+    assert engine.finish()[2] == 'This result is already ready.'
+    assert stops == [True]
+    engine.close()

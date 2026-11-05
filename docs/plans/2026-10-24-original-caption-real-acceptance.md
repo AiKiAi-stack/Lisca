@@ -97,7 +97,7 @@ Al Jazeera 最低码率英文来源在1038.982秒后以 `no_progress` 失败（�
 
 后端修复已提交 `7e533a0`。全量Python **222 passed / 1 Windows skipped**（70.15秒，1条上游Starlette弃用警告），87个Python文件CI错误级静态检查通过。滚动HTTPS夹具在第二份清单结束，仍验证实际重取与新增分片，避免把无限直播的阻塞next当作有限测试。
 
-新的Chrome离线播放回归 `test/e2e_original_live_clock_budget.py` 使用真实本机HLS/MSE与页面局部模拟识别消息，真实provider调用0。late-ready前媒体3.077秒、消息目标1.577秒，消息后最低3.100秒，无回退；二次故障无新增hold。16秒用户暂停及实际拦截seg03产生的来源waiting后，来源缓冲期间guard未额外pause，放行后仍有完整首次等待且字幕恢复、无timeout。尚未播放HLS仍正确定位2.5秒。离散观测的两场hold为2.025/2.075秒，逻辑预算为2000ms，**不将采样含调度误差写成物理上严格≤2秒**。摘要保存在忽略目录 `live-clock-budget-replay.json`，不是新的真实ASR长测。
+新的Chrome离线播放回归 `tests/browser/e2e_original_live_clock_budget.py` 使用真实本机HLS/MSE与页面局部模拟识别消息，真实provider调用0。late-ready前媒体3.077秒、消息目标1.577秒，消息后最低3.100秒，无回退；二次故障无新增hold。16秒用户暂停及实际拦截seg03产生的来源waiting后，来源缓冲期间guard未额外pause，放行后仍有完整首次等待且字幕恢复、无timeout。尚未播放HLS仍正确定位2.5秒。离散观测的两场hold为2.025/2.075秒，逻辑预算为2000ms，**不将采样含调度误差写成物理上严格≤2秒**。摘要保存在忽略目录 `live-clock-budget-replay.json`，不是新的真实ASR长测。
 
 修复后还分别直接解码两条公网HLS各32秒PCM：Al Jazeera耗时17.076秒，CCTV-4 Europe23.517秒，均无补入间隙/异常，实际ASR调用0。该检查只证明此时来源与新解码器可配合，不是浏览器字幕、独立语种听审或30分钟同步/延迟证明；记录 `postfix-live-decode-preflight.json`。
 
