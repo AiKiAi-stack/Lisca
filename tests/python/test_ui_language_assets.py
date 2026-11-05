@@ -17,6 +17,9 @@ def test_language_script_is_served_without_exposing_management():
                 assert "no-store" in response.headers["cache-control"]
                 assert "createI18n" in response.text
                 assert (await client.get("/recovery_controller.js")).status_code == 200
+                library = await client.get("/source_library.js")
+                assert library.status_code == 200
+                assert "RecentChannels" in library.text
                 configuration = await client.get("/api/cloud")
                 assert configuration.status_code == (200 if address == "127.0.0.1" else 403)
                 page = await client.get("/?lang=en")

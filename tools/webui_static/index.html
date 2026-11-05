@@ -4,23 +4,33 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lisca · 实时字幕</title>
+<meta name="theme-color" content="#f4f5f7">
 <link rel="stylesheet" href="/player.css">
 <script src="/i18n.js"></script>
 </head>
 <body>
+<a href="#main" class="skip-link">跳到播放器</a>
 <header>
- <div class="brand-row"><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>Lisca</h1><small>识别声音，保留原话</small></div></div><div class="brand-actions"><label class="sr-only" for="uiLanguage">界面语言</label><select id="uiLanguage" aria-label="界面语言" data-i18n-skip><option value="zh">中文</option><option value="en">English</option></select><button id="settingsBtn" class="quiet"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 3-1 3-3 1-3 3 2 2-1 4 3 3 3-1 2 3 4-1 1-3 3-1 1-4-3-2 1-3-3-3-3 1z"/></svg>设置</button></div></div>
- <h2 class="step-title">1. 选择内容</h2>
- <div class="source-row"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或打开本地视频" autocomplete="off"><button id="uploadBtn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM3 7V4h6l3 3"/></svg>打开文件</button><button id="chBtn">选择频道</button></div>
- <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
+ <div class="brand-row"><div class="brand-start"><button id="sidebarToggle" class="quiet" aria-controls="sourceSidebar" aria-expanded="true" aria-label="频道侧栏"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg><span>内容</span></button><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>Lisca</h1><small>识别声音，保留原话</small></div></div></div><div class="brand-actions"><label class="sr-only" for="uiLanguage">界面语言</label><select id="uiLanguage" aria-label="界面语言" data-i18n-skip><option value="zh">中文</option><option value="en">English</option></select><button id="settingsBtn" class="quiet"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 3-1 3-3 1-3 3 2 2-1 4 3 3 3-1 2 3 4-1 1-3 3-1 1-4-3-2 1-3-3-3-3 1z"/></svg>设置</button></div></div>
 </header>
-<main>
- <div class="watch-row"><h2 class="step-title">2. 播放与字幕</h2><span id="selectionStatus" role="status">尚未选择内容</span><span id="modeBadge" class="mode-badge">原文字幕 · 自动识别</span><button id="start" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>播放并生成字幕</button><button id="stop">停止识别</button></div>
- <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开内容，生成原文字幕</h2><p>中文语音出中文字幕，英文语音出英文字幕</p></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
+<div class="app-shell">
+ <div id="sidebarHome"><aside id="sourceSidebar" aria-labelledby="sourceLibraryTitle">
+  <div class="library-head"><h2 id="sourceLibraryTitle">内容</h2><button id="sidebarClose" class="quiet" aria-label="收起频道侧栏">收起</button></div>
+  <button id="chBtn" class="library-manage">管理频道列表</button>
+  <section aria-labelledby="exampleChannelsTitle"><h3 id="exampleChannelsTitle">示例频道</h3><div id="exampleChannels" class="library-list"></div><p class="library-note">公共直播源，可能暂时不可用</p></section>
+  <section aria-labelledby="recentChannelsTitle"><div class="library-section-head"><h3 id="recentChannelsTitle">最近观看</h3><button id="clearRecentChannels" class="quiet">清空</button></div><div id="recentChannels" class="library-list"></div></section>
+ </aside></div>
+<main id="main">
+ <div class="source-row source-dock"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或输入本机文件路径" autocomplete="off" spellcheck="false"><button id="uploadBtn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM3 7V4h6l3 3"/></svg>打开文件</button></div>
+ <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
+ <div class="watch-row"><span id="selectionStatus" role="status">尚未选择内容</span><span id="modeBadge" class="mode-badge">原文字幕 · 自动识别</span><button id="start" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>播放并生成字幕</button><button id="stop" title="停止播放与识别">结束观看</button></div>
+ <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开一段内容</h2><p>直播与本地视频，保留语音原文</p><div class="empty-actions"><button id="emptyUpload" class="primary">本地视频</button><button id="emptyLink">直播链接</button></div></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
  <div class="player-footer"><div><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div id="shareHistoryNotice" role="status" hidden></div><div id="sourceBufferStatus" role="status" hidden></div></div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关原文字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
  <div id="captionActions" hidden><button id="retryCaptions">重试字幕</button><button id="playOnly">仅播放（停止识别）</button></div>
  <div id="lateCaption" hidden></div>
 </main>
+</div>
+<dialog id="sourceDrawer" aria-labelledby="sourceLibraryTitle"></dialog>
 <dialog id="settingsDialog" aria-labelledby="settingsDialogTitle"><div class="dialog-head"><h2 id="settingsDialogTitle">设置</h2><button class="quiet" data-close="settingsDialog" aria-label="关闭设置">关闭</button></div><div class="dialog-body"><div class="tabs" role="tablist" aria-label="设置分类"><button role="tab" aria-selected="true" aria-controls="cloudSettings" data-pane="cloudSettings">云端服务</button><button role="tab" aria-selected="false" aria-controls="captionSettings" data-pane="captionSettings">字幕</button><button role="tab" aria-selected="false" aria-controls="moreSettings" data-pane="moreSettings">更多</button></div><section id="cloudSettings" class="setting-section">  <section id="cloudPanel">
     <h3>阿里云百炼（中国内地）</h3>
     <p>使用 FunASR 识别音频，字幕保留语音原文。音频会发送给百炼，费用由你的 API 账户承担；本模式不调用翻译服务。</p>
@@ -78,6 +88,7 @@
 <script src="/caption_presenter.js"></script>
 <script src="/playback_guard.js"></script>
 <script src="/recovery_controller.js"></script>
+<script src="/source_library.js"></script>
 <script>
   function uiText(text) { return globalThis.LiscaI18n ? globalThis.LiscaI18n.t(text) : String(text ?? ''); }
   function setUiText(element, text) {
@@ -1952,7 +1963,7 @@
     playStarted = false;
     document.getElementById('lateCaption').hidden = true;
     currentEl.textContent = '';
-    document.getElementById('emptyState').hidden = true;
+    document.getElementById('emptyState').hidden = false;
     currentEl.classList.remove('err');
     startBtn.style.display = 'inline-block';
     stopBtn.style.display = 'none';
@@ -1978,6 +1989,7 @@
   const sharedPath = location.pathname.match(/^\/share\/([^/]+)$/);
   if (sharedPath) {
     sharedViewerActive = true;
+    document.body.classList.add('viewer');
     document.title = uiText('Lisca · 实时字幕');
     setUiText(document.querySelector('header h1'), 'Lisca（观众）');
     ['url', 'engine', 'silence', 'delay', 'uploadBtn', 'start', 'stop', 'shareCopy', 'shareAddress',
@@ -2050,7 +2062,101 @@
   player.addEventListener('loadeddata', () => { document.getElementById('emptyState').hidden = true; });
   document.getElementById('logsDialog').addEventListener('close', () => { logPanel.hidden = true; });
 
-  if (!sharedPath) refreshCloud();
+  if (!sharedPath) {
+    refreshCloud();
+    const sidebar = document.getElementById('sourceSidebar');
+    const drawer = document.getElementById('sourceDrawer');
+    const home = document.getElementById('sidebarHome');
+    const toggle = document.getElementById('sidebarToggle');
+    const compact = matchMedia('(max-width: 760px)');
+    let expanded = true;
+    let storage;
+    try { storage = localStorage; } catch (_) { /* Storage may be disabled. */ }
+    const recent = new LiscaSources.RecentChannels(storage);
+    function syncSidebar() {
+      if (compact.matches) {
+        drawer.appendChild(sidebar);
+        sidebar.hidden = false;
+      } else {
+        if (drawer.open) drawer.close();
+        home.appendChild(sidebar);
+        sidebar.hidden = !expanded;
+      }
+      document.body.classList.toggle('sidebar-collapsed', !expanded);
+      toggle.setAttribute('aria-expanded', String(compact.matches ? drawer.open : expanded));
+    }
+    function closeSidebar() {
+      if (compact.matches) drawer.close();
+      else { expanded = false; syncSidebar(); }
+      toggle.focus();
+    }
+    toggle.onclick = () => {
+      if (compact.matches) { if (drawer.open) drawer.close(); else drawer.showModal(); }
+      else expanded = !expanded;
+      syncSidebar();
+    };
+    drawer.addEventListener('close', () => toggle.setAttribute('aria-expanded', 'false'));
+    document.getElementById('sidebarClose').onclick = closeSidebar;
+    compact.addEventListener('change', syncSidebar);
+    syncSidebar();
+    async function chooseChannel(channel) {
+      if (activeInput) await stopBtn.onclick();
+      urlEl.value = channel.url;
+      globalThis.LiscaI18n?.forget(document.getElementById('selectionStatus'));
+      document.getElementById('selectionStatus').textContent = channel.name;
+      setStatus(`已选择 ${channel.name}，点击“播放并生成字幕”开始观看`);
+      if (drawer.open) drawer.close();
+      renderLibrary();
+      startBtn.focus();
+    }
+    function entries(container, items, examples = false) {
+      container.replaceChildren();
+      for (const channel of items) {
+        const button = document.createElement('button');
+        button.className = 'library-channel';
+        button.dataset.i18nSkip = '';
+        button.setAttribute('aria-pressed', String(channel.url === urlEl.value));
+        const mark = document.createElement('span');
+        mark.className = 'channel-mark';
+        mark.setAttribute('aria-hidden', 'true');
+        mark.textContent = channel.name.slice(0, 1);
+        const text = document.createElement('span');
+        text.className = 'channel-text';
+        const title = document.createElement('span');
+        title.textContent = channel.name;
+        const detail = document.createElement('small');
+        const address = new URL(channel.url);
+        detail.textContent = channel.detail || address.hostname;
+        if (address.search || address.hash) button.title = uiText('仅保留在本次页面');
+        text.append(title, detail);
+        button.append(mark, text);
+        button.onclick = () => chooseChannel(channel);
+        container.appendChild(button);
+      }
+      if (!items.length && !examples) {
+        const empty = document.createElement('p');
+        empty.className = 'library-note';
+        setUiText(empty, '播放过的频道会显示在这里');
+        container.appendChild(empty);
+      }
+    }
+    function renderLibrary() {
+      entries(document.getElementById('exampleChannels'), LiscaSources.EXAMPLES, true);
+      entries(document.getElementById('recentChannels'), recent.items);
+      document.getElementById('clearRecentChannels').disabled = !recent.items.length;
+    }
+    document.getElementById('clearRecentChannels').onclick = () => { recent.clear(); renderLibrary(); };
+    player.addEventListener('playing', () => {
+      if (!activeInput || !playStarted) return;
+      const known = [...channels, ...LiscaSources.EXAMPLES, ...recent.items].find(item => item.url === activeInput);
+      recent.remember(known || {url:activeInput});
+      renderLibrary();
+    });
+    urlEl.addEventListener('input', renderLibrary);
+    document.getElementById('emptyUpload').onclick = () => uploadBtn.click();
+    document.getElementById('emptyLink').onclick = () => urlEl.focus();
+    renderLibrary();
+  }
 </script>
 </body>
 </html>

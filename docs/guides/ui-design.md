@@ -1,5 +1,16 @@
 # Playback and caption design
 
+## Current layout, 2026-11-05
+
+The user selected the light, picture-first A prototype with B's channel navigation.
+The main player uses a 16:9 surface; a collapsible left sidebar contains example channels,
+recently watched channels, and the existing playlist manager. On narrow screens the same
+sidebar becomes a native modal drawer. Selecting a channel never starts recognition;
+history is added only after media playback begins. Recent channels are bounded to 20,
+with signed addresses kept only in page memory. See the [implementation and checks](../plans/2026-11-05-player-sidebar.md).
+
+The earlier palettes and layouts below are historical design records.
+
 > Current scope: [the original-language caption PRD](../plans/2026-10-21-live-translation-prd.md) defines the viewing behavior and acceptance targets. Earlier translation layouts, reading queues and timing budgets below are historical implementation records. Current source-language evidence is in “Direction change, 2026-10-22”; new failure budgets in the PRD remain targets until implemented and verified.
 
 The product is a Windows browser player for people watching foreign-language live streams and local videos. The primary job is reading translated speech while watching.

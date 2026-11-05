@@ -7,9 +7,9 @@ const vm=require('node:vm');
 const html=fs.readFileSync(path.join(__dirname,'../../tools/webui_static/index.html'),'utf8');
 function element(){return {children:[],classList:{add(){},remove(){}},appendChild(child){this.children.push(child);},close(){},focus(){}};}
 test('channel selection is a primary source action and playback is a separate step',()=>{
- assert.match(html.slice(0,html.indexOf('</header>')),/id="chBtn"/);
- assert.match(html,/1\. 选择内容/);
- assert.match(html,/2\. 播放与字幕/);
+ assert.match(html,/id="sourceSidebar"[\s\S]*id="chBtn"/);
+ assert.match(html,/id="emptyUpload"/);
+ assert.match(html,/id="start"/);
 });
 test('selecting a channel never starts paid playback',async()=>{
  const list=element(),url={value:''},selection={textContent:''};let connections=0;

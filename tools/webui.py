@@ -242,7 +242,7 @@ def _is_lan_host(host: str | None) -> bool:
 async def keep_admin_routes_local(request: Request, call_next):
     """Expose only capability-based viewer routes to other LAN devices."""
     path = request.url.path
-    viewer_route = path in {"/hls.min.js", "/caption_presenter.js", "/playback_guard.js", "/player.css", "/i18n.js", "/recovery_controller.js"} or path.startswith("/share/")
+    viewer_route = path in {"/hls.min.js", "/caption_presenter.js", "/playback_guard.js", "/player.css", "/i18n.js", "/recovery_controller.js", "/source_library.js"} or path.startswith("/share/")
     client_host = request.client.host if request.client else None
     origin = request.headers.get("origin")
     if request.method not in ("GET", "HEAD", "OPTIONS") and origin \
@@ -652,6 +652,12 @@ def index():
 @app.get("/i18n.js")
 def i18n_js():
     return FileResponse(os.path.join(STATIC_DIR, "i18n.js"),
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/source_library.js")
+def source_library_js():
+    return FileResponse(os.path.join(STATIC_DIR, "source_library.js"),
                         headers={"Cache-Control": "no-store"})
 
 
