@@ -11,12 +11,12 @@
   <a href="#get-started">Get started</a> ·
   <a href="#see-it-in-action">See it in action</a> ·
   <a href="#features">Features</a> ·
-  <a href="https://github.com/AiKiAi-stack/stream-with-asr/issues">Feedback</a> ·
+  <a href="https://github.com/AiKiAi-stack/Lisca/issues">Feedback</a> ·
   <a href="README_zh.md">简体中文</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AiKiAi-stack/stream-with-asr/actions/workflows/test.yml"><img src="https://github.com/AiKiAi-stack/stream-with-asr/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/AiKiAi-stack/Lisca/actions/workflows/test.yml"><img src="https://github.com/AiKiAi-stack/Lisca/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-363a3f" alt="MIT license"></a>
   <a href="#status"><img src="https://img.shields.io/badge/status-preview-ed6a3b" alt="Experimental preview"></a>
 </p>
@@ -29,14 +29,14 @@ Lisca (LIve Stream CAptions) adds original-language captions to live streams in 
   <img src="docs/assets/live-captions-en.png" alt="English news replay with channel selection, browser playback and generated captions" width="960">
 </p>
 
-<p align="center"><sub>Rolling HLS news replay with real speech recognition. Program source: <a href="https://www.youtube.com/watch?v=TSM3yOPmscI">PBS NewsHour</a>.</sub></p>
+<p align="center"><sub>English UI replaying a recorded recognition result with local news video. Program source: <a href="https://www.youtube.com/watch?v=TSM3yOPmscI">PBS NewsHour</a>.</sub></p>
 
 <details>
 <summary>See Chinese captions</summary>
 
 ![Chinese news replay with generated captions](docs/assets/live-captions-zh.png)
 
-Program source: [PTS News](https://www.youtube.com/watch?v=gnF2NFYjRPE). Both screenshots show fixed news videos replayed in real time. See the [replay record](docs/research/p0-local-news-2026-11-04.md) for details.
+Program source: [PTS News](https://www.youtube.com/watch?v=gnF2NFYjRPE). Both screenshots use recorded recognition results with local news playback. See the [replay record](docs/research/p0-local-news-2026-11-04.md) for details.
 
 </details>
 
@@ -46,14 +46,14 @@ You need 64-bit Python 3.10–3.12 (3.12 recommended) and a DashScope API key fo
 
 ### Install and launch
 
-[Download the source ZIP](https://github.com/AiKiAi-stack/stream-with-asr/archive/refs/heads/main.zip) and extract it, or clone:
+[Download the source ZIP](https://github.com/AiKiAi-stack/Lisca/archive/refs/heads/main.zip) and extract it, or clone:
 
 ```bash
-git clone https://github.com/AiKiAi-stack/stream-with-asr.git
-cd stream-with-asr
+git clone https://github.com/AiKiAi-stack/Lisca.git
+cd Lisca
 ```
 
-On Windows, enable the Python Launcher when installing Python, then double-click `start-windows.cmd`. The first run installs dependencies and opens [127.0.0.1:8002](http://127.0.0.1:8002/).
+On Windows, enable the Python Launcher when installing Python, then double-click `start-windows.cmd`. The first run installs dependencies and opens the WebUI. Use the [English interface](http://127.0.0.1:8002/?lang=en), or choose English at the top right.
 
 <details>
 <summary>Linux / manual setup</summary>
@@ -67,17 +67,17 @@ python -m pip install -r requirements-webui.txt
 python tools/webui.py --host 127.0.0.1 --port 8002
 ```
 
-Open [127.0.0.1:8002](http://127.0.0.1:8002/) in your browser.
+Open [127.0.0.1:8002](http://127.0.0.1:8002/?lang=en) in your browser.
 
 </details>
 
 ### Watch your first stream
 
-1. Open Settings (设置), enter your DashScope key and apply it.
-2. Paste a stream URL. For an M3U playlist, click Select channel (选择频道).
-3. Click Play and generate captions (播放并生成字幕), then wait for captions to be ready.
+1. Open Settings, enter your DashScope key and apply it.
+2. Paste a stream URL. For an M3U playlist, click Select channel.
+3. Click Play with captions, then wait for captions to be ready.
 
-Choosing a channel does not start recognition. Below the player, you can toggle captions, view the transcript and enter fullscreen. Adjust caption size and position in Settings. The UI currently uses Chinese labels. You can try the [public channel list](examples/public-live-channels.m3u), though availability depends on your network and the source.
+Choosing a channel does not start recognition. Below the player, you can toggle captions, view the transcript and enter fullscreen. Adjust caption size and position in Settings. Use the top-right language selector to switch between English and Chinese. Interface language does not change the speech language. You can try the [public channel list](examples/public-live-channels.m3u), though availability depends on your network and the source.
 
 Audio is sent to DashScope and billed to your API account. The connection check also connects to cloud ASR. Keys stay in server memory by default; Windows offers optional DPAPI-encrypted persistence.
 
@@ -103,7 +103,7 @@ Public streams may be restricted by network, region or account. If you cannot fi
 
 ## Help and contribute
 
-To report a problem, open an [Issue](https://github.com/AiKiAi-stack/stream-with-asr/issues) with steps to reproduce it, your OS version and redacted logs. You can find the diagnostic log in Settings. Never publish your API key.
+To report a problem, open an [Issue](https://github.com/AiKiAi-stack/Lisca/issues) with steps to reproduce it, your OS version and redacted logs. You can find the diagnostic log in Settings. Never publish your API key.
 
 <details>
 <summary>Development and tests</summary>

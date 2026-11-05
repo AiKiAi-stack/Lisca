@@ -1,3 +1,4 @@
+function uiContext(context){context.uiText=value=>String(value ?? '');context.setUiText=(element,value)=>{element.textContent=value;};return context;}
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -16,7 +17,7 @@ test('selecting a channel never starts paid playback',async()=>{
    chList:list,chRows:new Map(),urlEl:url,connect(){connections++;},
    document:{createElement:element,getElementById:id=>id==='selectionStatus'?selection:element()},
    startBtn:element(),setStatus(){},logEvent(){}};
- vm.createContext(c);
+ vm.createContext(uiContext(c));
  const start=html.indexOf('  function renderChannels() {');
  vm.runInContext(html.slice(start,html.indexOf('\n  async function probeChannel',start)),c);
  c.renderChannels();
@@ -32,7 +33,7 @@ test('opening a local video selects it without starting recognition',async()=>{
    startBtn:element(),FormData:class{append(){}},setStatus(){},logEvent(){},
    fetch:async()=>({ok:true,json:async()=>({name:'movie.mp4',path:'/uploads/movie.mp4'})}),
    connect(){connections++;}};
- vm.createContext(c);
+ vm.createContext(uiContext(c));
  const start=html.indexOf('  uploadBtn.onclick = ');
  vm.runInContext(html.slice(start,html.indexOf("  urlEl.addEventListener('input'",start)),c);
  await file.change();
@@ -44,7 +45,7 @@ test('Enter in source selection focuses the explicit play action without startin
  const c={urlEl:{addEventListener:(event,fn)=>listeners[event]=fn},
    document:{getElementById:()=>({addEventListener(){}})},
    startBtn:{focus(){focused=true;}},connect(){connections++;}};
- vm.createContext(c);
+ vm.createContext(uiContext(c));
  const start=html.indexOf("  urlEl.addEventListener('input'");
  vm.runInContext(html.slice(start,html.indexOf('\n\n  function openDialog',start)),c);
  listeners.keydown({key:'Enter',preventDefault(){}});

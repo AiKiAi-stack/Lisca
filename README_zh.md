@@ -11,12 +11,12 @@
   <a href="#开始使用">开始使用</a> ·
   <a href="#观看效果">观看效果</a> ·
   <a href="#功能">功能</a> ·
-  <a href="https://github.com/AiKiAi-stack/stream-with-asr/issues">反馈问题</a> ·
+  <a href="https://github.com/AiKiAi-stack/Lisca/issues">反馈问题</a> ·
   <a href="README.md">English</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AiKiAi-stack/stream-with-asr/actions/workflows/test.yml"><img src="https://github.com/AiKiAi-stack/stream-with-asr/actions/workflows/test.yml/badge.svg" alt="自动测试"></a>
+  <a href="https://github.com/AiKiAi-stack/Lisca/actions/workflows/test.yml"><img src="https://github.com/AiKiAi-stack/Lisca/actions/workflows/test.yml/badge.svg" alt="自动测试"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-363a3f" alt="MIT 许可证"></a>
   <a href="#当前状态"><img src="https://img.shields.io/badge/status-preview-ed6a3b" alt="实验预览版"></a>
 </p>
@@ -29,14 +29,14 @@ Lisca（LIve Stream CAptions）为浏览器中的直播生成原文字幕。粘�
   <img src="docs/assets/live-captions-zh.png" alt="中文新闻实时回放：频道选择、播放器与自动生成的原文字幕" width="960">
 </p>
 
-<p align="center"><sub>中文新闻的滚动 HLS 回放，使用真实语音识别。节目来源：<a href="https://www.youtube.com/watch?v=gnF2NFYjRPE">公视新闻</a>。</sub></p>
+<p align="center"><sub>中文界面，使用既有真实识别结果回放本地新闻视频。节目来源：<a href="https://www.youtube.com/watch?v=gnF2NFYjRPE">公视新闻</a>。</sub></p>
 
 <details>
 <summary>查看英文字幕效果</summary>
 
 ![英文新闻实时回放与自动字幕](docs/assets/live-captions-en.png)
 
-节目来源：[PBS NewsHour](https://www.youtube.com/watch?v=TSM3yOPmscI)。两张截图均来自固定新闻视频的实时回放，方法见[回放记录](docs/research/p0-local-news-2026-11-04.md)。
+节目来源：[PBS NewsHour](https://www.youtube.com/watch?v=TSM3yOPmscI)。两张截图使用既有真实识别结果回放本地新闻视频，方法见[回放记录](docs/research/p0-local-news-2026-11-04.md)。
 
 </details>
 
@@ -46,14 +46,14 @@ Lisca（LIve Stream CAptions）为浏览器中的直播生成原文字幕。粘�
 
 ### 安装与启动
 
-[下载源码 ZIP](https://github.com/AiKiAi-stack/stream-with-asr/archive/refs/heads/main.zip) 并解压，或克隆：
+[下载源码 ZIP](https://github.com/AiKiAi-stack/Lisca/archive/refs/heads/main.zip) 并解压，或克隆：
 
 ```bash
-git clone https://github.com/AiKiAi-stack/stream-with-asr.git
-cd stream-with-asr
+git clone https://github.com/AiKiAi-stack/Lisca.git
+cd Lisca
 ```
 
-Windows 用户安装 Python 时需启用 Python Launcher，然后双击 `start-windows.cmd`。首次运行会安装依赖，随后自动打开 [127.0.0.1:8002](http://127.0.0.1:8002/)。
+Windows 用户安装 Python 时需启用 Python Launcher，然后双击 `start-windows.cmd`。首次运行会安装依赖，随后自动打开 [127.0.0.1:8002](http://127.0.0.1:8002/?lang=zh)。
 
 <details>
 <summary>Linux / 手动启动</summary>
@@ -67,7 +67,7 @@ python -m pip install -r requirements-webui.txt
 python tools/webui.py --host 127.0.0.1 --port 8002
 ```
 
-浏览器打开 [127.0.0.1:8002](http://127.0.0.1:8002/)。
+浏览器打开 [127.0.0.1:8002](http://127.0.0.1:8002/?lang=zh)。
 
 </details>
 
@@ -77,7 +77,7 @@ python tools/webui.py --host 127.0.0.1 --port 8002
 2. 粘贴直播地址。若是 M3U 频道清单，点击「选择频道」选台。
 3. 点击「播放并生成字幕」，等待字幕就绪。
 
-选台不会启动识别。播放器下方可以开关字幕、查看记录和进入全屏，字幕字号与位置可在设置中调整。可以试试[公开频道清单](examples/public-live-channels.m3u)，能否播放取决于网络和来源。
+选台不会启动识别。右上角可切换中文 / English，界面语言不会改变字幕语种。播放器下方可以开关字幕、查看记录和进入全屏，字幕字号与位置可在设置中调整。可以试试[公开频道清单](examples/public-live-channels.m3u)，能否播放取决于网络和来源。
 
 音频会发送到百炼，费用由你的 API 账户承担；「检查连接」也会连接云端识别服务。Key 默认仅保留在服务内存，Windows 可选择通过 DPAPI 加密保存。
 
@@ -103,7 +103,7 @@ Lisca 目前是原文字幕的实验预览版，跨语言翻译暂停。中英�
 
 ## 帮助与贡献
 
-遇到问题，请到 [Issues](https://github.com/AiKiAi-stack/stream-with-asr/issues) 反馈，附上复现步骤、系统版本和脱敏日志。日志可从设置中的「诊断日志」获取。请勿公开 API Key。
+遇到问题，请到 [Issues](https://github.com/AiKiAi-stack/Lisca/issues) 反馈，附上复现步骤、系统版本和脱敏日志。日志可从设置中的「诊断日志」获取。请勿公开 API Key。
 
 <details>
 <summary>开发与运行测试</summary>

@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>实时字幕</title>
+<title>Lisca · 实时字幕</title>
 <link rel="stylesheet" href="/player.css">
+<script src="/i18n.js"></script>
 </head>
 <body>
 <header>
- <div class="brand-row"><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>原文字幕</h1><small>识别声音，保留原话</small></div></div><button id="settingsBtn" class="quiet"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 3-1 3-3 1-3 3 2 2-1 4 3 3 3-1 2 3 4-1 1-3 3-1 1-4-3-2 1-3-3-3-3 1z"/></svg>设置</button></div>
+ <div class="brand-row"><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>Lisca</h1><small>识别声音，保留原话</small></div></div><div class="brand-actions"><label class="sr-only" for="uiLanguage">界面语言</label><select id="uiLanguage" aria-label="界面语言" data-i18n-skip><option value="zh">中文</option><option value="en">English</option></select><button id="settingsBtn" class="quiet"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 3-1 3-3 1-3 3 2 2-1 4 3 3 3-1 2 3 4-1 1-3 3-1 1-4-3-2 1-3-3-3-3 1z"/></svg>设置</button></div></div>
  <h2 class="step-title">1. 选择内容</h2>
  <div class="source-row"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或打开本地视频" autocomplete="off"><button id="uploadBtn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM3 7V4h6l3 3"/></svg>打开文件</button><button id="chBtn">选择频道</button></div>
  <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
@@ -78,12 +79,17 @@
 <script src="/playback_guard.js"></script>
 <script src="/recovery_controller.js"></script>
 <script>
+  function uiText(text) { return globalThis.LiscaI18n ? globalThis.LiscaI18n.t(text) : String(text ?? ''); }
+  function setUiText(element, text) {
+    if (globalThis.LiscaI18n) globalThis.LiscaI18n.setText(element, text);
+    else element.textContent = text;
+  }
   const urlEl = document.getElementById('url');
   const engineEl = document.getElementById('engine');
   const silenceEl = document.getElementById('silence');
   const delayEl = document.getElementById('delay');
   const sourceLanguageEl = document.getElementById('sourceLanguage');
-  sourceLanguageEl.onchange = () => { document.getElementById('modeBadge').textContent = '原文字幕 · ' + ({auto:'自动识别',zh:'中文',en:'English'}[sourceLanguageEl.value]); };
+  sourceLanguageEl.onchange = () => { setUiText(document.getElementById('modeBadge'), '原文字幕 · ' + ({auto:'自动识别',zh:'中文',en:'English'}[sourceLanguageEl.value])); };
   const bilingualEl = document.getElementById('bilingual');
   const cloudStateEl = document.getElementById('cloudState');
   let activeCloudSession = null;
@@ -142,11 +148,11 @@
   async function refreshCloud() {
     try {
       const data = await cloudRequest('/api/cloud');
-      cloudStateEl.textContent = data.configured ? `已配置 · ${data.saved ? 'Windows 加密保存' : '仅本次运行'}` : '尚未配置';
+      setUiText(cloudStateEl, data.configured ? `已配置 · ${data.saved ? 'Windows 加密保存' : '仅本次运行'}` : '尚未配置');
       document.getElementById('saveKey').disabled = !data.persistent_storage;
       document.getElementById('saveKey').checked = data.saved;
       document.getElementById('cloudPanel').open = !data.configured;
-    } catch (error) { cloudStateEl.textContent = error.message; }
+    } catch (error) { setUiText(cloudStateEl, error.message); }
   }
   document.getElementById('saveCloud').onclick = async () => {
     try {
@@ -154,14 +160,14 @@
         save:document.getElementById('saveKey').checked});
       document.getElementById('apiKey').value = '';
       await refreshCloud();
-    } catch (error) { cloudStateEl.textContent = error.message; }
+    } catch (error) { setUiText(cloudStateEl, error.message); }
   };
   document.getElementById('checkCloud').onclick = async event => {
     const button = event.currentTarget;
     button.disabled = true;
-    cloudStateEl.textContent = '检查中…';
-    try { cloudStateEl.textContent = (await cloudRequest('/api/cloud/check', 'POST')).message; }
-    catch (error) { cloudStateEl.textContent = error.message; }
+    setUiText(cloudStateEl, '检查中…');
+    try { setUiText(cloudStateEl, (await cloudRequest('/api/cloud/check', 'POST')).message); }
+    catch (error) { setUiText(cloudStateEl, error.message); }
     finally { button.disabled = false; }
   };
   document.getElementById('clearCloud').onclick = async () => {
@@ -187,7 +193,7 @@
       await refreshCloud();
       if (generation !== connectionGeneration) return;
       setStatus('配置已删除，云端会话已停止');
-    } catch (error) { cloudStateEl.textContent = error.message; }
+    } catch (error) { setUiText(cloudStateEl, error.message); }
   };
   const subToggleBtn = document.getElementById('subToggle');
   const startBtn = document.getElementById('start');
@@ -273,7 +279,7 @@
   // 字幕开关（ticket-13）：同日志按钮，可关可开，默认开
   subToggleBtn.onclick = () => {
     subEnabled = !subEnabled;
-    subToggleBtn.textContent = subEnabled ? '字幕 开' : '字幕 关';
+    setUiText(subToggleBtn, subEnabled ? '字幕 开' : '字幕 关');
     subToggleBtn.setAttribute('aria-pressed', String(subEnabled));
     if (!subEnabled) currentEl.textContent = '';
     else syncSubtitle();
@@ -367,14 +373,14 @@
 
   async function loadChannels(m3uUrl) {
     const channelStatus = document.getElementById('channelStatus');
-    channelStatus.textContent = '加载频道列表…';
+    setUiText(channelStatus, '加载频道列表…');
     setStatus('加载频道列表…');
     logEvent('channels_load', m3uUrl.slice(0, 100));
     channels = [];
     chRows = new Map();
     chList.innerHTML = '';
     chPanel.hidden = true;
-    chInfo.textContent = '';
+    setUiText(chInfo, '');
     try {
       const resp = await fetch('/channels?url=' + encodeURIComponent(m3uUrl));
       if (!resp.ok) {
@@ -383,14 +389,14 @@
       }
       channels = await resp.json();
     } catch (e) {
-      channelStatus.textContent = '频道列表加载失败：' + e.message;
+      setUiText(channelStatus, '频道列表加载失败：' + e.message);
       setStatus(channelStatus.textContent, true);
       return;
     }
-    if (!channels.length) { channelStatus.textContent = '频道列表为空（源可能失效）'; setStatus(channelStatus.textContent, true); return; }
+    if (!channels.length) { setUiText(channelStatus, '频道列表为空（源可能失效）'); setStatus(channelStatus.textContent, true); return; }
     loadedChannelListUrl = m3uUrl;
     document.getElementById('channelListUrl').value = m3uUrl;
-    channelStatus.textContent = `共 ${channels.length} 个频道，选择后再开始播放`;
+    setUiText(channelStatus, `共 ${channels.length} 个频道，选择后再开始播放`);
     renderChannels();
     chPanel.hidden = false;
     openDialog('channelsDialog');
@@ -409,7 +415,7 @@
     for (const [g, list] of groups) {
       const gh = document.createElement('div');
       gh.className = 'ch-group';
-      gh.textContent = `${g}（${list.length}）`;
+      setUiText(gh, `${g}（${list.length}）`);
       chList.appendChild(gh);
       for (const ch of list) {
         const row = document.createElement('div');
@@ -422,7 +428,7 @@
         name.title = ch.url;
         const btn = document.createElement('button');
         btn.textContent = '🔍';
-        btn.title = '检测该频道连通性与延迟';
+        btn.title = uiText('检测该频道连通性与延迟');
         btn.onclick = (ev) => { ev.stopPropagation(); probeChannel(ch.url); };
         row.appendChild(status);
         row.appendChild(name);
@@ -433,6 +439,7 @@
           for (const [, r] of chRows) r.row.classList.remove('active');
           row.classList.add('active');
           document.getElementById('channelsDialog').close();
+          globalThis.LiscaI18n?.forget(document.getElementById('selectionStatus'));
           document.getElementById('selectionStatus').textContent = ch.name;
           setStatus(`已选择 ${ch.name}，点击“播放并生成字幕”开始观看`);
           startBtn.focus();
@@ -446,7 +453,7 @@
 
   async function probeChannel(url) {
     const cell = chRows.get(url);
-    if (cell) { cell.row.classList.remove('ok', 'fail'); cell.status.textContent = '检测中…'; }
+    if (cell) { cell.row.classList.remove('ok', 'fail'); setUiText(cell.status, '检测中…'); }
     try {
       const resp = await fetch('/probe?url=' + encodeURIComponent(url));
       const data = await resp.json();
@@ -454,13 +461,13 @@
         cell.row.classList.toggle('ok', !!data.ok);
         cell.row.classList.toggle('fail', !data.ok);
         // 带宽是能否流畅播的关键（1080p IPTV 码率 ~1.1MB/s），与延迟并列展示
-        cell.status.textContent = data.ok
+        setUiText(cell.status, data.ok
           ? `✅ ${data.latency_ms}ms·${data.mbps}MB/s`
-          : '❌ 失效';
+          : '❌ 失效');
       }
       return data;
     } catch (e) {
-      if (cell) { cell.row.classList.add('fail'); cell.status.textContent = '❌ 检测失败'; }
+      if (cell) { cell.row.classList.add('fail'); setUiText(cell.status, '❌ 检测失败'); }
       return { ok: false };
     }
   }
@@ -471,16 +478,16 @@
     chProbeBtn.disabled = true;
     const total = channels.length;
     let i = 0, done = 0;
-    chInfo.textContent = `批量检测 0/${total}`;
+    setUiText(chInfo, `批量检测 0/${total}`);
     async function run() {
       while (true) {
         const idx = i++;
         if (idx >= total) break;
         await probeChannel(channels[idx].url);
         done++;
-        chInfo.textContent = `批量检测 ${done}/${total}`;
+        setUiText(chInfo, `批量检测 ${done}/${total}`);
       }
-      if (done >= total) { chInfo.textContent = `批量检测完成 ${total}/${total}`; chProbeBtn.disabled = false; }
+      if (done >= total) { setUiText(chInfo, `批量检测完成 ${total}/${total}`); chProbeBtn.disabled = false; }
     }
     for (let k = 0; k < Math.min(20, total); k++) run();
   };
@@ -510,7 +517,7 @@
       if (Date.now() - lastChange > 20000) {
         clearInterval(stallTimer);
         logEvent('video_stall', `播放卡顿：${lastT.toFixed(1)}s 处冻结 20s`);
-        currentEl.textContent = '⚠ 该源播放卡顿（带宽不足或源损坏），请点 🔍 检测换一个快源';
+        setUiText(currentEl, '⚠ 该源播放卡顿（带宽不足或源损坏），请点 🔍 检测换一个快源');
         currentEl.classList.add('err');
         setStatus('播放卡顿：请换源', true);
       }
@@ -518,7 +525,7 @@
   }
 
   function setStatus(msg, isErr) {
-    statusEl.textContent = msg;
+    setUiText(statusEl, msg);
     statusEl.classList.toggle('err', !!isErr);
     logEvent(isErr ? 'error' : 'status', msg);
   }
@@ -526,7 +533,7 @@
   function showShareHistoryNotice() {
     const notice = document.getElementById('shareHistoryNotice');
     if (!notice) return;
-    notice.textContent = '较早字幕记录未保留，当前直播继续';
+    setUiText(notice, '较早字幕记录未保留，当前直播继续');
     notice.hidden = false;
   }
 
@@ -734,6 +741,7 @@
     if (!activeInput && !sharedViewerActive) return;
     // 出错态：保留错误提示，不被占位符/字幕覆盖
     if (currentEl.classList.contains('err')) return;
+    globalThis.LiscaI18n?.forget(currentEl);
     // 字幕开关（ticket-13）：关闭则中间字幕不显示
     if (!subEnabled) {
       currentEl.textContent = '';
@@ -750,14 +758,14 @@
       const lag = document.getElementById('captionLag');
       if (lag) {
         const seconds = cue && Number.isFinite(cue.end) ? Math.max(0,t-cue.end) : 0;
-        lag.textContent = captionPresenter.skipped ? '部分字幕积压，完整内容见记录' : seconds > 2 ? '译文滞后 ' + seconds.toFixed(1) + 's' : '';
+        setUiText(lag, captionPresenter.skipped ? '部分字幕积压，完整内容见记录' : seconds > 2 ? '译文滞后 ' + seconds.toFixed(1) + 's' : '');
         lag.hidden = !lag.textContent;
       }
       return;
     }
     // 视频未开始播放时不显示字幕（避免"字幕提前"的错觉）
     if (!playStarted && player.paused && t < 0.5) {
-      currentEl.textContent = '正在准备字幕…';
+      setUiText(currentEl, '正在准备字幕…');
       return;
     }
     const displayed = currentEl.originalPage;
@@ -821,7 +829,7 @@
     // A seek can land inside finalized history already received from ASR. Show
     // that timed caption immediately; wait only when the destination is unknown.
     if (seekPending && candidates.length === 0) {
-      currentEl.textContent = '⏳ 跳转中，字幕将随转写跟进…';
+      setUiText(currentEl, '⏳ 跳转中，字幕将随转写跟进…');
       return;
     }
     if (candidates.length) seekPending = false;
@@ -906,7 +914,7 @@
       pendingLocalSeekTimer = null;
       const pending = pendingLocalSeek;
       if (!pending) return;
-      if (window.confirm('该位置还没有准备好字幕。继续会从目标位置重建识别，并可能再次调用 API/产生费用。是否继续？')) {
+      if (window.confirm(uiText('该位置还没有准备好字幕。继续会从目标位置重建识别，并可能再次调用 API/产生费用。是否继续？'))) {
         cancelPendingLocalSeek();
         connect(activeInput, null, pending.destination);
         return;
@@ -1207,7 +1215,7 @@
       document.getElementById('captionLag').hidden = true;
       playStarted = false;
       uiPaused = false;
-      currentEl.textContent = '正在准备字幕…';
+      setUiText(currentEl, '正在准备字幕…');
       lastBlockEnd = -1;
     } else {
       playStarted = true;
@@ -1261,7 +1269,7 @@
           startBtn.style.display = 'inline-block';
           stopBtn.style.display = 'none';
           setStatus(error.message, true);
-          currentEl.textContent = error.message;
+          setUiText(currentEl, error.message);
           currentEl.classList.add('err');
           document.getElementById('cloudPanel').open = true;
           openDialog('settingsDialog');
@@ -1403,7 +1411,7 @@
         }
         document.getElementById('playOnly').hidden = true;
         if (!retryable) {
-          currentEl.textContent = '⚠ 直播流播放失败（源可能失效，换个频道）';
+          setUiText(currentEl, '⚠ 直播流播放失败（源可能失效，换个频道）');
           currentEl.classList.add('err');
         }
       });
@@ -1519,7 +1527,7 @@
         }
         playStarted = true;
         holdingForSync = false;
-        if (currentEl.textContent.includes('准备字幕')) currentEl.textContent = '';
+        if (currentEl.textContent.includes('准备字幕') || currentEl.textContent === uiText('正在准备字幕…')) currentEl.textContent = '';
         if (!preserveLiveMedia && !playbackGuard.degraded) setStatus(msg.silent ? '暂未识别到语音，继续播放' : msg.original ? '原文字幕已就绪，开始播放' : msg.progressive ? '播放已开始，正在识别并翻译…' : '字幕已就绪，开始播放');
         logEvent('ready', `附加播放缓冲=${msg.delay}s，开始播放`);
         if (!uiPaused && !holdingForBuffer) player.play().catch(() => {});
@@ -1561,7 +1569,7 @@
           return;
         }
         if (holdCaptionForCloudReconnect()) return;
-        currentEl.textContent = '⚠ ' + msg.message;
+        setUiText(currentEl, '⚠ ' + msg.message);
         currentEl.classList.add('err');
         setStatus('出错', true);
         playStarted = true;  // 解除播放拦截，允许手动看片（无字幕）
@@ -1703,8 +1711,8 @@
     const esrc = (player.currentSrc || player.src || '').slice(0, 140);
     logEvent('video_error_full',
       `code=${code} msg=${emsg || '(无)'} src=${esrc} ready=${player.readyState} net=${player.networkState}`);
-    currentEl.textContent = '⚠ 视频无法播放：'
-      + (emsg || `错误码 ${code}（容器/编码不受支持或链接失效）`);
+    setUiText(currentEl, '⚠ 视频无法播放：'
+      + (emsg || `错误码 ${code}（容器/编码不受支持或链接失效）`));
     currentEl.classList.add('err');
     setStatus('视频加载失败', true);
     if (code > 0 && ws) {
@@ -1718,7 +1726,7 @@
       if (sourceBufferingSince != null) return;
       sourceBufferingSince = performance.now();
       sourceBufferStatusEl.hidden = false;
-      sourceBufferStatusEl.textContent = '直播源缓冲中…';
+      setUiText(sourceBufferStatusEl, '直播源缓冲中…');
       logEvent('source_buffering_start', `event=${eventName} media_t=${player.currentTime.toFixed(3)}s`);
       return;
     }
@@ -1726,7 +1734,7 @@
     const durationMs = Math.max(0, performance.now() - sourceBufferingSince);
     sourceBufferingSince = null;
     sourceBufferStatusEl.hidden = true;
-    sourceBufferStatusEl.textContent = '';
+    setUiText(sourceBufferStatusEl, '');
     logEvent('source_buffering_end', `event=${eventName} duration_ms=${Math.round(durationMs)} media_t=${player.currentTime.toFixed(3)}s`);
   }
   ['stalled', 'waiting', 'suspend', 'emptied', 'abort'].forEach((evt) => {
@@ -1827,12 +1835,12 @@
         return;
       }
       seekPending = true;
-      currentEl.textContent = '⏳ 等待确认跳转；原字幕处理已暂停…';
+      setUiText(currentEl, '⏳ 等待确认跳转；原字幕处理已暂停…');
       requestLocalSeekRestart(destination, origin, resumeAfterCancel);
       return;
     }
     seekPending = true;  // 跳转后清空当前句显示，等新数据（ADR-0001）
-    currentEl.textContent = '⏳ 跳转中，字幕将随转写跟进…';
+    setUiText(currentEl, '⏳ 跳转中，字幕将随转写跟进…');
     logEvent('seek', `t=${destination.toFixed(1)}`);
   });
 
@@ -1904,13 +1912,14 @@
   document.getElementById('playOnly').onclick = () => cancelCaptionProcessing('仅播放；字幕暂不可用，识别已停止', true);
   startBtn.onclick = connect;
   shareCopyBtn.onclick = async () => {
-    const url = shareCopyBtn.dataset.url;
+    const rawUrl = shareCopyBtn.dataset.url;
+    const url = rawUrl && globalThis.LiscaI18n ? globalThis.LiscaI18n.link(rawUrl) : rawUrl;
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
       setStatus('观众链接已复制，可发给同一局域网内的设备');
     } catch (error) {
-      window.prompt('复制此局域网观众链接：', url);
+      window.prompt(uiText('复制此局域网观众链接：'), url);
     }
   };
   shareAddressEl.onchange = () => { shareCopyBtn.dataset.url = shareAddressEl.value; };
@@ -1969,11 +1978,11 @@
   const sharedPath = location.pathname.match(/^\/share\/([^/]+)$/);
   if (sharedPath) {
     sharedViewerActive = true;
-    document.title = '直播字幕';
-    document.querySelector('header h1').textContent = '直播字幕（观众）';
+    document.title = uiText('Lisca · 实时字幕');
+    setUiText(document.querySelector('header h1'), 'Lisca（观众）');
     ['url', 'engine', 'silence', 'delay', 'uploadBtn', 'start', 'stop', 'shareCopy', 'shareAddress',
       'logBtn', 'chBtn', 'cloudPanel', 'sourceLanguage', 'bilingual'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
-    document.getElementById('status').textContent = '正在加入直播…';
+    setUiText(document.getElementById('status'), '正在加入直播…');
     connect(null, decodeURIComponent(sharedPath[1]));
   }
   uploadBtn.onclick = () => fileEl.click();
@@ -1990,7 +1999,8 @@
       if (resp.ok && data.path) {
         if (activeInput) await stopBtn.onclick();
         urlEl.value = data.path;
-        document.getElementById('selectionStatus').textContent = data.name;
+        globalThis.LiscaI18n?.forget(document.getElementById('selectionStatus'));
+          document.getElementById('selectionStatus').textContent = data.name;
         setStatus(`已选择 ${data.name}，点击“播放并生成字幕”开始观看`);
         startBtn.focus();
       } else {
@@ -2002,7 +2012,7 @@
     fileEl.value = '';
   });
   urlEl.addEventListener('input', () => {
-    document.getElementById('selectionStatus').textContent = urlEl.value.trim() ? '已填写来源' : '尚未选择内容';
+    setUiText(document.getElementById('selectionStatus'), urlEl.value.trim() ? '已填写来源' : '尚未选择内容');
     if (activeInput) startBtn.style.display = urlEl.value.trim() === activeInput ? 'none' : 'inline-block';
   });
   document.getElementById('channelListUrl').addEventListener('keydown', event => {

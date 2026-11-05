@@ -1,5 +1,6 @@
+function uiContext(context){context.uiText=value=>String(value ?? '');context.setUiText=(element,value)=>{element.textContent=value;};return context;}
 const {test}=require('node:test'); const assert=require('node:assert/strict'); const fs=require('node:fs'); const vm=require('node:vm'); const path=require('node:path');
-test('diagnostic log keeps source identity but hides signed URL query values',()=>{const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');const elements=new Map();const c={URL,document:{getElementById(id){if(!elements.has(id))elements.set(id,{hidden:true,value:'',onclick:null});return elements.get(id);}}};vm.createContext(c);const start=html.indexOf("const logBtn = document.getElementById('logBtn');"),end=html.indexOf('// 字幕开关',start);vm.runInContext(html.slice(start,end),c);c.logEvent('connect','https://media.test/video.mp4?token=private-token&sig=private-signature rtsp://media.test/live?auth=private-rtsp-auth');const line=vm.runInContext('logBuffer[0]',c);assert.match(line,/media\.test\/video\.mp4/);assert.match(line,/media\.test\/live/);assert.doesNotMatch(line,/private-token|private-signature|private-rtsp-auth/);});
+test('diagnostic log keeps source identity but hides signed URL query values',()=>{const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');const elements=new Map();const c={URL,document:{getElementById(id){if(!elements.has(id))elements.set(id,{hidden:true,value:'',onclick:null});return elements.get(id);}}};vm.createContext(uiContext(c));const start=html.indexOf("const logBtn = document.getElementById('logBtn');"),end=html.indexOf('// 字幕开关',start);vm.runInContext(html.slice(start,end),c);c.logEvent('connect','https://media.test/video.mp4?token=private-token&sig=private-signature rtsp://media.test/live?auth=private-rtsp-auth');const line=vm.runInContext('logBuffer[0]',c);assert.match(line,/media\.test\/video\.mp4/);assert.match(line,/media\.test\/live/);assert.doesNotMatch(line,/private-token|private-signature|private-rtsp-auth/);});
 function browser({playerWidth=260,fontSize=30,cssMaxWidth='90%'}={}){
  const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
  const element=()=>({textContent:'',hidden:true,dataset:{},classList:{contains:()=>false},style:{},remove(){}});
@@ -8,7 +9,7 @@ function browser({playerWidth=260,fontSize=30,cssMaxWidth='90%'}={}){
  const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preserveLiveMedia:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:20000,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontStyle:'normal',fontWeight:'600',fontSize:element.style.fontSize||'30px',fontFamily:'Arial, sans-serif',letterSpacing:'normal',maxWidth:element.style.maxWidth||cssMaxWidth,paddingLeft:'10px',paddingRight:'10px',borderLeftWidth:'0px',borderRightWidth:'0px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
  const moduleFile=path.join(__dirname,'../tools/webui_static/caption_presenter.js');
  if(fs.existsSync(moduleFile)){const module=require(moduleFile);context.CaptionPresenter=module.CaptionPresenter;context.CaptionLayout=module.CaptionLayout;context.lines=()=>[];context.captionPresenter=new context.CaptionPresenter();}
- vm.createContext(context);
+ vm.createContext(uiContext(context));
  const layoutStart=html.indexOf('const captionSegmentCache = new WeakMap();');
  const previewStart=html.indexOf('function onPreview(',layoutStart);
  vm.runInContext(html.slice(layoutStart,previewStart),context);
@@ -99,7 +100,7 @@ function socketRecoveryBrowser(eventName,status='scheduled'){
  const start=html.indexOf('    function scheduleRecognitionSocketRecovery(');
  const closeStart=html.indexOf('    ws.onclose = (event) => {',start);
  const end=html.indexOf('\n    };',closeStart)+'\n    };'.length;
- vm.runInNewContext(html.slice(start,end),c);
+ vm.runInNewContext(html.slice(start,end),uiContext(c));
  if(eventName==='error')c.ws.onerror();else c.ws.onclose({code:1006});
  return c;
 }
@@ -140,7 +141,7 @@ function endedSession(reason){
    ws:{closed:false,close(){this.closed=true;}}};
  const start=html.indexOf('    function receiveMessage(input) {');
  const end=html.indexOf('    ws.onmessage = ',start);
- vm.runInNewContext(html.slice(start,end),c);
+ vm.runInNewContext(html.slice(start,end),uiContext(c));
  c.receiveMessage(reason === undefined ? {type:'end'} : {type:'end',reason});
  return c;
 }
@@ -161,10 +162,10 @@ function terminalCloseSession(reason,{awaitingTimeline=false}={}){
  c.ws={close(code,reason){this.closeCode=code;this.closeReason=reason;this.onclose({code:code??1005});}};
  const closeStart=html.indexOf('    ws.onclose = (event) => {');
  const closeEnd=html.indexOf('\n    };',closeStart)+'\n    };'.length;
- vm.runInNewContext(html.slice(closeStart,closeEnd),c);
+ vm.runInNewContext(html.slice(closeStart,closeEnd),uiContext(c));
  const receiveStart=html.indexOf('    function receiveMessage(input) {');
  const receiveEnd=html.indexOf('    ws.onmessage = ',receiveStart);
- vm.runInNewContext(html.slice(receiveStart,receiveEnd),c);
+ vm.runInNewContext(html.slice(receiveStart,receiveEnd),uiContext(c));
  c.receiveMessage({type:'end',reason});
  if(awaitingTimeline)c.ws.onclose({code:1005});
  return {context:c,recoveries};
@@ -183,7 +184,7 @@ function closeDuringPendingRecovery(){
    document:{getElementById:id=>elements.get(id)},ws:{}};
  const closeStart=html.indexOf('    ws.onclose = (event) => {');
  const closeEnd=html.indexOf('\n    };',closeStart)+'\n    };'.length;
- vm.runInNewContext(html.slice(closeStart,closeEnd),c);
+ vm.runInNewContext(html.slice(closeStart,closeEnd),uiContext(c));
  c.ws.onclose({code:1000});
  return {context:c,elements,timerCallback};
 }
@@ -279,7 +280,7 @@ test('server caption capacity errors retain existing captions and continue in on
    document:{getElementById:id=>id==='captionActions'?actions:null},
    scheduleSessionRecovery(){return {status:'manual'};},showCaptionRecovery(message){c.status=message;},
    holdCaptionForCloudReconnect(){return false;},setStatus(message){c.status=message;}};
- vm.createContext(c);
+ vm.createContext(uiContext(c));
  loadShareHistoryWarning(html,c);
  const cancelStart=html.indexOf('  async function cancelCaptionProcessing(');
  const cancelEnd=html.indexOf('  function showCaptionRecovery(',cancelStart);
@@ -573,7 +574,7 @@ test('only automatic original-caption recovery on an active live HLS source pres
  const html=fs.readFileSync(path.join(__dirname,'../tools/webui_static/index.html'),'utf8');
  const start=html.indexOf('  function shouldPreserveLiveMedia(');
  const end=html.indexOf('\n\n  async function connect(',start);
- const c={};vm.createContext(c);vm.runInContext(html.slice(start,end),c);
+ const c={};vm.createContext(uiContext(c));vm.runInContext(html.slice(start,end),c);
  const source={};
  assert.equal(c.shouldPreserveLiveMedia({automaticRecovery:true,live:true,originalCaptionMode:true,
    sharedViewerActive:false,hlsPlayer:source}),true);
@@ -641,7 +642,7 @@ test('deleting cloud configuration cancels pending retries and closes its recogn
    activeShareToken:'share-token',cloudPlayback:true,originalCaptionMode:true,recognitionOnlyStopped:false,
    ws:socket,cloudRequest:async(path,method)=>{calls.push([path,method]);return {};},refreshCloud:async()=>{},
    setStatus(message){c.status=message;},document:{getElementById(id){if(id==='clearCloud')return button;if(!els.has(id))els.set(id,{value:'',textContent:''});return els.get(id);}}};
- vm.createContext(c);
+ vm.createContext(uiContext(c));
  const start=html.indexOf("  document.getElementById('clearCloud').onclick = async () => {");
  const end=html.indexOf('  const subToggleBtn =',start);
  vm.runInContext(html.slice(start,end),c);
@@ -666,7 +667,7 @@ test('only-play cancels pending recovery while leaving the media player running'
    captionPresenter:{reset(){}},currentEl,startBtn:{style:{}},stopBtn:{style:{}},shareCopyBtn:{style:{}},
    shareAddressEl:{hidden:false},setStatus(message){c.status=message;},cancelPendingLocalSeek(){},
    document:{getElementById(id){return els.get(id);}}};
- vm.createContext(c);
+ vm.createContext(uiContext(c));
  const start=html.indexOf('  async function cancelCaptionProcessing(');
  const end=html.indexOf('  function showCaptionRecovery(',start);
  vm.runInContext(html.slice(start,end),c);
@@ -704,7 +705,7 @@ function recoveryBrowser(){
    startLoad(){c.recoveries++;actions.push(['media']);},
    recoverMediaError(){c.recoveries++;actions.push(['media']);},destroy(){c.destroyed=true;}};
  c.hlsPlayer=source;c.currentHls=source;
- vm.createContext(c);
+ vm.createContext(uiContext(c));
  loadShareHistoryWarning(html,c);
  const helperStart=html.indexOf('  let stoppedHlsLoaderForRecovery = null;');
  const helperEnd=html.indexOf('  async function cloudRequest(',helperStart);
