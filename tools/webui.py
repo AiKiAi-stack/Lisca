@@ -53,7 +53,7 @@ from cloud_translation import (CloudConfigStore, CloudError, QwenTranslator, Req
 from provider_errors import classify_provider_failure  # noqa: E402
 from streamparser.recognition_process import RecognitionCapacityError  # noqa: E402
 
-app = FastAPI(title="实时字幕")
+app = FastAPI(title="Lisca")
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uploads")
@@ -242,7 +242,7 @@ def _is_lan_host(host: str | None) -> bool:
 async def keep_admin_routes_local(request: Request, call_next):
     """Expose only capability-based viewer routes to other LAN devices."""
     path = request.url.path
-    viewer_route = path in {"/hls.min.js", "/caption_presenter.js", "/playback_guard.js", "/player.css"} or path.startswith("/share/")
+    viewer_route = path in {"/hls.min.js", "/caption_presenter.js", "/playback_guard.js", "/player.css", "/i18n.js", "/recovery_controller.js"} or path.startswith("/share/")
     client_host = request.client.host if request.client else None
     origin = request.headers.get("origin")
     if request.method not in ("GET", "HEAD", "OPTIONS") and origin \
@@ -647,6 +647,12 @@ def index():
     """返回单页（no-store 防浏览器缓存旧版 JS）"""
     with open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8") as f:
         return HTMLResponse(f.read(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/i18n.js")
+def i18n_js():
+    return FileResponse(os.path.join(STATIC_DIR, "i18n.js"),
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/caption_presenter.js")

@@ -89,8 +89,8 @@ if __name__ == "__main__":
     async def smoke_banner(request, call_next):
         if request.url.path == "/":
             response = original_index()
-            body = response.body.decode().replace("<h1>原文字幕</h1>",
-                "<h1>测试替身 · 原文字幕（未调用真实 API）</h1>")
+            body = response.body.decode().replace("<h1>Lisca</h1>",
+                '<h1 data-i18n-skip>TEST FIXTURE · Lisca（未调用真实 API / no real API）</h1>')
             return webui.HTMLResponse(body, headers={"Cache-Control": "no-store"})
         return await call_next(request)
 
