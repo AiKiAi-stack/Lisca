@@ -10,7 +10,7 @@
 
 - 优先级：P1；建议标签：`ready-for-agent`。
 - 关联：A01/A02、第 7.2–7.3 节。
-- 现状：`test/score_original_acceptance.py` 已计算 CER/WER，并检查结束、错误与翻译事件；报告只记录来自 manifest 的 `reference_sha256`，未与录音输入核对，不能证明识别了同一文件。
+- 现状：`tests/acceptance/score_original_acceptance.py` 已计算 CER/WER，并检查结束、错误与翻译事件；报告只记录来自 manifest 的 `reference_sha256`，未与录音输入核对，不能证明识别了同一文件。
 - 任务：本地录音保存实际媒体 SHA-256；评分时校验与固定 manifest 一致。远端直播不能用 URL 冒充不可变内容哈希，应明确其证据类型；处理旧录音缺少来源信息的情况。
 - 验收：正确来源可评分；错配、缺少来源证明、文件被替换均不得输出已核验来源；负向回归覆盖这些情况。不得为了通过指标更改固定归一化规则。
 

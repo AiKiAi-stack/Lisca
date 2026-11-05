@@ -86,18 +86,18 @@ PR89 已 squash 合入 main（`027b3254cc56cc7ea58b1e2066958e86481cc6a0`）。�
 
 | 入口 | 通过的观察 |
 | --- | --- |
-| `test/e2e_original_input.py` | 4项：未配置拒绝、坏文件/无音轨零识别、配置/上传到可见字幕；Key遮罩且未存入浏览器持久存储 |
-| `test/e2e_original_release.py` | 9项：中英可见/消失/缺失区间、撤回、320px两行和字号、全屏、中文分页无连续人为短闪、英文长句完整与模拟快语速 |
-| `test/e2e_original_style.py` | 2项：对比度、位置、开关及保存/重置，包括0位置恢复 |
-| `test/e2e_original_controls.py` | 8项：3/30秒暂停、EOF/回看、已准备seek复用、区间外确认/取消/重建、长暂停与换文件 |
-| `test/e2e_original_lifecycle.py` | 2项：迟到创建响应不替换新文件、创建中停止后无新识别 |
-| `test/e2e_original_preparation.py` | 3项：静音放行、静音转语音状态正确、15秒无进展后仅播放且零新请求/音频 |
-| `test/e2e_original_capacity.py` | 真实1800秒输入短时观察：准备0.719秒、领先最大1.9997秒、seek1700秒、停止新请求/音频0、媒体句柄3→0、峰值RSS约90.1MiB |
-| `test/e2e_original_live.py` | 正常独立预期字幕时序；迟到链20秒观察媒体前进19.389秒，启动预算之外新增应用等待0.557秒、来源缓冲0、倒退帧0，缺失提示持续到实际追上 |
-| `test/e2e_original_live_failures.py` | 3项：无首次字幕媒体仍前进，认证不重试，3代识别恢复不重置健康HLS；同ID的3段历史保留 |
-| `test/e2e_original_source_buffer.py` | 独立来源缓冲与恢复无新识别；切换文件后释放实际延迟旧HLS响应，新字幕/媒体不受污染 |
-| `test/e2e_original_recovery.py` | 7项：1/2秒退避、取消3种操作、认证不重试、顺序与同时媒体/识别故障；成功分片额外延迟1.2秒仍恢复媒体及字幕 |
-| `test/e2e_original_share_history.py` | 300条历史事件后新观众加入，独立持续提示、后续字幕可见，两侧媒体继续，无页面/清理错误；不替代第二设备 |
+| `tests/browser/e2e_original_input.py` | 4项：未配置拒绝、坏文件/无音轨零识别、配置/上传到可见字幕；Key遮罩且未存入浏览器持久存储 |
+| `tests/browser/e2e_original_release.py` | 9项：中英可见/消失/缺失区间、撤回、320px两行和字号、全屏、中文分页无连续人为短闪、英文长句完整与模拟快语速 |
+| `tests/browser/e2e_original_style.py` | 2项：对比度、位置、开关及保存/重置，包括0位置恢复 |
+| `tests/browser/e2e_original_controls.py` | 8项：3/30秒暂停、EOF/回看、已准备seek复用、区间外确认/取消/重建、长暂停与换文件 |
+| `tests/browser/e2e_original_lifecycle.py` | 2项：迟到创建响应不替换新文件、创建中停止后无新识别 |
+| `tests/browser/e2e_original_preparation.py` | 3项：静音放行、静音转语音状态正确、15秒无进展后仅播放且零新请求/音频 |
+| `tests/browser/e2e_original_capacity.py` | 真实1800秒输入短时观察：准备0.719秒、领先最大1.9997秒、seek1700秒、停止新请求/音频0、媒体句柄3→0、峰值RSS约90.1MiB |
+| `tests/browser/e2e_original_live.py` | 正常独立预期字幕时序；迟到链20秒观察媒体前进19.389秒，启动预算之外新增应用等待0.557秒、来源缓冲0、倒退帧0，缺失提示持续到实际追上 |
+| `tests/browser/e2e_original_live_failures.py` | 3项：无首次字幕媒体仍前进，认证不重试，3代识别恢复不重置健康HLS；同ID的3段历史保留 |
+| `tests/browser/e2e_original_source_buffer.py` | 独立来源缓冲与恢复无新识别；切换文件后释放实际延迟旧HLS响应，新字幕/媒体不受污染 |
+| `tests/browser/e2e_original_recovery.py` | 7项：1/2秒退避、取消3种操作、认证不重试、顺序与同时媒体/识别故障；成功分片额外延迟1.2秒仍恢复媒体及字幕 |
+| `tests/browser/e2e_original_share_history.py` | 300条历史事件后新观众加入，独立持续提示、后续字幕可见，两侧媒体继续，无页面/清理错误；不替代第二设备 |
 
 容量报告明确 `continuous_30_minute_run: false`；模拟快语速约3.98词/秒只验证显示调度。直播2秒为逻辑预算，浏览器离散采样有调度误差，原始观察单独保留，不将启动等待或来源缓冲混入其他指标。
 

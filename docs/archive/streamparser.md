@@ -107,7 +107,7 @@ Each live session allows up to three concurrent viewer devices. Viewer links are
 
 ### Local FunASR Vulkan (no API key, file mode)
 
-A Windows Vulkan GGUF install can be connected to the WebUI through a local HTTP service. This mode transcribes an entire local audio/video file before playback; it does not provide live captions. See the [local FunASR Vulkan guide](../funasr-vulkan.md) for setup and usage.
+A Windows Vulkan GGUF install can be connected to the WebUI through a local HTTP service. This mode transcribes an entire local audio/video file before playback; it does not provide live captions. See the [local FunASR Vulkan guide](../guides/funasr-vulkan.md) for setup and usage.
 
 ## Configuration
 
@@ -220,7 +220,7 @@ pip install -e ".[dev]"
 pytest test/ -v
 
 # Run specific test file
-pytest test/test_asr_client.py -v
+pytest tests/python/test_asr_client.py -v
 ```
 
 Tests follow strict TDD with `unittest.mock` for external dependencies. No real API calls are made during unit testing.

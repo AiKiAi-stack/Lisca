@@ -99,7 +99,7 @@ python tools/webui.py --host 127.0.0.1 --port 8002
 
 Lisca 目前是原文字幕的实验预览版，跨语言翻译暂停。中英文固定新闻源各完成了 30 分钟实时回放，启动耗时达到当前预览门槛。独立声学同步和有声片段的字幕覆盖仍未验证通过；部分字幕停留过短，有些时段没有字幕，识别也仍有错误。详见[预览范围](docs/adr/0009-pr89-preview-acceptance-2026-11-04.md)与[实际测试记录](docs/plans/2026-11-04-pr89-acceptance-recheck.md)。
 
-公共直播源可能受到网络、地区或账号限制。找不到稳定来源时，可先用本地视频，或参考[新闻模拟直播方法](docs/research/p0-local-news-2026-11-04.md)。本地离线整段转写另见 [FunASR Vulkan 指南](docs/funasr-vulkan.md)。
+公共直播源可能受到网络、地区或账号限制。找不到稳定来源时，可先用本地视频，或参考[新闻模拟直播方法](docs/research/p0-local-news-2026-11-04.md)。本地离线整段转写另见 [FunASR Vulkan 指南](docs/guides/funasr-vulkan.md)。
 
 ## 帮助与贡献
 
@@ -110,11 +110,11 @@ Lisca 目前是原文字幕的实验预览版，跨语言翻译暂停。中英�
 
 ```bash
 python -m pip install -e . pytest playwright
-python -m pytest test/ -v
-node --test test/*.test.cjs
+python -m pytest -v
+node --test tests/frontend/*.test.cjs
 ```
 
-前端检查需要 Node.js（CI 使用 22）。单元测试不需要真实 Key。使用真实识别服务的验收单独执行，会产生云端费用。
+前端检查需要 Node.js（CI 使用 22）。单元测试不需要真实 Key。使用真实识别服务的验收单独执行，会产生云端费用。测试分类、验收工具与历史文档入口见[项目目录与文档导航](docs/README.md)。
 
 [产品决策](docs/adr/0008-original-language-captions.md) · [术语](GLOSSARY.md) · [原工具包存档](docs/archive/streamparser_zh.md)
 

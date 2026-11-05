@@ -107,7 +107,7 @@ output/
 
 ### 本地 FunASR Vulkan（无 API Key，文件模式）
 
-Windows Vulkan GGUF 安装可通过本机 HTTP 服务接入 WebUI。该模式对本地音视频文件整段转写，完成后开始播放；不支持直播实时字幕。服务启动与 WebUI 使用步骤见[本地 FunASR Vulkan 指南](../funasr-vulkan.md)。
+Windows Vulkan GGUF 安装可通过本机 HTTP 服务接入 WebUI。该模式对本地音视频文件整段转写，完成后开始播放；不支持直播实时字幕。服务启动与 WebUI 使用步骤见[本地 FunASR Vulkan 指南](../guides/funasr-vulkan.md)。
 
 ## 配置说明
 
@@ -221,7 +221,7 @@ pip install -e ".[dev]"
 pytest test/ -v
 
 # 运行单个测试文件
-pytest test/test_asr_client.py -v
+pytest tests/python/test_asr_client.py -v
 ```
 
 测试遵循严格的 TDD 流程，外部依赖通过 `unittest.mock` 隔离，单元测试不产生真实 API 调用。

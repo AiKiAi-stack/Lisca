@@ -11,7 +11,7 @@
 
 在浏览器中打开 HTML 文件；保留同目录编号 WAV。音频、页面和草稿保留在忽略目录。页面不联网、不调用识别服务，也不加载识别器词时间作为标注答案。所有标注初始为空，既有快语速素材的确认不迁移到这两套参考集。
 
-[生成器](../../test/prepare_acoustic_review.py)先核验完整输入 SHA-256、每条音频 SHA-256，以及片段 PCM 与完整输入对应区间逐字节一致；波形来自原始采样幅度，不自动推断有声区间。音频时间以片段为单位显示，同时给出完整输入时间。
+[生成器](../../tests/acceptance/prepare_acoustic_review.py)先核验完整输入 SHA-256、每条音频 SHA-256，以及片段 PCM 与完整输入对应区间逐字节一致；波形来自原始采样幅度，不自动推断有声区间。音频时间以片段为单位显示，同时给出完整输入时间。
 
 ## 标注方法与结果边界
 
@@ -30,7 +30,7 @@
 可复现命令（输出已存在时拒绝覆盖，重建请使用新文件名）：
 
 ```bash
-/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/prepare_acoustic_review.py \
+/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/prepare_acoustic_review.py \
   --status logs/original-caption-acceptance/real-2026-10-25/listening-review/zh-reference/review-status.json \
   --media uploads/acceptance-media/zh-single-speaker-reference.wav \
   --output logs/original-caption-acceptance/real-2026-10-25/listening-review/zh-reference/acoustic-review.html

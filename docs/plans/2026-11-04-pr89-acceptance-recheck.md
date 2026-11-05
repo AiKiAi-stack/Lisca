@@ -20,24 +20,24 @@
 | 工作目录 | `/home/wbb/.local/share/stream-with-asr/checkouts/p0-live-source`，工作区 clean |
 | 服务 | 8002，`preview-install-venv`，Python 3.12，DashScope 2.0.3；Key 仅内存 `configured=true/saved=false` |
 | 启动固定输入 | `uploads/acceptance-media/{zh,en}-single-speaker-reference.wav`，SHA-256 `d40bb3a…` / `4b7d551…`，16.18925 / 16.55 秒哈希固定前缀 |
-| 启动 HLS | `test/fixed_hls_startup_acceptance.py` 生成 MPEG-TS/H.264+AAC，按源时钟释放已完成分片；应用与浏览器代理实际读取 |
-| 启动采集器 | `test/fixed_hls_startup_acceptance.py collect/analyze` + `startup-observer.py`（仅外部可撤销计时，不记录 Key/正文） |
-| 同步采集 | `test/run_real_browser_acceptance.py --capture-acoustic-sync`，真实 Chrome、真实音频输出、截图/OCR |
-| 同步评分 | `test/score_acoustic_acceptance.py`，独立 VAD 声区间 + 浏览器渲染音频对齐 |
-| 长时 | `test/local_live_replay.py` 把固定中文/英文长新闻按 `-re` 转滚动 HLS，普通 8002 产品链路 + 真实 ASR |
+| 启动 HLS | `tests/acceptance/fixed_hls_startup_acceptance.py` 生成 MPEG-TS/H.264+AAC，按源时钟释放已完成分片；应用与浏览器代理实际读取 |
+| 启动采集器 | `tests/acceptance/fixed_hls_startup_acceptance.py collect/analyze` + `startup-observer.py`（仅外部可撤销计时，不记录 Key/正文） |
+| 同步采集 | `tests/acceptance/run_real_browser_acceptance.py --capture-acoustic-sync`，真实 Chrome、真实音频输出、截图/OCR |
+| 同步评分 | `tests/acceptance/score_acoustic_acceptance.py`，独立 VAD 声区间 + 浏览器渲染音频对齐 |
+| 长时 | `tests/acceptance/local_live_replay.py` 把固定中文/英文长新闻按 `-re` 转滚动 HLS，普通 8002 产品链路 + 真实 ASR |
 
 ## 1. 启动延迟：20+20 次当前候选实测
 
 命令形态（每语独立冷启动一次新服务，随后 19 次热启动）：
 
 ```bash
-python test/fixed_hls_startup_acceptance.py prepare --output <dir>
-python test/fixed_hls_startup_acceptance.py serve --port 8766 --output <dir>
-python test/fixed_hls_startup_acceptance.py collect --language zh \
+python tests/acceptance/fixed_hls_startup_acceptance.py prepare --output <dir>
+python tests/acceptance/fixed_hls_startup_acceptance.py serve --port 8766 --output <dir>
+python tests/acceptance/fixed_hls_startup_acceptance.py collect --language zh \
   --label zh-startup-01 --startup-class cold --service-pid <pid> \
   --cold-first-session-confirmed --output <dir> --allow-real-recognition
 # ... 02..20 warm ...
-python test/fixed_hls_startup_acceptance.py analyze --language zh \
+python tests/acceptance/fixed_hls_startup_acceptance.py analyze --language zh \
   --output <dir> --origin-log <dir>/origin-requests.jsonl \
   --decoded-log <dir>/decoded-arrivals-zh.jsonl
 ```

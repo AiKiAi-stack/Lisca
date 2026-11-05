@@ -4,12 +4,12 @@
 
 This prepares fixed Mandarin and English audio plus source transcripts for ticket 09. It is **media preparation evidence only**: no real ASR call was made, no API key was read, and the samples have not been manually auditioned or transcript-checked. The reference text is copied from the corpus transcript, so it is independent of this application's recognition output; human verification remains pending.
 
-The reproducible downloader is [`test/prepare_original_acceptance_media.py`](../../test/prepare_original_acceptance_media.py). Per-utterance IDs, source SHA-256 values, transcript text, exact sample counts, combined-file hashes, and source/license metadata are in [`single-speaker-acceptance-media-2026-10-24.json`](single-speaker-acceptance-media-2026-10-24.json). Generated WAVs are in the ignored local directory `uploads/acceptance-media/`; binary media is intentionally not tracked by Git.
+The reproducible downloader is [`tests/acceptance/prepare_original_acceptance_media.py`](../../tests/acceptance/prepare_original_acceptance_media.py). Per-utterance IDs, source SHA-256 values, transcript text, exact sample counts, combined-file hashes, and source/license metadata are in [`single-speaker-acceptance-media-2026-10-24.json`](single-speaker-acceptance-media-2026-10-24.json). Generated WAVs are in the ignored local directory `uploads/acceptance-media/`; binary media is intentionally not tracked by Git.
 
 The scorer CLI takes a flat `{dataset, config, sha256, seconds, items[].reference}` manifest, while the research manifest groups rich assets under `languages.*`. The script now also writes four independent scorer-ready reference manifests under [`original-caption-reference-manifests/`](original-caption-reference-manifests/), and records each path next to its asset in the rich manifest. Regenerate only those JSON files, without network access, with:
 
 ```bash
-/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/prepare_original_acceptance_media.py --references-only
+/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/prepare_original_acceptance_media.py --references-only
 ```
 
 Each manifest's `sha256` / `asset_sha256` is the hash of the complete prepared WAV, including inserted silence; it is the value the scorer compares with the recording's `input_sha256`. The reference text has a separate `reference_text_sha256`, and each ordered source sequence has its own `ordered_source_utterance_sha256`. The item array preserves the corpus utterance order and records each source clip hash. `source_audio_seconds` excludes `inserted_silence_seconds`, and their sum is the asset's `seconds`. Every manifest explicitly has `manual_review_pending: true`; its text and order are fixed from pinned corpus transcripts, but no human transcript/audio review has been completed.
@@ -47,27 +47,27 @@ These are fixed references for a future, explicitly authorized recognition run. 
 ```bash
 PYTHON=/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python
 
-$PYTHON test/run_original_acceptance.py uploads/acceptance-media/zh-single-speaker-reference.wav \
+$PYTHON tests/acceptance/run_original_acceptance.py uploads/acceptance-media/zh-single-speaker-reference.wav \
   --label zh-reference --output logs/original-caption-acceptance/zh-reference.json
-$PYTHON test/score_original_acceptance.py docs/research/original-caption-reference-manifests/zh-reference.json \
+$PYTHON tests/acceptance/score_original_acceptance.py docs/research/original-caption-reference-manifests/zh-reference.json \
   logs/original-caption-acceptance/zh-reference.json --language zh \
   --output logs/original-caption-acceptance/zh-reference-score.json
 
-$PYTHON test/run_original_acceptance.py uploads/acceptance-media/zh-fast-speech-listening-candidate.wav \
+$PYTHON tests/acceptance/run_original_acceptance.py uploads/acceptance-media/zh-fast-speech-listening-candidate.wav \
   --label zh-fast-speech-candidate --output logs/original-caption-acceptance/zh-fast-speech-candidate.json
-$PYTHON test/score_original_acceptance.py docs/research/original-caption-reference-manifests/zh-fast-speech-candidate.json \
+$PYTHON tests/acceptance/score_original_acceptance.py docs/research/original-caption-reference-manifests/zh-fast-speech-candidate.json \
   logs/original-caption-acceptance/zh-fast-speech-candidate.json --language zh \
   --output logs/original-caption-acceptance/zh-fast-speech-candidate-score.json
 
-$PYTHON test/run_original_acceptance.py uploads/acceptance-media/en-single-speaker-reference.wav \
+$PYTHON tests/acceptance/run_original_acceptance.py uploads/acceptance-media/en-single-speaker-reference.wav \
   --label en-reference --output logs/original-caption-acceptance/en-reference.json
-$PYTHON test/score_original_acceptance.py docs/research/original-caption-reference-manifests/en-reference.json \
+$PYTHON tests/acceptance/score_original_acceptance.py docs/research/original-caption-reference-manifests/en-reference.json \
   logs/original-caption-acceptance/en-reference.json --language en \
   --output logs/original-caption-acceptance/en-reference-score.json
 
-$PYTHON test/run_original_acceptance.py uploads/acceptance-media/en-fast-speech-listening-candidate.wav \
+$PYTHON tests/acceptance/run_original_acceptance.py uploads/acceptance-media/en-fast-speech-listening-candidate.wav \
   --label en-fast-speech-candidate --output logs/original-caption-acceptance/en-fast-speech-candidate.json
-$PYTHON test/score_original_acceptance.py docs/research/original-caption-reference-manifests/en-fast-speech-candidate.json \
+$PYTHON tests/acceptance/score_original_acceptance.py docs/research/original-caption-reference-manifests/en-fast-speech-candidate.json \
   logs/original-caption-acceptance/en-fast-speech-candidate.json --language en \
   --output logs/original-caption-acceptance/en-fast-speech-candidate-score.json
 ```
@@ -81,7 +81,7 @@ The combined WAV hash is over the complete produced file, including inserted sil
 From the repository root, run:
 
 ```bash
-/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/prepare_original_acceptance_media.py
+/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/prepare_original_acceptance_media.py
 ```
 
 Offline format validation first passed the old nested `reference_asset` object to the public scorer CLI and reproduced `KeyError: 'items'`. After adding the four flat references, the scorer CLI loaded all four. A synthetic recording fixture used an intentionally unrelated all-zero input hash and `recording_status: failed`; every report reconstructed the ordered reference text and marked source identity and accuracy/release gates as failed. This is a simulated CLI/format smoke test only: no ASR request was made, and its synthetic score values are not accuracy evidence or measured CER/WER.

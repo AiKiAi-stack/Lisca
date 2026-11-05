@@ -50,3 +50,5 @@ dev = ["pytest>=8.3.4"]
 
 [tool.pytest.ini_options]
 cache_dir = "~/.cache/pytest"
+testpaths = ["tests/python"]
+pythonpath = [".", "tools", "tests/acceptance", "tests/browser"]

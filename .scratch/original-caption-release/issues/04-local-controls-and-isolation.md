@@ -24,4 +24,4 @@
 
 **External prerequisites:** 自动化使用模拟识别；真实计费调用的验证前提在 09 单独说明。
 
-**集成验证（2026-10-24）:** `test/e2e_original_controls.py`8项、`test/e2e_original_lifecycle.py`2项通过；已准备/完成字幕复用，区间外单次确认与取消、从目标重建、3/30秒暂停、长暂停、EOF和迟到创建响应均留证。`test/e2e_original_source_buffer.py`另实际释放换文件前延迟的旧HLS分片，未污染新文件与字幕。 所有浏览器识别均为离线替身，不代表PRD真实质量或发布门槛通过。最终代码、复审和日志索引见[实施状态](../../../docs/plans/2026-10-23-original-caption-implementation-status.md)。
+**集成验证（2026-10-24）:** `tests/browser/e2e_original_controls.py`8项、`tests/browser/e2e_original_lifecycle.py`2项通过；已准备/完成字幕复用，区间外单次确认与取消、从目标重建、3/30秒暂停、长暂停、EOF和迟到创建响应均留证。`tests/browser/e2e_original_source_buffer.py`另实际释放换文件前延迟的旧HLS分片，未污染新文件与字幕。 所有浏览器识别均为离线替身，不代表PRD真实质量或发布门槛通过。最终代码、复审和日志索引见[实施状态](../../../docs/plans/2026-10-23-original-caption-implementation-status.md)。

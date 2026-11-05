@@ -96,22 +96,22 @@ the persistent environment and may not exist on a later run.
 
 Prepare the fixed clips and verify the pinned source hashes:
 
-    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/fixed_realtime_startup_acceptance.py prepare \
+    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/fixed_realtime_startup_acceptance.py prepare \
       --output logs/fixed-realtime-startup
 
 In a separate terminal, start only the media origin. It binds to loopback port
 8765 and does not start recognition:
 
-    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/fixed_realtime_startup_acceptance.py serve \
+    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/fixed_realtime_startup_acceptance.py serve \
       --host 127.0.0.1 --port 8765 --output logs/fixed-realtime-startup
 
 Before any real session, run the bounded source-only probe on both actual fixed
 prefixes. It measures PyAV open and first-yield timing against the paced HTTP
 origin, sends the PCM to a dummy sink, and makes no provider call:
 
-    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/probe_realtime_wav_source.py \
+    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/probe_realtime_wav_source.py \
       --language zh --output logs/fixed-realtime-startup-preflight
-    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/probe_realtime_wav_source.py \
+    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/probe_realtime_wav_source.py \
       --language en --output logs/fixed-realtime-startup-preflight
 
 Use a fresh output directory for each repeat; it refuses to overwrite prior
@@ -120,9 +120,9 @@ probe artifacts.
 The actual fixed-prefix baseline and the two separate PyAV option experiments
 were also run without a provider. To repeat them in a fresh output directory:
 
-    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/probe_realtime_wav_source.py \
+    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/probe_realtime_wav_source.py \
       --language zh --output logs/fixed-realtime-startup-options --compare-open-options
-    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/probe_realtime_wav_source.py \
+    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/probe_realtime_wav_source.py \
       --language en --output logs/fixed-realtime-startup-options --compare-open-options
 
 Each command makes three paced requests (counterfactual default-analysis
@@ -139,7 +139,7 @@ After the operator chooses to begin the cold batch, start the same WebUI entry
 point with the hook installed, using the existing service port:
 
     STREAM_ASR_STARTUP_PROBE_LOG=logs/fixed-realtime-startup/decoded-arrivals.jsonl \
-      /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/run_webui_with_startup_probe.py \
+      /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/run_webui_with_startup_probe.py \
       --host 127.0.0.1 --port 8002
 
 This requires the operator to stop the current 8002 owner first, following
@@ -155,9 +155,9 @@ app audio-body boundary before it can use the shared statistics.
 
 Analyze each language from saved artifacts:
 
-    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/fixed_realtime_startup_acceptance.py analyze \
+    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/fixed_realtime_startup_acceptance.py analyze \
       --language zh --output logs/fixed-realtime-startup
-    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python test/fixed_realtime_startup_acceptance.py analyze \
+    /home/wbb/.local/share/stream-with-asr/dev-venv/bin/python tests/acceptance/fixed_realtime_startup_acceptance.py analyze \
       --language en --output logs/fixed-realtime-startup
 
 ## Evidence status
@@ -180,7 +180,7 @@ option comparisons are never live ASR acceptance evidence.
 
 ## Genuine fixed-input HLS method (2026-10-26)
 
-`test/fixed_hls_startup_acceptance.py` reuses the calibrated collector and
+`tests/acceptance/fixed_hls_startup_acceptance.py` reuses the calibrated collector and
 statistics while requiring actual native HLS, browser proxy manifests/segments,
 and browser playback. It encodes the same pinned, original-speed WAV prefixes
 as H.264/AAC MPEG-TS. AAC is lossy: hashes preserve provenance, not transcript
@@ -203,8 +203,8 @@ Use a **fresh** private evidence directory, distinct from historical WAV runs:
 
     PY=/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python
     OUT="$(pwd)/logs/fixed-hls-startup/NEW-BATCH"
-    "$PY" test/fixed_hls_startup_acceptance.py prepare --output "$OUT"
-    "$PY" test/fixed_hls_startup_acceptance.py serve --output "$OUT"
+    "$PY" tests/acceptance/fixed_hls_startup_acceptance.py prepare --output "$OUT"
+    "$PY" tests/acceptance/fixed_hls_startup_acceptance.py serve --output "$OUT"
 
 After inspecting/stopping the sole 8002 owner and starting the regular WebUI
 with the optional timing hook above, privately restore its memory-only cloud
@@ -213,11 +213,11 @@ configuration. Set `STREAM_ASR_STARTUP_PROBE_LOG` to the new batch's
 provenance includes file paths and refuses inconsistent spellings. Collecting
 explicitly starts a real provider session:
 
-    "$PY" test/fixed_hls_startup_acceptance.py collect --language zh \
+    "$PY" tests/acceptance/fixed_hls_startup_acceptance.py collect --language zh \
       --label zh-startup-01 --startup-class cold --service-pid ACTUAL_PID \
       --cold-first-session-confirmed --allow-real-recognition \
       --output "$OUT"
-    "$PY" test/fixed_hls_startup_acceptance.py analyze --language zh \
+    "$PY" tests/acceptance/fixed_hls_startup_acceptance.py analyze --language zh \
       --output "$OUT"
 
 Restart before each language's cold pilot. Warm starts 02–20 must use the same

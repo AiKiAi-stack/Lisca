@@ -25,4 +25,4 @@
 
 **External prerequisites:** 使用本地固定媒体与模拟识别即可验证行为；真实语言准确率由 09 独立验证。
 
-**集成验证（2026-10-24）:** `test/e2e_original_release.py`9项真实播放器观察、`test/e2e_original_style.py`2项通过；中英显示/消失/缺失区间、修订撤回、320px与30/64px、全屏、对比度及偏好保存均有模拟回归。英文长句逐字完整，原速约3.98词/秒样本无人工短闪；真实自然快语速和准确率另属09。 所有浏览器识别均为离线替身，不代表PRD真实质量或发布门槛通过。最终代码、复审和日志索引见[实施状态](../../../docs/plans/2026-10-23-original-caption-implementation-status.md)。
+**集成验证（2026-10-24）:** `tests/browser/e2e_original_release.py`9项真实播放器观察、`tests/browser/e2e_original_style.py`2项通过；中英显示/消失/缺失区间、修订撤回、320px与30/64px、全屏、对比度及偏好保存均有模拟回归。英文长句逐字完整，原速约3.98词/秒样本无人工短闪；真实自然快语速和准确率另属09。 所有浏览器识别均为离线替身，不代表PRD真实质量或发布门槛通过。最终代码、复审和日志索引见[实施状态](../../../docs/plans/2026-10-23-original-caption-implementation-status.md)。

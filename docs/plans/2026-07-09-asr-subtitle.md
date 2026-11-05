@@ -76,12 +76,12 @@ subtitle:
 
 **Files:**
 - Create: `streamparser/asr_config.py`
-- Create: `test/test_asr_config.py`
+- Create: `tests/python/test_asr_config.py`
 
 **Step 1: Write failing test**
 
 ```python
-# test/test_asr_config.py
+# tests/python/test_asr_config.py
 import os
 import pytest
 from streamparser.asr_config import ASRSettings, ASRProvider, SubtitleConfig, ReconnectConfig
@@ -132,7 +132,7 @@ class TestASRSettings:
 **Step 2: Run, verify FAIL**
 
 ```bash
-cd /mnt/c/Users/jiacheng.wan/Documents/projects/streamparser && python -m pytest test/test_asr_config.py -v
+cd /mnt/c/Users/jiacheng.wan/Documents/projects/streamparser && python -m pytest tests/python/test_asr_config.py -v
 ```
 Expected: ModuleNotFoundError
 
@@ -235,14 +235,14 @@ class ASRSettings:
 **Step 4: Run test, verify PASS**
 
 ```bash
-cd /mnt/c/Users/jiacheng.wan/Documents/projects/streamparser && python -m pytest test/test_asr_config.py -v
+cd /mnt/c/Users/jiacheng.wan/Documents/projects/streamparser && python -m pytest tests/python/test_asr_config.py -v
 ```
 Expected: all 6 tests pass
 
 **Step 5: Commit**
 
 ```bash
-git add test/test_asr_config.py streamparser/asr_config.py && git commit -m "feat: add ASR configuration data classes"
+git add tests/python/test_asr_config.py streamparser/asr_config.py && git commit -m "feat: add ASR configuration data classes"
 ```
 
 ---
@@ -253,12 +253,12 @@ git add test/test_asr_config.py streamparser/asr_config.py && git commit -m "fea
 
 **Files:**
 - Create: `streamparser/subtitle.py`
-- Create: `test/test_subtitle.py`
+- Create: `tests/python/test_subtitle.py`
 
 **Step 1: Write failing test**
 
 ```python
-# test/test_subtitle.py
+# tests/python/test_subtitle.py
 import pytest
 from streamparser.subtitle import SubtitleEntry
 
@@ -443,14 +443,14 @@ class AudioProcessor:
 
 **Files:**
 - Create: `streamparser/asr_client.py`
-- Create: `test/test_asr_client.py`
+- Create: `tests/python/test_asr_client.py`
 
 **Note:** ASRClient wraps DashScope Recognition. The unit test should use a mock/stub for the Recognition class since we don't want real API calls in unit tests.
 
 **Step 1: Write failing test**
 
 ```python
-# test/test_asr_client.py
+# tests/python/test_asr_client.py
 import queue
 import threading
 from unittest.mock import MagicMock, patch
@@ -643,12 +643,12 @@ class ASRClient:
 
 **Files:**
 - Create: `streamparser/srt_writer.py`
-- Create: `test/test_srt_writer.py`
+- Create: `tests/python/test_srt_writer.py`
 
 **Step 1: Write failing test**
 
 ```python
-# test/test_srt_writer.py
+# tests/python/test_srt_writer.py
 import os
 import tempfile
 import pytest

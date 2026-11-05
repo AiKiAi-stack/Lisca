@@ -99,7 +99,7 @@ Launch the server with `python tools/webui.py --host 0.0.0.0 --port 8002`. Open 
 
 Lisca is an experimental preview for original-language captions. Cross-language translation is paused. Fixed Chinese and English news inputs have each completed 30 minutes of real-time replay, and startup meets the current preview threshold. Independent acoustic synchronization and caption coverage during speech have not passed validation. Some captions appear too briefly, some intervals have no captions, and recognition errors remain. See the [preview scope](docs/adr/0009-pr89-preview-acceptance-2026-11-04.md) and [test record](docs/plans/2026-11-04-pr89-acceptance-recheck.md).
 
-Public streams may be restricted by network, region or account. If you cannot find a reliable source, try a local video or use the [news replay method](docs/research/p0-local-news-2026-11-04.md). For offline whole-file transcription, see the [FunASR Vulkan guide](docs/funasr-vulkan.md).
+Public streams may be restricted by network, region or account. If you cannot find a reliable source, try a local video or use the [news replay method](docs/research/p0-local-news-2026-11-04.md). For offline whole-file transcription, see the [FunASR Vulkan guide](docs/guides/funasr-vulkan.md).
 
 ## Help and contribute
 
@@ -110,11 +110,11 @@ To report a problem, open an [Issue](https://github.com/AiKiAi-stack/Lisca/issue
 
 ```bash
 python -m pip install -e . pytest playwright
-python -m pytest test/ -v
-node --test test/*.test.cjs
+python -m pytest -v
+node --test tests/frontend/*.test.cjs
 ```
 
-Frontend checks need Node.js (CI uses 22). Unit tests do not need a real key. Acceptance tests with real speech recognition run separately and incur cloud charges.
+Frontend checks need Node.js (CI uses 22). Unit tests do not need a real key. Acceptance tests with real speech recognition run separately and incur cloud charges. See the [repository map and documentation index](docs/README.md) for test groups, acceptance tools and historical records.
 
 [Product decision](docs/adr/0008-original-language-captions.md) · [Glossary](GLOSSARY.md) · [Historical toolkit archive](docs/archive/streamparser.md)
 
