@@ -453,7 +453,7 @@ def test_public_cli_keeps_112ms_unmarked_jump_unknown_with_or_without_pcm(tmp_pa
 
 def test_browser_fixture_preserves_the_last_lag_caption_boundary(tmp_path):
     directory = tmp_path / "prepared"
-    fixture = Path(__file__).with_name("acoustic_calibration_fixture.py")
+    fixture = Path(__file__).resolve().parents[1] / "acceptance" / "acoustic_calibration_fixture.py"
     completed = subprocess.run([sys.executable, str(fixture), "--prepare-only",
                                 "--output-root", str(directory)], capture_output=True, text=True)
 
