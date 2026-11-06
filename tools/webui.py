@@ -242,7 +242,7 @@ def _is_lan_host(host: str | None) -> bool:
 async def keep_admin_routes_local(request: Request, call_next):
     """Expose only capability-based viewer routes to other LAN devices."""
     path = request.url.path
-    viewer_route = path in {"/hls.min.js", "/caption_presenter.js", "/playback_guard.js", "/player.css", "/i18n.js", "/recovery_controller.js", "/source_library.js"} or path.startswith("/share/")
+    viewer_route = path in {"/hls.min.js", "/caption_presenter.js", "/playback_guard.js", "/player.css", "/i18n.js", "/recovery_controller.js", "/source_library.js", "/ui-components.css", "/icons.svg"} or path.startswith("/share/")
     client_host = request.client.host if request.client else None
     origin = request.headers.get("origin")
     if request.method not in ("GET", "HEAD", "OPTIONS") and origin \
@@ -671,6 +671,18 @@ def caption_presenter_js():
 def player_css():
     return FileResponse(os.path.join(STATIC_DIR, "player.css"),
                         headers={"Cache-Control": "no-store"})
+
+
+@app.get("/ui-components.css")
+def ui_components_css():
+    return FileResponse(os.path.join(STATIC_DIR, "ui-components.css"),
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/icons.svg")
+def icons_svg():
+    return FileResponse(os.path.join(STATIC_DIR, "icons.svg"),
+                        media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/playback_guard.js")

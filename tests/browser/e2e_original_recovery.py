@@ -103,7 +103,7 @@ def main():
             page.wait_for_timeout(3000)
             mixed = request("/__fixture/state")
             page.locator("#settingsBtn").click()
-            page.get_by_role("tab", name="更多", exact=True).click()
+            page.get_by_role("tab", name="高级", exact=True).click()
             page.locator("#logBtn").click()
             diagnostics = page.locator("#logText").input_value()
             assert len(failed_fragments) == 1

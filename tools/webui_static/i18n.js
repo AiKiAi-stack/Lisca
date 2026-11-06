@@ -2,6 +2,13 @@
 (function (root) {
   'use strict';
   const messages = {
+  "批量检测": "Check all",
+  "清空最近观看": "Clear recently watched channels",
+  "直播流播放失败（源可能失效，换个频道）": "This stream could not play. Try another channel.",
+  "准备好，就开始观看": "Ready when you are",
+  "识别服务": "Recognition",
+  "高级": "Advanced",
+  "该源播放卡顿（带宽不足或源损坏），请检测并切换来源": "This stream is stalled (limited bandwidth or a damaged source). Check and switch the source.",
   "跳到播放器": "Skip to player",
   "内容": "Library",
   "频道侧栏": "Channel sidebar",
@@ -268,6 +275,7 @@
     ['媒体和识别共用的恢复额度已用完：', 'The shared recovery budget is exhausted: '],
     ['语音识别失败：', 'Speech recognition failed: '],
     ['⚠ 视频无法播放：', '⚠ Video could not play: '],
+    ['视频无法播放：', 'Video could not play: '],
     ['原文字幕部分缺失或暂不可用，直播媒体继续播放；', 'Some captions are missing or unavailable; live playback continues. '],
     ['上传失败: ', 'Upload failed: '],
     ['⚠ ', '⚠ ']

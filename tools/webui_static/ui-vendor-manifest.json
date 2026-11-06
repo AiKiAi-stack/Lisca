@@ -1,0 +1,59 @@
+{
+  "retrieved": "2026-11-05",
+  "daisyui": {
+    "version": "5.7.50",
+    "source": "https://registry.npmjs.org/daisyui/-/daisyui-5.7.50.tgz",
+    "license": "MIT",
+    "parts": [
+      "base/reset.css",
+      "base/rootcolor.css",
+      "base/svg.css",
+      "theme/light.css",
+      "components/button.css",
+      "components/input.css",
+      "components/select.css",
+      "components/checkbox.css",
+      "components/range.css",
+      "components/tab.css",
+      "components/menu.css",
+      "components/badge.css",
+      "components/textarea.css"
+    ]
+  },
+  "lucide-static": {
+    "version": "1.69.0",
+    "source": "https://registry.npmjs.org/lucide-static/-/lucide-static-1.69.0.tgz",
+    "license": "ISC and MIT (see bundled notice)",
+    "icons": [
+      "captions",
+      "file-text",
+      "file-video",
+      "folder-open",
+      "history",
+      "link",
+      "list-video",
+      "maximize",
+      "minimize",
+      "monitor-play",
+      "panel-left",
+      "panel-left-close",
+      "play",
+      "radio",
+      "search",
+      "settings-2",
+      "share-2",
+      "square",
+      "trash-2"
+    ]
+  },
+  "files": {
+    "ui-components.css": {
+      "bytes": 327466,
+      "sha256": "14838c0b3b6bd442f3d0b71e383252a071a04595c86c54e2143d63d7245f1238"
+    },
+    "icons.svg": {
+      "bytes": 3961,
+      "sha256": "ad72ff4873ff75e322c784dd50f37ab5975153de30aac7e10176f57bab00ce2e"
+    }
+  }
+}

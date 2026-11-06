@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
 const html=fs.readFileSync(path.join(__dirname,'../../tools/webui_static/index.html'),'utf8');
-function element(){return {children:[],classList:{add(){},remove(){}},appendChild(child){this.children.push(child);},close(){},focus(){}};}
+function element(){return {children:[],classList:{add(){},remove(){}},setAttribute(){},appendChild(child){this.children.push(child);},close(){},focus(){}};}
 test('channel selection is a primary source action and playback is a separate step',()=>{
  assert.match(html,/id="sourceSidebar"[\s\S]*id="chBtn"/);
  assert.match(html,/id="emptyUpload"/);

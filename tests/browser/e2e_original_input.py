@@ -45,9 +45,11 @@ def run_channel_selection_check(page):
         page.locator(".ch-row").first.wait_for()
         assert session_posts == [], session_posts
 
+        page.locator(".ch-row").first.click()
+        assert session_posts == [], session_posts
         with page.expect_request(lambda request: request.method == "POST"
                                  and request.url == BASE + "/api/cloud/sessions") as session_request:
-            page.locator(".ch-row").first.click()
+            page.locator("#start").click()
         page.wait_for_function("window.__channelPickerHeldSession !== undefined")
         post = json.loads(session_request.value.post_data or "{}")
         assert len(session_posts) == 1, session_posts
@@ -59,8 +61,6 @@ def run_channel_selection_check(page):
         assert dialog_closed_before_reply, "Selecting a channel leaves the modal covering the player"
         assert len(pending_sessions) == 1, "The session request must remain held during the check"
 
-        page.locator("#settingsBtn").click()
-        page.get_by_role("tab", name="更多", exact=True).click()
         page.locator("#chBtn").click()
         assert page.locator("#channelsDialog[open]").count() == 1
         assert page.locator(".ch-name").all_text_contents() == ["央视测试"]
@@ -142,7 +142,7 @@ def main():
             playing = snapshot(page)
             assert request("/__fixture/state")["started"] == before + 1
             page.locator("#settingsBtn").click()
-            page.get_by_role("tab", name="更多", exact=True).click()
+            page.get_by_role("tab", name="高级", exact=True).click()
             page.locator("#logBtn").click()
             diagnostics = page.locator("#logText").input_value()
             assert "connect" in diagnostics

@@ -20,6 +20,12 @@ def test_language_script_is_served_without_exposing_management():
                 library = await client.get("/source_library.js")
                 assert library.status_code == 200
                 assert "RecentChannels" in library.text
+                components = await client.get("/ui-components.css")
+                assert components.status_code == 200
+                assert "daisyUI 5.7.50" in components.text
+                icons = await client.get("/icons.svg")
+                assert icons.status_code == 200
+                assert icons.headers["content-type"].startswith("image/svg+xml")
                 configuration = await client.get("/api/cloud")
                 assert configuration.status_code == (200 if address == "127.0.0.1" else 403)
                 page = await client.get("/?lang=en")

@@ -5,49 +5,50 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lisca · 实时字幕</title>
 <meta name="theme-color" content="#f4f5f7">
+<link rel="stylesheet" href="/ui-components.css">
 <link rel="stylesheet" href="/player.css">
 <script src="/i18n.js"></script>
 </head>
 <body>
 <a href="#main" class="skip-link">跳到播放器</a>
 <header>
- <div class="brand-row"><div class="brand-start"><button id="sidebarToggle" class="quiet" aria-controls="sourceSidebar" aria-expanded="true" aria-label="频道侧栏"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg><span>内容</span></button><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>Lisca</h1><small>识别声音，保留原话</small></div></div></div><div class="brand-actions"><label class="sr-only" for="uiLanguage">界面语言</label><select id="uiLanguage" aria-label="界面语言" data-i18n-skip><option value="zh">中文</option><option value="en">English</option></select><button id="settingsBtn" class="quiet"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 3-1 3-3 1-3 3 2 2-1 4 3 3 3-1 2 3 4-1 1-3 3-1 1-4-3-2 1-3-3-3-3 1z"/></svg>设置</button></div></div>
+ <div class="brand-row"><div class="brand-start"><button id="sidebarToggle" class="quiet btn btn-ghost btn-square btn-sm" aria-controls="sourceSidebar" aria-expanded="true" aria-label="频道侧栏"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#panel-left"/></svg></button><div class="brand"><div class="brand-mark"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H7l-4 3zM7 8h10M7 12h7"/></svg></div><div><h1>Lisca</h1><small>识别声音，保留原话</small></div></div></div><div class="brand-actions"><label class="sr-only" for="uiLanguage">界面语言</label><select id="uiLanguage" aria-label="界面语言" data-i18n-skip class="select"><option value="zh">中文</option><option value="en">English</option></select><button id="settingsBtn" title="设置" class="quiet btn btn-ghost"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#settings-2"/></svg>设置</button></div></div>
 </header>
 <div class="app-shell">
  <div id="sidebarHome"><aside id="sourceSidebar" aria-labelledby="sourceLibraryTitle">
-  <div class="library-head"><h2 id="sourceLibraryTitle">内容</h2><button id="sidebarClose" class="quiet" aria-label="收起频道侧栏">收起</button></div>
-  <button id="chBtn" class="library-manage">管理频道列表</button>
-  <section aria-labelledby="exampleChannelsTitle"><h3 id="exampleChannelsTitle">示例频道</h3><div id="exampleChannels" class="library-list"></div><p class="library-note">公共直播源，可能暂时不可用</p></section>
-  <section aria-labelledby="recentChannelsTitle"><div class="library-section-head"><h3 id="recentChannelsTitle">最近观看</h3><button id="clearRecentChannels" class="quiet">清空</button></div><div id="recentChannels" class="library-list"></div></section>
+  <div class="library-head"><h2 id="sourceLibraryTitle">内容</h2><button id="sidebarClose" class="quiet btn btn-ghost btn-square btn-sm" aria-label="收起频道侧栏"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#panel-left-close"/></svg></button></div>
+  <button id="chBtn" class="library-manage btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#list-video"/></svg>管理频道列表</button>
+  <section aria-labelledby="exampleChannelsTitle"><h3 id="exampleChannelsTitle">示例频道</h3><ul id="exampleChannels" class="library-list menu"></ul><p class="library-note">公共直播源，可能暂时不可用</p></section>
+  <section aria-labelledby="recentChannelsTitle"><div class="library-section-head"><h3 id="recentChannelsTitle">最近观看</h3><button id="clearRecentChannels" class="quiet btn btn-ghost btn-square btn-sm" aria-label="清空最近观看" title="清空最近观看"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#trash-2"/></svg></button></div><ul id="recentChannels" class="library-list menu"></ul></section>
  </aside></div>
 <main id="main">
- <div class="source-row source-dock"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或输入本机文件路径" autocomplete="off" spellcheck="false"><button id="uploadBtn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM3 7V4h6l3 3"/></svg>打开文件</button></div>
+ <div class="watch-row"><h2 id="selectionStatus" role="status">准备好，就开始观看</h2><span id="modeBadge" class="mode-badge badge badge-outline">原文字幕 · 自动识别</span></div>
+ <div class="source-row source-dock"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或输入本机文件路径" autocomplete="off" spellcheck="false" class="input"><button id="uploadBtn" title="打开文件" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#folder-open"/></svg>打开文件</button><button id="start" class="primary btn btn-primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#play"/></svg>播放并生成字幕</button><button id="stop" title="停止播放与识别" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#square"/></svg>结束观看</button></div>
  <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
- <div class="watch-row"><span id="selectionStatus" role="status">尚未选择内容</span><span id="modeBadge" class="mode-badge">原文字幕 · 自动识别</span><button id="start" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>播放并生成字幕</button><button id="stop" title="停止播放与识别">结束观看</button></div>
- <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="15" rx="2"/><path d="m10 8 5 3.5-5 3.5zM5 22h14"/></svg><h2>打开一段内容</h2><p>直播与本地视频，保留语音原文</p><div class="empty-actions"><button id="emptyUpload" class="primary">本地视频</button><button id="emptyLink">直播链接</button></div></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet" title="退出全屏">退出全屏</button></div>
- <div class="player-footer"><div><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div id="shareHistoryNotice" role="status" hidden></div><div id="sourceBufferStatus" role="status" hidden></div></div><div class="player-tools"><button id="subToggle" class="quiet" aria-pressed="true" title="开关原文字幕">字幕 开</button><button id="historyBtn" class="quiet">字幕记录</button><button id="fullscreenBtn" class="quiet" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></svg>全屏</button></div></div>
- <div id="captionActions" hidden><button id="retryCaptions">重试字幕</button><button id="playOnly">仅播放（停止识别）</button></div>
+ <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon empty-symbol" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#monitor-play"/></svg><h2>打开一段内容</h2><p>直播与本地视频，保留语音原文</p><div class="empty-actions"><button id="emptyUpload" class="primary btn btn-primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#file-video"/></svg>本地视频</button><button id="emptyLink" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#link"/></svg>直播链接</button></div></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet btn btn-ghost" title="退出全屏"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#minimize"/></svg>退出全屏</button></div>
+ <div class="player-footer"><div><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div id="shareHistoryNotice" role="status" hidden></div><div id="sourceBufferStatus" role="status" hidden></div></div><div class="player-tools"><button id="shareCopy" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#share-2"/></svg>复制观众链接</button><select id="shareAddress" aria-label="观众设备所在局域网" hidden class="select"></select><button id="subToggle" class="quiet btn btn-ghost" aria-pressed="true" title="开关原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#captions"/></svg><span id="subToggleLabel">字幕 开</span></button><button id="historyBtn" class="quiet btn btn-ghost"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#history"/></svg>字幕记录</button><button id="fullscreenBtn" class="quiet btn btn-ghost" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#maximize"/></svg>全屏</button></div></div>
+ <div id="captionActions" hidden><button id="retryCaptions" class="btn btn-outline">重试字幕</button><button id="playOnly" class="btn btn-outline">仅播放（停止识别）</button></div>
  <div id="lateCaption" hidden></div>
 </main>
 </div>
 <dialog id="sourceDrawer" aria-labelledby="sourceLibraryTitle"></dialog>
-<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle"><div class="dialog-head"><h2 id="settingsDialogTitle">设置</h2><button class="quiet" data-close="settingsDialog" aria-label="关闭设置">关闭</button></div><div class="dialog-body"><div class="tabs" role="tablist" aria-label="设置分类"><button role="tab" aria-selected="true" aria-controls="cloudSettings" data-pane="cloudSettings">云端服务</button><button role="tab" aria-selected="false" aria-controls="captionSettings" data-pane="captionSettings">字幕</button><button role="tab" aria-selected="false" aria-controls="moreSettings" data-pane="moreSettings">更多</button></div><section id="cloudSettings" class="setting-section">  <section id="cloudPanel">
+<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle"><div class="dialog-head"><h2 id="settingsDialogTitle">设置</h2><button class="quiet btn btn-ghost" data-close="settingsDialog" aria-label="关闭设置">关闭</button></div><div class="dialog-body"><div class="tabs tabs-box" role="tablist" aria-label="设置分类"><button role="tab" aria-selected="true" aria-controls="cloudSettings" data-pane="cloudSettings" class="tab">识别服务</button><button role="tab" aria-selected="false" aria-controls="captionSettings" data-pane="captionSettings" class="tab">字幕样式</button><button role="tab" aria-selected="false" aria-controls="moreSettings" data-pane="moreSettings" class="tab">高级</button></div><section id="cloudSettings" class="setting-section">  <section id="cloudPanel">
     <h3>阿里云百炼（中国内地）</h3>
     <p>使用 FunASR 识别音频，字幕保留语音原文。音频会发送给百炼，费用由你的 API 账户承担；本模式不调用翻译服务。</p>
-    <label>API Key <input id="apiKey" type="password" autocomplete="off" placeholder="填写百炼 API Key，不会放入链接或日志"></label>
-    <label><input id="saveKey" type="checkbox"> 通过 Windows 加密保存到本机（默认仅本次运行）</label>
-    <button id="saveCloud">应用配置</button>
-    <button id="checkCloud">检查连接（会调用云端 API）</button>
-    <button id="clearCloud">删除配置</button>
+    <label>API Key <input id="apiKey" type="password" autocomplete="off" placeholder="填写百炼 API Key，不会放入链接或日志" class="input"></label>
+    <label><input id="saveKey" type="checkbox" class="checkbox checkbox-sm"> 通过 Windows 加密保存到本机（默认仅本次运行）</label>
+    <button id="saveCloud" class="btn btn-primary">应用配置</button>
+    <button id="checkCloud" class="btn btn-outline">检查连接（会调用云端 API）</button>
+    <button id="clearCloud" class="btn btn-ghost danger">删除配置</button>
     <span id="cloudState" role="status">尚未配置</span>
     <p style="font-size:12px">请先在百炼开通 fun-asr-realtime。检查连接不代表实际语音效果；费用以服务商账单为准。</p>
   </section>
-</section><section id="captionSettings" class="setting-section" hidden><input id="bilingual" type="checkbox" hidden>  <div id="stylePanel">
-    <label>字号 <input type="range" id="sizeRange" min="16" max="64" step="1" value="30"><span class="val" id="sizeVal">30px</span></label>
-    <label>位置 <input type="range" id="posRange" min="0" max="30" step="1" value="12"><span class="val" id="posVal">12%</span></label>
-    <label>对比度 <select id="contrastSel"><option value="default">白字 · 半透明黑底</option><option value="high">白字 · 实黑底</option><option value="yellow">黄字 · 实黑底</option></select></label>
+<label for="sourceLanguage">语音语言</label><select id="sourceLanguage" class="select"><option value="auto" selected>自动识别（原语言输出）</option><option value="zh">中文</option><option value="en">English</option></select></section><section id="captionSettings" class="setting-section" hidden><input id="bilingual" type="checkbox" hidden class="checkbox checkbox-sm">  <div id="stylePanel">
+    <label>字号 <input type="range" id="sizeRange" min="16" max="64" step="1" value="30" class="range range-xs"><span class="val" id="sizeVal">30px</span></label>
+    <label>位置 <input type="range" id="posRange" min="0" max="30" step="1" value="12" class="range range-xs"><span class="val" id="posVal">12%</span></label>
+    <label>对比度 <select id="contrastSel" class="select"><option value="default">白字 · 半透明黑底</option><option value="high">白字 · 实黑底</option><option value="yellow">黄字 · 实黑底</option></select></label>
     <label>字体
-      <select id="fontSel">
+      <select id="fontSel" class="select">
         <option value="default">系统默认</option>
         <option value="heiti">黑体</option>
         <option value="songti">宋体</option>
@@ -55,35 +56,35 @@
         <option value="kaiti">楷体</option>
       </select>
     </label>
-    <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 白字半透明黑底 / 字体系统默认">重置默认</button>
+    <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 白字半透明黑底 / 字体系统默认" class="btn btn-outline">重置默认</button>
   </div>
-<p>字幕按语音时间显示完整短句；长句按时间分段，完整识别内容可在字幕记录查看。</p></section><section id="moreSettings" class="setting-section" hidden><label for="engine">字幕服务</label>  <select id="engine">
+<p>字幕按语音时间显示完整短句；长句按时间分段，完整识别内容可在字幕记录查看。</p></section><section id="moreSettings" class="setting-section" hidden><label for="engine">字幕服务</label>  <select id="engine" class="select">
     <option value="aliyun-funasr" selected>云端原文字幕</option>
     <option value="demo">演示字幕（无识别，仅验证链路）</option>
   </select>
-<label for="sourceLanguage">语音语言</label><select id="sourceLanguage"><option value="auto" selected>自动识别（原语言输出）</option><option value="zh">中文</option><option value="en">English</option></select><label for="silence">语音断句</label>  <select id="silence" title="断句灵敏度：语音后静音多久判定一句结束（越小切句越频繁，仅 API 引擎生效）">
+<label for="silence">语音断句</label>  <select id="silence" title="断句灵敏度：语音后静音多久判定一句结束（越小切句越频繁，仅 API 引擎生效）" class="select">
     <option value="200">断句：极灵敏 200ms</option>
     <option value="400" selected>断句：灵敏 400ms</option>
     <option value="800">断句：标准 800ms</option>
     <option value="1300">断句：宽松 1300ms（服务端默认）</option>
   </select>
-  <select id="delay" hidden title="旧演示模式的同步缓冲设置">
+  <select id="delay" hidden title="旧演示模式的同步缓冲设置" class="select">
     <option value="0.1">音视频延迟 100ms</option>
     <option value="1">音视频延迟 1s</option>
     <option value="5">音视频延迟 5s</option>
   </select>
-<div><button id="logBtn">诊断日志</button></div><div><button id="shareCopy">复制观众链接</button><select id="shareAddress" aria-label="观众设备所在局域网" hidden></select><p class="help">开始播放后，可将只读链接分享给同一局域网内的设备。</p></div></section></div></dialog>
-<dialog id="historyDialog" aria-labelledby="historyDialogTitle"><div class="dialog-head"><h2 id="historyDialogTitle">字幕记录</h2><button class="quiet" data-close="historyDialog" aria-label="关闭字幕记录">关闭</button></div><div class="dialog-body"><div id="history"></div></div></dialog>
-<dialog id="channelsDialog" aria-labelledby="channelsDialogTitle"><div class="dialog-head"><h2 id="channelsDialogTitle">频道列表</h2><button class="quiet" data-close="channelsDialog" aria-label="关闭频道列表">关闭</button></div><div class="dialog-body"><label for="channelListUrl">M3U 频道列表地址</label><div class="source-row"><input id="channelListUrl" type="url" placeholder="https://…/channels.m3u"><button id="loadChannelsBtn">加载频道</button></div><p id="channelStatus" role="status"></p>  <div id="chPanel">
+<div><button id="logBtn" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#file-text"/></svg>诊断日志</button></div></section></div></dialog>
+<dialog id="historyDialog" aria-labelledby="historyDialogTitle"><div class="dialog-head"><h2 id="historyDialogTitle">字幕记录</h2><button class="quiet btn btn-ghost" data-close="historyDialog" aria-label="关闭字幕记录">关闭</button></div><div class="dialog-body"><div id="history"></div></div></dialog>
+<dialog id="channelsDialog" aria-labelledby="channelsDialogTitle"><div class="dialog-head"><h2 id="channelsDialogTitle">频道列表</h2><button class="quiet btn btn-ghost" data-close="channelsDialog" aria-label="关闭频道列表">关闭</button></div><div class="dialog-body"><label for="channelListUrl">M3U 频道列表地址</label><div class="source-row"><input id="channelListUrl" type="url" placeholder="https://…/channels.m3u" class="input"><button id="loadChannelsBtn" class="btn btn-outline">加载频道</button></div><p id="channelStatus" role="status"></p>  <div id="chPanel">
     <div class="ch-head">
       <span id="chInfo">未加载频道列表</span>
-      <button id="chProbeBtn" title="批量检测所有频道的连通性与延迟（手动触发，并发 20，逐条显示）">🔍 批量检测</button>
+      <button id="chProbeBtn" title="批量检测所有频道的连通性与延迟（手动触发，并发 20，逐条显示）" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#search"/></svg>批量检测</button>
     </div>
     <div id="chList"></div>
   </div>
 </div></dialog>
-<dialog id="logsDialog" aria-labelledby="logsDialogTitle"><div class="dialog-head"><h2 id="logsDialogTitle">诊断日志</h2><button class="quiet" data-close="logsDialog" aria-label="关闭诊断日志">关闭</button></div><div class="dialog-body"><div id="logPanel" hidden><textarea id="logText" aria-label="会话日志" readonly spellcheck="false"></textarea><button id="copyLogBtn">复制日志</button></div></div></dialog>
-<button id="styleBtn" hidden>字幕样式</button>
+<dialog id="logsDialog" aria-labelledby="logsDialogTitle"><div class="dialog-head"><h2 id="logsDialogTitle">诊断日志</h2><button class="quiet btn btn-ghost" data-close="logsDialog" aria-label="关闭诊断日志">关闭</button></div><div class="dialog-body"><div id="logPanel" hidden><textarea id="logText" aria-label="会话日志" readonly spellcheck="false" class="textarea"></textarea><button id="copyLogBtn" class="btn btn-outline">复制日志</button></div></div></dialog>
+<button id="styleBtn" hidden class="btn btn-outline">字幕样式</button>
 <script src="/hls.min.js"></script>
 <script src="/caption_presenter.js"></script>
 <script src="/playback_guard.js"></script>
@@ -290,7 +291,7 @@
   // 字幕开关（ticket-13）：同日志按钮，可关可开，默认开
   subToggleBtn.onclick = () => {
     subEnabled = !subEnabled;
-    setUiText(subToggleBtn, subEnabled ? '字幕 开' : '字幕 关');
+    setUiText(document.getElementById('subToggleLabel'), subEnabled ? '字幕 开' : '字幕 关');
     subToggleBtn.setAttribute('aria-pressed', String(subEnabled));
     if (!subEnabled) currentEl.textContent = '';
     else syncSubtitle();
@@ -434,11 +435,13 @@
         const status = document.createElement('span');
         status.className = 'ch-status';
         const name = document.createElement('button');
-        name.className = 'ch-name';
+        name.className = 'ch-name btn btn-ghost';
         name.textContent = ch.name;
         name.title = ch.url;
         const btn = document.createElement('button');
-        btn.textContent = '🔍';
+        btn.className = 'btn btn-ghost btn-square btn-sm';
+        btn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="/icons.svg#search"/></svg>';
+        btn.setAttribute('aria-label', uiText('检测该频道连通性与延迟'));
         btn.title = uiText('检测该频道连通性与延迟');
         btn.onclick = (ev) => { ev.stopPropagation(); probeChannel(ch.url); };
         row.appendChild(status);
@@ -528,7 +531,7 @@
       if (Date.now() - lastChange > 20000) {
         clearInterval(stallTimer);
         logEvent('video_stall', `播放卡顿：${lastT.toFixed(1)}s 处冻结 20s`);
-        setUiText(currentEl, '⚠ 该源播放卡顿（带宽不足或源损坏），请点 🔍 检测换一个快源');
+        setUiText(currentEl, '该源播放卡顿（带宽不足或源损坏），请检测并切换来源');
         currentEl.classList.add('err');
         setStatus('播放卡顿：请换源', true);
       }
@@ -1266,7 +1269,7 @@
     if (!sharedViewerActive) {
       if (cloudPlayback) {
         startBtn.style.display = 'none';
-        stopBtn.style.display = 'inline-block';
+        stopBtn.style.display = 'inline-flex';
         setStatus('正在建立云端识别会话…');
         try {
           const ticket = await cloudRequest('/api/cloud/sessions', 'POST', {url, mode:'transcribe', source:sourceLanguageEl.value, start_at:startAt});
@@ -1277,7 +1280,7 @@
           activeCloudSession = ticket.session;
         } catch (error) {
           if (generation !== connectionGeneration) return;
-          startBtn.style.display = 'inline-block';
+          startBtn.style.display = 'inline-flex';
           stopBtn.style.display = 'none';
           setStatus(error.message, true);
           setUiText(currentEl, error.message);
@@ -1308,7 +1311,7 @@
         });
         shareAddressEl.hidden = shareAddressEl.options.length < 2;
         shareCopyBtn.dataset.url = data.url;
-        shareCopyBtn.style.display = 'inline-block';
+        shareCopyBtn.style.display = 'inline-flex';
       } catch (error) {
         if (!cloudPlayback) { setStatus('无法创建观众链接：' + error.message, true); return; }
         shareCopyBtn.style.display = 'none';
@@ -1323,7 +1326,7 @@
       ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/share/${encodeURIComponent(shareToken)}/ws?viewer_id=${encodeURIComponent(viewerInfo.viewer_id)}`
       : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?${params}`);
     startBtn.style.display = 'none';
-    stopBtn.style.display = sharedViewerActive ? 'none' : 'inline-block';
+    stopBtn.style.display = sharedViewerActive ? 'none' : 'inline-flex';
     currentEl.classList.remove('err');
     if (!preserveLiveMedia) setStatus(cloudPlayback ? '正在识别音频，原文字幕就绪后播放…' : '连接中…');
     document.getElementById('captionActions').hidden = !cloudPlayback;
@@ -1422,7 +1425,7 @@
         }
         document.getElementById('playOnly').hidden = true;
         if (!retryable) {
-          setUiText(currentEl, '⚠ 直播流播放失败（源可能失效，换个频道）');
+          setUiText(currentEl, '直播流播放失败（源可能失效，换个频道）');
           currentEl.classList.add('err');
         }
       });
@@ -1580,7 +1583,7 @@
           return;
         }
         if (holdCaptionForCloudReconnect()) return;
-        setUiText(currentEl, '⚠ ' + msg.message);
+        setUiText(currentEl, '' + msg.message);
         currentEl.classList.add('err');
         setStatus('出错', true);
         playStarted = true;  // 解除播放拦截，允许手动看片（无字幕）
@@ -1656,7 +1659,7 @@
         if (event.code === 4429) setStatus('观众人数已满（最多 3 台设备），请稍后再试', true);
         else if (!currentEl.classList.contains('err')) setStatus('直播已结束或连接已断开');
       } else {
-        startBtn.style.display = 'inline-block';
+        startBtn.style.display = 'inline-flex';
         stopBtn.style.display = 'none';
         shareCopyBtn.style.display = 'none';
         shareAddressEl.hidden = true;
@@ -1722,7 +1725,7 @@
     const esrc = (player.currentSrc || player.src || '').slice(0, 140);
     logEvent('video_error_full',
       `code=${code} msg=${emsg || '(无)'} src=${esrc} ready=${player.readyState} net=${player.networkState}`);
-    setUiText(currentEl, '⚠ 视频无法播放：'
+    setUiText(currentEl, '视频无法播放：'
       + (emsg || `错误码 ${code}（容器/编码不受支持或链接失效）`));
     currentEl.classList.add('err');
     setStatus('视频加载失败', true);
@@ -1884,7 +1887,7 @@
     if (token) await cloudRequest('/api/cloud/sessions/' + encodeURIComponent(token), 'DELETE').catch(() => {});
     if (share) await fetch('/share/stop/' + encodeURIComponent(share), {method:'POST'}).catch(() => {});
     if (generation !== connectionGeneration) return;
-    startBtn.style.display = 'inline-block'; stopBtn.style.display = 'none';
+    startBtn.style.display = 'inline-flex'; stopBtn.style.display = 'none';
     shareCopyBtn.style.display = 'none'; shareAddressEl.hidden = true;
     setStatus(message);
     if (onlyPlay) { document.getElementById('captionActions').hidden = true; player.play().catch(() => {}); }
@@ -1965,7 +1968,7 @@
     currentEl.textContent = '';
     document.getElementById('emptyState').hidden = false;
     currentEl.classList.remove('err');
-    startBtn.style.display = 'inline-block';
+    startBtn.style.display = 'inline-flex';
     stopBtn.style.display = 'none';
     shareCopyBtn.style.display = 'none';
     shareAddressEl.hidden = true;
@@ -2025,7 +2028,7 @@
   });
   urlEl.addEventListener('input', () => {
     setUiText(document.getElementById('selectionStatus'), urlEl.value.trim() ? '已填写来源' : '尚未选择内容');
-    if (activeInput) startBtn.style.display = urlEl.value.trim() === activeInput ? 'none' : 'inline-block';
+    if (activeInput) startBtn.style.display = urlEl.value.trim() === activeInput ? 'none' : 'inline-flex';
   });
   document.getElementById('channelListUrl').addEventListener('keydown', event => {
     if (event.key === 'Enter') loadChannels(event.currentTarget.value.trim());
@@ -2113,13 +2116,13 @@
       container.replaceChildren();
       for (const channel of items) {
         const button = document.createElement('button');
-        button.className = 'library-channel';
+        button.className = 'library-channel' + (channel.url === urlEl.value ? ' menu-active' : '');
         button.dataset.i18nSkip = '';
         button.setAttribute('aria-pressed', String(channel.url === urlEl.value));
         const mark = document.createElement('span');
         mark.className = 'channel-mark';
         mark.setAttribute('aria-hidden', 'true');
-        mark.textContent = channel.name.slice(0, 1);
+        mark.innerHTML = '<svg class="icon" aria-hidden="true"><use href="/icons.svg#radio"/></svg>';
         const text = document.createElement('span');
         text.className = 'channel-text';
         const title = document.createElement('span');
@@ -2127,17 +2130,23 @@
         const detail = document.createElement('small');
         const address = new URL(channel.url);
         detail.textContent = channel.detail || address.hostname;
+        if (examples) detail.className = 'badge badge-ghost badge-sm';
         if (address.search || address.hash) button.title = uiText('仅保留在本次页面');
         text.append(title, detail);
         button.append(mark, text);
         button.onclick = () => chooseChannel(channel);
-        container.appendChild(button);
+        const row = document.createElement('li');
+        row.appendChild(button);
+        container.appendChild(row);
       }
       if (!items.length && !examples) {
         const empty = document.createElement('p');
         empty.className = 'library-note';
         setUiText(empty, '播放过的频道会显示在这里');
-        container.appendChild(empty);
+        const row = document.createElement('li');
+        row.className = 'library-empty';
+        row.appendChild(empty);
+        container.appendChild(row);
       }
     }
     function renderLibrary() {

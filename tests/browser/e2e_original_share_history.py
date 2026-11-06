@@ -50,14 +50,11 @@ def main():
 
                 # Exercise the actual copy control. Keep the capability only in
                 # this ephemeral browser context and never put it in the report.
-                owner.locator("#settingsBtn").click()
-                owner.get_by_role("tab", name="更多").click()
                 owner.locator("#shareCopy").wait_for(state="visible", timeout=15000)
                 owner.locator("#shareCopy").click()
                 owner.wait_for_function("document.querySelector('#status').innerText.includes('观众链接已复制')")
                 viewer_url = owner.evaluate("navigator.clipboard.readText()")
                 assert viewer_url.startswith(BASE + "/share/")
-                owner.get_by_role("button", name="关闭设置", exact=True).click()
                 viewer = context.new_page()
                 viewer.on("pageerror", lambda error: page_errors.append(redact_capability(error)))
                 viewer.goto(viewer_url, wait_until="domcontentloaded", timeout=15000)
