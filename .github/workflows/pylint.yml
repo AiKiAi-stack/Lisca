@@ -25,7 +25,7 @@ jobs:
         # E0110 为 test_engines 故意实例化抽象类断言 TypeError
         # init-hook 包含运行时和验收工具的导入路径
         # whisper_streaming 为 vendored 上游，不归本仓库 lint
-        # DashScope 的 ASR 路径为动态别名；先验证实际符号，再跳过该别名的静态路径查找。
+        # DashScope 2.0.3 的 ASR 路径为动态别名；先验证实际符号，再跳过该别名的静态路径查找。
         python -c "from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult"
         pylint --errors-only --init-hook="import sys; sys.path[:0] = ['whisper_streaming', 'tools', 'tests/acceptance', 'tests/browser', 'tests/python']" \
           --ignored-modules=dashscope.audio.asr \
