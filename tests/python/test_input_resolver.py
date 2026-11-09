@@ -5,7 +5,7 @@ import sys
 import pytest
 
 
-from input_resolver import classify, resolve_stream_url  # noqa: E402
+from lisca.input_resolver import classify, resolve_stream_url  # noqa: E402
 
 
 class TestClassify:
@@ -67,12 +67,12 @@ class TestResolveStreamUrl:
             return FakeProc()
 
         monkeypatch.setattr(subprocess, "run", fake_run)
-        monkeypatch.setattr(sys.modules["input_resolver"].shutil, "which", fake_which)
+        monkeypatch.setattr(sys.modules["lisca.input_resolver"].shutil, "which", fake_which)
         assert resolve_stream_url("https://www.bilibili.com/video/BV1xx411c7mD") == \
             "https://example.com/real-stream.m3u8"
 
     def test_page_url_without_ytdlp(self, monkeypatch):
-        monkeypatch.setattr(sys.modules["input_resolver"].shutil, "which", lambda n: None)
+        monkeypatch.setattr(sys.modules["lisca.input_resolver"].shutil, "which", lambda n: None)
         with pytest.raises(RuntimeError, match="yt-dlp"):
             resolve_stream_url("https://www.bilibili.com/video/BV1xx411c7mD")
 
@@ -82,7 +82,7 @@ class TestResolveStreamUrl:
             stdout = ""
             stderr = "ERROR: Unsupported URL"
 
-        monkeypatch.setattr(sys.modules["input_resolver"].shutil, "which", lambda n: "/usr/bin/yt-dlp")
+        monkeypatch.setattr(sys.modules["lisca.input_resolver"].shutil, "which", lambda n: "/usr/bin/yt-dlp")
         monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: FakeProc())
         with pytest.raises(RuntimeError, match="解析失败"):
             resolve_stream_url("https://www.douyin.com/video/123456")

@@ -10,7 +10,7 @@
 
 ## 项目现状与适配点
 
-项目已有 [AliyunFunASREngine](../../tools/engines/aliyun_funasr.py)，默认模型是 fun-asr-realtime，底层复用 [ASRClient](../../streamparser/asr_client.py) 和 DashScope Python SDK。识别回调已保留句子文本、句/字起止时间、is_final 和 sentence_id，WebUI 也已有 partial/final 的字幕事件路径。
+项目已有 [AliyunFunASREngine](../../lisca/engines/aliyun_funasr.py)，默认模型是 fun-asr-realtime，底层复用 [ASRClient](../../lisca/asr/asr_client.py) 和 DashScope Python SDK。识别回调已保留句子文本、句/字起止时间、is_final 和 sentence_id，WebUI 也已有 partial/final 的字幕事件路径。
 
 当前引擎构造参数的 language_hints 默认是 ("zh",)；虽然构造器也有 language 参数，但它没有传给识别 SDK。WebUI 创建阿里云引擎时目前只传入断句静音时长。英→中验收需要将识别源语言配置传到引擎，并将 language_hints 设为 ("en",)，或省略 hint 让服务自动检测。每个识别任务只能指定一个 hint。用户提供 Key 的首版流程也需要接入当前 WebUI；当前启动代码从环境变量读取 Key，并兼容开发者的 ~/Projects/.env 文件。
 

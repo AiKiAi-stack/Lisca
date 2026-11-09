@@ -64,7 +64,7 @@ Run these commands from the repository directory. If you use Python 3.10 or 3.11
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-webui.txt
-python tools/webui.py --host 127.0.0.1 --port 8002
+python -m lisca --host 127.0.0.1 --port 8002
 ```
 
 Open [127.0.0.1:8002](http://127.0.0.1:8002/?lang=en) in your browser.
@@ -91,7 +91,7 @@ Audio is sent to DashScope and billed to your API account. The connection check 
 <details>
 <summary>How do I share with devices on my LAN?</summary>
 
-Launch the server with `python tools/webui.py --host 0.0.0.0 --port 8002`. Open the management page locally on the host, start a live session and copy its viewer link from Settings. Choose a reachable address if you have multiple adapters, and allow port `8002` through your private-network firewall. Viewers need no separate key. The link expires when the session stops.
+Launch the server with `python -m lisca --host 0.0.0.0 --port 8002`. Open the management page locally on the host, start a live session and copy its viewer link from Settings. Choose a reachable address if you have multiple adapters, and allow port `8002` through your private-network firewall. Viewers need no separate key. The link expires when the session stops.
 
 </details>
 
@@ -123,7 +123,7 @@ Frontend checks need Node.js (CI uses 22). Unit tests do not need a real key. Ac
 <details>
 <summary>Windows launch diagnostics and configuration</summary>
 
-From the repository directory, run `.venv\Scripts\python.exe tools\windows_launcher.py --check`. The launch log is `logs/webui-windows.log`, configuration is under `.data/`, and uploaded video copies are under `uploads/`. Keys are not stored in browser localStorage, URLs or ordinary logs. Deleting the configuration clears the saved file and stops cloud sessions.
+From the repository directory, run `.venv\Scripts\python.exe -m lisca.windows_launcher --check`. The launch log is `logs/webui-windows.log`, configuration is under `.data/`, and uploaded video copies are under `uploads/`. Keys are not stored in browser localStorage, URLs or ordinary logs. Deleting the configuration clears the saved file and stops cloud sessions.
 
 </details>
 

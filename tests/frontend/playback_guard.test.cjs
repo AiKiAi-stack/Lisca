@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {CaptionPlaybackGuard} = require('../../tools/webui_static/playback_guard.js');
+const {CaptionPlaybackGuard} = require('../../lisca/web/static/playback_guard.js');
 
 test('an audio feed watermark alone does not end a degraded live caption fault', () => {
   const guard = new CaptionPlaybackGuard();
@@ -186,7 +186,7 @@ test('source buffering does not consume the live application hold or progress ti
 });
 
 test('live startup uses its media hold budget instead of the local 15s recognition timeout',()=>{
- const {CaptionPlaybackGuard}=require('../../tools/webui_static/playback_guard.js');
+ const {CaptionPlaybackGuard}=require('../../lisca/web/static/playback_guard.js');
  const guard=new CaptionPlaybackGuard();guard.reset({now:0,live:true});
  assert.equal(guard.tick({now:16000,time:15,limit:15,ready:false,userPaused:false}),'hold');
  assert.equal(guard.tick({now:18000,time:15,limit:15,ready:false,userPaused:false}),'degrade');

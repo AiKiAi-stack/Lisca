@@ -68,7 +68,7 @@ def run_bili_mode(bv1: str, bv2: str):
 def _run_switch(url_a, url_b, marker_a, marker_b, content_marker, wait_playing):
     """通用切换回路：连接 A → 停止 → 连接 B → 断言 audioEl.src 含 marker_b"""
     server = subprocess.Popen(
-        [sys.executable, os.path.join(ROOT, "tools", "webui.py"),
+        [sys.executable, os.path.join(ROOT, "tools", "lisca.web.app.py"),
          "--host", "127.0.0.1", "--port", str(PORT)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )

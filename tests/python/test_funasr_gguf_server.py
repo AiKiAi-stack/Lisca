@@ -1,7 +1,7 @@
 """The bundled HTTP wrapper constructs the Vulkan CLI invocation correctly."""
 
 
-from funasr_gguf_server import (  # noqa: E402
+from lisca.funasr_gguf_server import (  # noqa: E402
     ServerConfig, _parse_extra_args, build_arg_parser, build_command,
 )
 

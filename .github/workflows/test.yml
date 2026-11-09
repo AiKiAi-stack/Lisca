@@ -25,3 +25,9 @@ jobs:
         run: node --test tests/frontend/*.test.cjs
       - name: Run tests
         run: python -m pytest -v
+      - name: Verify installed package
+        run: |
+          python -m pip wheel --no-deps . -w "$RUNNER_TEMP/lisca-wheel"
+          python -m pip install --no-deps --target "$RUNNER_TEMP/lisca-installed" "$RUNNER_TEMP"/lisca-wheel/lisca-*.whl
+          cd "$RUNNER_TEMP"
+          PYTHONPATH="$RUNNER_TEMP/lisca-installed" python "$GITHUB_WORKSPACE/tests/acceptance/check_installed_package.py" --package-root "$RUNNER_TEMP/lisca-installed"

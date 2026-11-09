@@ -22,9 +22,9 @@ import numpy as np
 import uvicorn
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools"))
-import webui  # noqa: E402
-from cloud_translation import CloudConfigStore  # noqa: E402
+sys.path.insert(0, str(ROOT))
+from lisca.web import app as webui  # noqa: E402
+from lisca.cloud_translation import CloudConfigStore  # noqa: E402
 from original_release_hls import generate_hls, serve_hls  # noqa: E402
 
 
@@ -80,8 +80,8 @@ class RecognitionFixture:
             self.observation = {"id": state["started"], "mode": self.mode,
                                 "created_at": time.monotonic(), "closed": False,
                                 "feed_observations": []}
-            state["engines"].append(self.observation)
-            state["engines"] = state["engines"][-32:]
+            state["lisca.engines"].append(self.observation)
+            state["lisca.engines"] = state["lisca.engines"][-32:]
         self.elapsed = 0.0
         self.closed = False
         self.pending = deque()
@@ -199,7 +199,7 @@ def main():
         generate_media(directory / (name + ".mp4"), *arguments)
     (directory / "invalid.bin").write_bytes(b"This is not decodable media.")
     state = {"mode": "normal", "started": 0, "active": 0, "audio_seconds": 0.,
-             "lock": threading.Lock(), "live_started": time.monotonic(), "engines": [],
+             "lock": threading.Lock(), "live_started": time.monotonic(), "lisca.engines": [],
              "scenario_started": 0, "share_history_captions": 0,
              "share_history_future_gate": threading.Event()}
     hls_directory = directory / "hls"

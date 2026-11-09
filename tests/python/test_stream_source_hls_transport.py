@@ -13,7 +13,7 @@ import pytest
 import httpx
 
 from test_stream_source_hls_startup import _make_hls_fixture
-from tools.stream_source import AudioTimelineError, StreamSource
+from lisca.stream_source import AudioTimelineError, StreamSource
 
 
 def _observed_playlist(first, count=3, *, pdt=False, extra=b"", endlist=False):
@@ -47,7 +47,7 @@ def _install_decoder_probe(monkeypatch, replies, decoder):
         return container
 
     monkeypatch.setattr("httpx.HTTPTransport.handle_request", handle_request)
-    monkeypatch.setattr("tools.stream_source.av.open", open_decoder)
+    monkeypatch.setattr("lisca.stream_source.av.open", open_decoder)
     return requests
 
 
@@ -724,7 +724,7 @@ def test_hls_unneeded_refresh_remains_streaming_and_partial_close_does_not_drain
         container.streams.audio = [object()]
         return container
 
-    monkeypatch.setattr("tools.stream_source.av.open", decode)
+    monkeypatch.setattr("lisca.stream_source.av.open", decode)
     with _running_origin(server) as origin:
         StreamSource(origin + "/live.m3u8").close()
     assert server.requests == ["/live.m3u8", "/live.m3u8"]
@@ -771,7 +771,7 @@ def test_hls_required_merge_waits_for_bounded_body_before_returning_memory_respo
         container.streams.audio = [object()]
         return container
 
-    monkeypatch.setattr("tools.stream_source.av.open", decode)
+    monkeypatch.setattr("lisca.stream_source.av.open", decode)
     with _running_origin(server) as origin:
         StreamSource(origin + "/live.m3u8").close()
     assert elapsed[0] >= 0.3
@@ -820,7 +820,7 @@ def test_hls_close_releases_an_active_history_refresh_without_another_request(
         container.streams.audio = [object()]
         return container
 
-    monkeypatch.setattr("tools.stream_source.av.open", decode)
+    monkeypatch.setattr("lisca.stream_source.av.open", decode)
     with _running_origin(server) as origin:
         source = StreamSource(origin + "/live.m3u8")
         server.window = (3, 3, True)
@@ -907,7 +907,7 @@ def test_hls_partial_manifest_close_does_not_drain_or_reuse_body(tmp_path, monke
         container.streams.audio = [object()]
         return container
 
-    monkeypatch.setattr("tools.stream_source.av.open", probe_prefix)
+    monkeypatch.setattr("lisca.stream_source.av.open", probe_prefix)
     with _running_origin(server) as origin:
         first = StreamSource(f"{origin}/live.m3u8")
         started = time.monotonic()
@@ -929,7 +929,7 @@ def test_hls_body_read_timeout_is_bounded_and_never_replays(tmp_path, monkeypatc
         response.read()
         raise AssertionError("withheld response tail must time out")
 
-    monkeypatch.setattr("tools.stream_source.av.open", read_manifest)
+    monkeypatch.setattr("lisca.stream_source.av.open", read_manifest)
     with _running_origin(server) as origin:
         started = time.monotonic()
         with pytest.raises(TimeoutError, match="HLS HTTP timed out"):
@@ -947,7 +947,7 @@ def test_hls_constructor_failure_closes_manifest_and_nested_response(tmp_path, m
             assert child.read(1)
             raise ValueError("invalid media fixture")
 
-        monkeypatch.setattr("tools.stream_source.av.open", fail_after_nested_open)
+        monkeypatch.setattr("lisca.stream_source.av.open", fail_after_nested_open)
         with pytest.raises(ValueError, match="invalid media fixture"):
             StreamSource(f"{origin}/live.m3u8")
     assert server.accepted == server.finished == 2
@@ -1035,8 +1035,8 @@ def test_hls_keeps_urllib_proxy_bypass_and_does_not_enable_all_proxy(
 def test_webui_stop_releases_real_hls_source_connections(tmp_path, monkeypatch, blocked_read):
     from fastapi.testclient import TestClient
 
-    import webui
-    from cloud_translation import CloudConfigStore
+    from lisca.web import app as webui
+    from lisca.cloud_translation import CloudConfigStore
 
     _playlist, segments = _make_hls_fixture(tmp_path)
     server = _RollingServer(segments, cold_delay=0, static=True)

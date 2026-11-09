@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import av
 import numpy as np
 
-from tools.stream_source import StreamSource
+from lisca.stream_source import StreamSource
 
 
 SAMPLE_RATE = 16000
@@ -211,7 +211,7 @@ def test_non_wav_remote_and_local_sources_keep_existing_pcm(monkeypatch, tmp_pat
         opened_options.append(dict(kwargs.get("options") or {}))
         return real_open(*args, **kwargs)
 
-    monkeypatch.setattr("tools.stream_source.av.open", observe_open)
+    monkeypatch.setattr("lisca.stream_source.av.open", observe_open)
     sources = (
         str(local_wav),
         str(local_mpegts),

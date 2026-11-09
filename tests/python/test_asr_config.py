@@ -1,6 +1,6 @@
 # encoding:utf-8
 import pytest
-from streamparser.asr_config import ASRSettings
+from lisca.asr.asr_config import ASRSettings
 
 
 class TestASRSettings:

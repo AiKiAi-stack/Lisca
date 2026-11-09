@@ -64,7 +64,7 @@ Windows 用户安装 Python 时需启用 Python Launcher，然后双击 `start-w
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-webui.txt
-python tools/webui.py --host 127.0.0.1 --port 8002
+python -m lisca --host 127.0.0.1 --port 8002
 ```
 
 浏览器打开 [127.0.0.1:8002](http://127.0.0.1:8002/?lang=zh)。
@@ -91,7 +91,7 @@ python tools/webui.py --host 127.0.0.1 --port 8002
 <details>
 <summary>如何分享给同一局域网的设备？</summary>
 
-以 `python tools/webui.py --host 0.0.0.0 --port 8002` 启动服务。在主机上通过本机地址打开管理页面，开始直播后，从设置中复制观众链接。有多张网卡时，选择观众设备能访问的地址，并在防火墙中允许家庭/专用网络访问端口 `8002`。观众无需另填 Key，直播停止后链接失效。
+以 `python -m lisca --host 0.0.0.0 --port 8002` 启动服务。在主机上通过本机地址打开管理页面，开始直播后，从设置中复制观众链接。有多张网卡时，选择观众设备能访问的地址，并在防火墙中允许家庭/专用网络访问端口 `8002`。观众无需另填 Key，直播停止后链接失效。
 
 </details>
 
@@ -123,7 +123,7 @@ node --test tests/frontend/*.test.cjs
 <details>
 <summary>Windows 启动诊断与配置位置</summary>
 
-从项目目录运行 `.venv\Scripts\python.exe tools\windows_launcher.py --check`。启动日志在 `logs/webui-windows.log`，配置在 `.data/`，上传的视频副本在 `uploads/`。Key 不写入浏览器 localStorage、URL 或普通日志；「删除配置」会清除保存文件并停止云端会话。
+从项目目录运行 `.venv\Scripts\python.exe -m lisca.windows_launcher --check`。启动日志在 `logs/webui-windows.log`，配置在 `.data/`，上传的视频副本在 `uploads/`。Key 不写入浏览器 localStorage、URL 或普通日志；「删除配置」会清除保存文件并停止云端会话。
 
 </details>
 

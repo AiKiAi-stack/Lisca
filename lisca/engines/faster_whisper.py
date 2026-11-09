@@ -3,12 +3,9 @@
 GTX 1050 Ti（Pascal）适配：compute_type=int8_float32（whisper_online.py 已改）。
 运行需 LD_LIBRARY_PATH 指向 venv 内 nvidia/cublas+cudnn（见 tools/run_subs.sh）。
 """
-import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "whisper_streaming"))
 
-from whisper_online import FasterWhisperASR, OnlineASRProcessor  # noqa: E402
+from lisca._vendor.whisper_streaming.whisper_online import FasterWhisperASR, OnlineASRProcessor  # noqa: E402
 
 from .base import Engine, Subtitle  # noqa: E402
 

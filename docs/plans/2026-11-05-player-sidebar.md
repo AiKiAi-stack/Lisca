@@ -41,7 +41,7 @@
 2026-11-07 在 A 的画面优先布局与 B 的频道侧栏基础上，按 Impeccable 的 Operate 场景完成视觉与交互整理。
 页面统一采用本地托管的 daisyUI 5.7.50（MIT）按钮、输入框、选项、页签、菜单、复选框与滑块，
 图标统一为 Lucide static 1.69.0（ISC）。运行时不依赖 CDN；版本、来源、文件摘要和许可证分别保存在
-`tools/webui_static/ui-vendor-manifest.json` 与 `tools/licenses/`。
+`lisca/web/static/ui-vendor-manifest.json` 与 `tools/licenses/`。
 
 - 来源输入与播放操作合并为主操作行，管理侧栏专注示例频道和最近观看，观众分享入口位于播放器工具栏。
 - 设置改为原生居中对话框，按“识别服务 / 字幕样式 / 高级”分组；键盘焦点、关闭和窄屏滚动保持可用。

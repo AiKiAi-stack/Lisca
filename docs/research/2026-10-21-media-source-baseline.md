@@ -8,7 +8,7 @@
 
 - **播放列表**：M3U/M3U8 文本含频道元数据及下游地址；扩展名以 .m3u8 结尾也可能是频道索引，不是单路媒体流。示例：[best-fan 央视列表](https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8)、[ChinaIPTV 自动列表](https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8)。
 - **直接媒体流**：列表中的具体 HLS 等播放地址，可能离线、限地区、要求请求头或含会变化的签名参数。清单里有地址不代表当前能播放。
-- **平台页**：YouTube/B站网页 URL。项目已有 [platform_resolver.py](../../tools/platform_resolver.py) 用 yt-dlp 解析平台页。yt-dlp 官方支持表列有 YouTube、BiliBili、BiliBiliBangumi，但明确说明网站变动会使支持失效，列表不保证具体 URL 可用。[官方支持表](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
+- **平台页**：YouTube/B站网页 URL。项目已有 [platform_resolver.py](../../lisca/platform_resolver.py) 用 yt-dlp 解析平台页。yt-dlp 官方支持表列有 YouTube、BiliBili、BiliBiliBangumi，但明确说明网站变动会使支持失效，列表不保证具体 URL 可用。[官方支持表](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
 
 ## 首批来源推荐
 

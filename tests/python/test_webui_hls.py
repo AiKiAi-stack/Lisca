@@ -9,7 +9,7 @@ EXT-X-MEDIA / EXT-X-STREAM-INF 变体）改写为本地代理 URL（ticket-19—
 import pytest
 
 
-from webui import _rewrite_hls_playlist, parse_m3u  # noqa: E402
+from lisca.web.app import _rewrite_hls_playlist, parse_m3u  # noqa: E402
 
 STREAM = "https://cdn.example.com/live/channel/index.m3u8"
 SEG_PROXY = "/video?url=https%3A%2F%2Fcdn.example.com%2Flive%2Fchannel%2Fseg_001.ts"

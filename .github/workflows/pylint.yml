@@ -23,10 +23,10 @@ jobs:
       run: |
         # 只查 error 级；E0611/E1101 为 av/cv2 等 C 扩展库的静态分析误报，
         # E0110 为 test_engines 故意实例化抽象类断言 TypeError
-        # init-hook 包含运行时和验收工具的导入路径
-        # whisper_streaming 为 vendored 上游，不归本仓库 lint
-        # DashScope 2.0.3 的 ASR 路径为动态别名；先验证实际符号，再跳过该别名的静态路径查找。
+        # 运行时代码使用 lisca 包；init-hook 只提供测试工具的导入路径。
+        # lisca/_vendor 为随附上游代码，不归本仓库 lint。
+        # DashScope 的 ASR 路径为动态别名；先验证实际符号，再跳过该别名的静态路径查找。
         python -c "from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult"
-        pylint --errors-only --init-hook="import sys; sys.path[:0] = ['whisper_streaming', 'tools', 'tests/acceptance', 'tests/browser', 'tests/python']" \
+        pylint --errors-only --init-hook="import sys; sys.path[:0] = ['tests/acceptance', 'tests/browser', 'tests/python']" \
           --ignored-modules=dashscope.audio.asr \
-          --disable=E0611,E1101,E0110 $(git ls-files '*.py' | grep -v '^whisper_streaming/')
+          --disable=E0611,E1101,E0110 $(git ls-files '*.py' | grep -v '^lisca/_vendor/')

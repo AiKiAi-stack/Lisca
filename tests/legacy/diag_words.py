@@ -10,7 +10,7 @@ PORT = 8131
 VIDEO = os.path.join(ROOT, "uploads", "0_20260709_223807.mp4")
 
 server = subprocess.Popen(
-    [sys.executable, os.path.join(ROOT, "tools", "webui.py"),
+    [sys.executable, os.path.join(ROOT, "tools", "lisca.web.app.py"),
      "--host", "127.0.0.1", "--port", str(PORT)],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
 )

@@ -8,8 +8,8 @@ from urllib.parse import urlencode
 from fastapi.testclient import TestClient
 
 
-import webui  # noqa: E402
-import live_share  # noqa: E402
+from lisca.web import app as webui  # noqa: E402
+from lisca import live_share  # noqa: E402
 
 
 SOURCE_URL = "http://stream.test/live.m3u8"

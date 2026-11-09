@@ -5,7 +5,7 @@ import httpx
 import numpy as np
 import pytest
 
-from tools.stream_source import AudioTimelineError, StreamSource
+from lisca.stream_source import AudioTimelineError, StreamSource
 
 
 def test_hls_clock_uses_decoded_pts_not_sliding_playlist_duration(monkeypatch):
@@ -13,7 +13,7 @@ def test_hls_clock_uses_decoded_pts_not_sliding_playlist_duration(monkeypatch):
     container.streams.audio = [object()]
     container.decode.return_value = [object()]
     av_open = MagicMock(return_value=container)
-    monkeypatch.setattr("tools.stream_source.av.open", av_open)
+    monkeypatch.setattr("lisca.stream_source.av.open", av_open)
 
     class Body(httpx.SyncByteStream):
         def __iter__(self):
@@ -32,7 +32,7 @@ def test_hls_clock_uses_decoded_pts_not_sliding_playlist_duration(monkeypatch):
     resampled.to_ndarray.return_value = np.zeros((1, 1600), dtype=np.int16)
     resampler = MagicMock()
     resampler.resample.side_effect = lambda frame: [resampled] if frame is not None else []
-    monkeypatch.setattr("tools.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
+    monkeypatch.setattr("lisca.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
 
     source = StreamSource("https://asr.test/live/index.m3u8")
 
@@ -48,7 +48,7 @@ def test_iter_chunks_fills_internal_pts_gap_without_absolute_prefill(monkeypatch
     container.streams.audio = [object()]
     decoded_frames = [object(), object()]
     container.decode.return_value = decoded_frames
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     first = MagicMock()
     first.pts = 19_752_000  # 1234.5 seconds, absolute source PTS
@@ -66,7 +66,7 @@ def test_iter_chunks_fills_internal_pts_gap_without_absolute_prefill(monkeypatch
     resampler.resample.side_effect = lambda frame: (
         [] if frame is None else resampled_by_input[frame]
     )
-    monkeypatch.setattr("tools.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
+    monkeypatch.setattr("lisca.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
 
     source = StreamSource("synthetic.mp4", chunk_sec=0.01)
     audio = np.frombuffer(b"".join(source.iter_chunks()), dtype=np.int16)
@@ -83,7 +83,7 @@ def test_iter_chunks_accumulates_fractional_pts_gaps_across_frames(monkeypatch):
     container.streams.audio = [object()]
     decoded_frames = [object() for _ in range(10)]
     container.decode.return_value = decoded_frames
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     frames = []
     for index in range(10):
@@ -97,7 +97,7 @@ def test_iter_chunks_accumulates_fractional_pts_gaps_across_frames(monkeypatch):
     resampler = MagicMock()
     by_input = {decoded: [frame] for decoded, frame in zip(decoded_frames, frames)}
     resampler.resample.side_effect = lambda frame: [] if frame is None else by_input[frame]
-    monkeypatch.setattr("tools.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
+    monkeypatch.setattr("lisca.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
 
     source = StreamSource("synthetic-fractional-gaps.mp4", chunk_sec=0.001)
     audio = np.frombuffer(b"".join(source.iter_chunks()), dtype=np.int16)
@@ -113,7 +113,7 @@ def test_iter_chunks_flushes_resampler_tail_on_normal_eof(monkeypatch):
     container = MagicMock()
     container.streams.audio = [object()]
     container.decode.return_value = [object()]
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     body = MagicMock()
     body.pts = 0
@@ -128,7 +128,7 @@ def test_iter_chunks_flushes_resampler_tail_on_normal_eof(monkeypatch):
 
     resampler = MagicMock()
     resampler.resample.side_effect = lambda frame: [tail] if frame is None else [body]
-    monkeypatch.setattr("tools.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
+    monkeypatch.setattr("lisca.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
 
     source = StreamSource("synthetic.wav", chunk_sec=0.01)
     audio = np.frombuffer(b"".join(source.iter_chunks()), dtype=np.int16)
@@ -143,7 +143,7 @@ def test_iter_chunks_rejects_large_backward_pts_reset(monkeypatch):
     container.streams.audio = [object()]
     decoded_frames = [object(), object(), object()]
     container.decode.return_value = decoded_frames
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     frames = []
     for pts, value in ((1_600_000, 100), (160_000, 200), (160_480, 300)):
@@ -157,7 +157,7 @@ def test_iter_chunks_rejects_large_backward_pts_reset(monkeypatch):
     resampler = MagicMock()
     by_input = dict(zip(decoded_frames, ([frame] for frame in frames)))
     resampler.resample.side_effect = lambda frame: [] if frame is None else by_input[frame]
-    monkeypatch.setattr("tools.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
+    monkeypatch.setattr("lisca.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
 
     source = StreamSource("synthetic-live-reset.m3u8", chunk_sec=0.01)
     with pytest.raises(AudioTimelineError, match="向后跳变"):
@@ -169,7 +169,7 @@ def test_iter_chunks_trims_small_pts_overlaps_without_repeating_audio(monkeypatc
     container.streams.audio = [object()]
     decoded_frames = [object(), object()]
     container.decode.return_value = decoded_frames
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     first = MagicMock()
     first.pts = 0
@@ -185,7 +185,7 @@ def test_iter_chunks_trims_small_pts_overlaps_without_repeating_audio(monkeypatc
     resampler = MagicMock()
     by_input = {decoded_frames[0]: [first], decoded_frames[1]: [second]}
     resampler.resample.side_effect = lambda frame: [] if frame is None else by_input[frame]
-    monkeypatch.setattr("tools.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
+    monkeypatch.setattr("lisca.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
 
     source = StreamSource("synthetic-overlap.mp4", chunk_sec=0.01)
     audio = np.frombuffer(b"".join(source.iter_chunks()), dtype=np.int16)
@@ -199,7 +199,7 @@ def test_iter_chunks_rejects_large_forward_pts_discontinuity(monkeypatch):
     container.streams.audio = [object()]
     decoded_frames = [object(), object()]
     container.decode.return_value = decoded_frames
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     frames = []
     for pts, value in ((0, 100), (32_160, 200)):
@@ -213,7 +213,7 @@ def test_iter_chunks_rejects_large_forward_pts_discontinuity(monkeypatch):
     resampler = MagicMock()
     by_input = {decoded_frames[0]: [frames[0]], decoded_frames[1]: [frames[1]]}
     resampler.resample.side_effect = lambda frame: [] if frame is None else by_input[frame]
-    monkeypatch.setattr("tools.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
+    monkeypatch.setattr("lisca.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
 
     source = StreamSource("synthetic-large-gap.mp4", chunk_sec=0.01)
     with pytest.raises(AudioTimelineError, match="正向间隙"):
@@ -225,7 +225,7 @@ def test_iter_chunks_rejects_pts_gap_after_cumulative_limit(monkeypatch):
     container.streams.audio = [object()]
     decoded_frames = [object() for _ in range(62)]
     container.decode.return_value = decoded_frames
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     frames = []
     for index in range(62):
@@ -239,7 +239,7 @@ def test_iter_chunks_rejects_pts_gap_after_cumulative_limit(monkeypatch):
     resampler = MagicMock()
     by_input = {decoded: [frame] for decoded, frame in zip(decoded_frames, frames)}
     resampler.resample.side_effect = lambda frame: [] if frame is None else by_input[frame]
-    monkeypatch.setattr("tools.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
+    monkeypatch.setattr("lisca.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
 
     source = StreamSource("synthetic-many-gaps.mp4")
     with pytest.raises(AudioTimelineError, match="累计超过"):

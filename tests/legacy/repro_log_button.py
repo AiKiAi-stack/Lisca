@@ -34,7 +34,7 @@ def wait_port(port, timeout=20):
 
 def main():
     server = subprocess.Popen(
-        [sys.executable, os.path.join(ROOT, "tools", "webui.py"),
+        [sys.executable, os.path.join(ROOT, "tools", "lisca.web.app.py"),
          "--host", "127.0.0.1", "--port", str(PORT)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )

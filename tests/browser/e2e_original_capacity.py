@@ -61,7 +61,7 @@ def main():
                 samples.append(resources(fixture["process_id"], media))
                 page.wait_for_timeout(100)
             state = request("/__fixture/state")
-            engine = state["engines"][-1]
+            engine = state["lisca.engines"][-1]
             lead = max(item["through"] - (item["at"] - engine["created_at"])
                        for item in engine["feed_observations"])
             assert lead <= 2.1, lead

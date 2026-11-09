@@ -5,8 +5,8 @@ import threading
 import dashscope
 import pytest
 
-from streamparser.asr_client import ASRClient, RecognitionFailure
-from streamparser.asr_config import ASRSettings
+from lisca.asr.asr_client import ASRClient, RecognitionFailure
+from lisca.asr.asr_config import ASRSettings
 from test_recognition_process import LocalService
 
 
@@ -59,7 +59,7 @@ def test_public_client_eof_keeps_ordered_audio_and_final_subtitles(monkeypatch):
 def test_public_client_eof_deadline_reports_failure_and_closes_connection(monkeypatch):
     with LocalService("no_finish") as service:
         monkeypatch.setattr(dashscope, "base_websocket_api_url", service.url)
-        monkeypatch.setattr("streamparser.asr_client.FINALIZE_TIMEOUT_SECONDS", 1.0)
+        monkeypatch.setattr("lisca.asr.asr_client.FINALIZE_TIMEOUT_SECONDS", 1.0)
         client = ASRClient(ASRSettings(api_key="dummy-local-test-key"))
         try:
             client.start()
@@ -95,8 +95,8 @@ def test_public_client_preserves_real_sdk_permission_error_during_eof(monkeypatc
 
 def test_http_cancel_interrupts_webui_already_waiting_for_real_sdk_eof(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
-    from tools import webui
-    from cloud_translation import CloudConfigStore
+    from lisca.web import app as webui
+    from lisca.cloud_translation import CloudConfigStore
 
     closed = threading.Event()
 

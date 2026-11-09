@@ -1,6 +1,6 @@
 
 
-from caption_preview import StableCaptionPreview  # noqa: E402
+from lisca.caption_preview import StableCaptionPreview  # noqa: E402
 
 
 def test_repeated_partial_releases_complete_clause_with_word_timing():
@@ -134,7 +134,7 @@ def test_real_cfp_correction_cannot_leave_a_partial_word_in_the_pending_tail():
     assert result and result[0][2].startswith("professionals")
 
 
-from caption_preview import TranslationClauses  # noqa: E402
+from lisca.caption_preview import TranslationClauses  # noqa: E402
 
 
 def test_translation_releases_stable_clause_without_word_times_and_final_only_tail():

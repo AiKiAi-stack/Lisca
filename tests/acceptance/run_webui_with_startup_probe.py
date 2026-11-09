@@ -6,11 +6,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(ROOT / "tools"))
 
 from startup_timing_probe import install_stream_source_probe
-import webui  # pylint: disable=import-error
+from lisca.web import app as webui  # pylint: disable=import-error
 
 
 def main():

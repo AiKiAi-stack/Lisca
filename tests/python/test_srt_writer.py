@@ -1,8 +1,8 @@
 import os
 import tempfile
 import pytest
-from streamparser.srt_writer import SRTWriter
-from streamparser.subtitle import SubtitleEntry
+from lisca.asr.srt_writer import SRTWriter
+from lisca.asr.subtitle import SubtitleEntry
 
 
 class TestSRTWriter:

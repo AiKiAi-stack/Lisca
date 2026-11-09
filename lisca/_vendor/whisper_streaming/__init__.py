@@ -1,0 +1,1 @@
+"""Bundled Whisper streaming backend."""

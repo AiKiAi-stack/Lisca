@@ -132,8 +132,7 @@ def main(argv=None, *, webui_module=None):
         parser.error("ffmpeg not found; set --ffmpeg or FFMPEG_BINARY")
     if webui_module is None:
         sys.path.insert(0, str(ROOT))
-        sys.path.insert(0, str(ROOT / "tools"))
-        import webui as webui_module  # pylint: disable=import-error
+        import lisca.web.app as webui_module  # pylint: disable=import-error
     mount_paths = ["/local-live", "/local-live-2"][:len(sources)]
     if any(getattr(route, "path", None) in [CHANNELS_PATH, *mount_paths]
            for route in webui_module.app.router.routes):

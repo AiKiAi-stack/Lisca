@@ -75,7 +75,7 @@ subtitle:
 **TDD — Red first**
 
 **Files:**
-- Create: `streamparser/asr_config.py`
+- Create: `lisca/asr/asr_config.py`
 - Create: `tests/python/test_asr_config.py`
 
 **Step 1: Write failing test**
@@ -139,7 +139,7 @@ Expected: ModuleNotFoundError
 **Step 3: Write minimal implementation**
 
 ```python
-# streamparser/asr_config.py
+# lisca/asr/asr_config.py
 import os
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -242,7 +242,7 @@ Expected: all 6 tests pass
 **Step 5: Commit**
 
 ```bash
-git add tests/python/test_asr_config.py streamparser/asr_config.py && git commit -m "feat: add ASR configuration data classes"
+git add tests/python/test_asr_config.py lisca/asr/asr_config.py && git commit -m "feat: add ASR configuration data classes"
 ```
 
 ---
@@ -252,7 +252,7 @@ git add tests/python/test_asr_config.py streamparser/asr_config.py && git commit
 **TDD — Red first**
 
 **Files:**
-- Create: `streamparser/subtitle.py`
+- Create: `lisca/asr/subtitle.py`
 - Create: `tests/python/test_subtitle.py`
 
 **Step 1: Write failing test**
@@ -313,7 +313,7 @@ class TestSubtitleEntry:
 **Step 3: Write minimal implementation**
 
 ```python
-# streamparser/subtitle.py
+# lisca/asr/subtitle.py
 from collections import deque
 from dataclasses import dataclass, field
 from threading import Lock
@@ -442,7 +442,7 @@ class AudioProcessor:
 **TDD — Red first**
 
 **Files:**
-- Create: `streamparser/asr_client.py`
+- Create: `lisca/asr/asr_client.py`
 - Create: `tests/python/test_asr_client.py`
 
 **Note:** ASRClient wraps DashScope Recognition. The unit test should use a mock/stub for the Recognition class since we don't want real API calls in unit tests.
@@ -512,7 +512,7 @@ class TestASRClient:
 **Step 3: Write minimal implementation**
 
 ```python
-# streamparser/asr_client.py
+# lisca/asr/asr_client.py
 import queue
 import threading
 import time
@@ -642,7 +642,7 @@ class ASRClient:
 **TDD — Red first**
 
 **Files:**
-- Create: `streamparser/srt_writer.py`
+- Create: `lisca/asr/srt_writer.py`
 - Create: `tests/python/test_srt_writer.py`
 
 **Step 1: Write failing test**
@@ -695,7 +695,7 @@ class TestSRTWriter:
 **Step 3: Write minimal implementation**
 
 ```python
-# streamparser/srt_writer.py
+# lisca/asr/srt_writer.py
 import os
 from pathlib import Path
 
@@ -755,7 +755,7 @@ class SRTWriter:
 **TDD — Red first**
 
 **Files:**
-- Modify: `streamparser/subtitle.py` (add SubtitleOverlay)
+- Modify: `lisca/asr/subtitle.py` (add SubtitleOverlay)
 - Create: `test/test_subtitle_overlay.py`
 
 **Step 1: Write failing test**
@@ -795,7 +795,7 @@ class TestSubtitleOverlay:
 
 **Step 3: Write minimal implementation**
 
-Add to `streamparser/subtitle.py`:
+Add to `lisca/asr/subtitle.py`:
 
 ```python
 class SubtitleOverlay:

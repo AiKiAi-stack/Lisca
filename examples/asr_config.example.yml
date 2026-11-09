@@ -1,5 +1,5 @@
 # ASR 实时字幕配置文件
-# 用法: streamparser <source> --asr asr_config.yml
+# Lisca 识别客户端配置示例；参见 lisca/asr/asr_config.py。
 
 provider: dashscope
 

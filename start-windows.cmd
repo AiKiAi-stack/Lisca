@@ -11,7 +11,7 @@ if errorlevel 1 (
 for %%V in (3.12 3.11 3.10) do (
   py -%%V -c "import struct,sys; sys.exit(struct.calcsize('P') != 8)" >nul 2>nul
   if not errorlevel 1 (
-    py -%%V tools\windows_launcher.py %*
+    py -%%V -m lisca.windows_launcher %*
     if errorlevel 1 (
       pause
       exit /b 1

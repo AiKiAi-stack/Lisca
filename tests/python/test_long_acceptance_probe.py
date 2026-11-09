@@ -13,7 +13,7 @@ import pytest
 import long_acceptance_probe as probe
 import run_long_acceptance_webui as runner
 import run_real_browser_acceptance as browser_collector
-from tools.stream_source import StreamSource
+from lisca.stream_source import StreamSource
 
 
 SECRET_URL = "https://stream.example/live/index.m3u8?token=private-capability"

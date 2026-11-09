@@ -3,11 +3,12 @@
 ## 目录职责
 
 ```text
-streamparser/        可复用的识别客户端、识别进程和字幕数据类型
-tools/               WebUI、启动器、会话、媒体处理与识别引擎
+lisca/               应用代码，安装后的 Python 包与命令行入口
+  asr/               识别客户端、识别进程和字幕数据类型
   engines/           识别引擎实现
-  webui_static/      页面、样式与前端字幕/播放控制
-  licenses/          随附前端依赖的许可证
+  web/               WebUI 后端、static/ 页面资源与 licenses/ 许可证
+  _vendor/           随附的 whisper_streaming 上游代码
+tools/               音频提取、诊断和 CUDA 启动辅助脚本
 tests/
   python/            pytest 自动回归（包括 HTTP、WebSocket 和工具 CLI）
   frontend/          Node.js 自动回归
@@ -15,7 +16,6 @@ tests/
   acceptance/        素材准备、采集、计时、回放、评分与离线夹具
   legacy/            旧界面、旧翻译模式与一次性复现脚本
 examples/            配置、调用示例与公共频道列表
-whisper_streaming/   随附的上游代码；本地 Whisper 引擎使用
 docs/
   guides/            操作与开发指南
   reference/         外部接口参考资料的存档
@@ -27,7 +27,7 @@ docs/
   archive/           历史规格、交接和旧工具包说明
 ```
 
-根目录保留安装配置、许可证、双语 README、Windows 启动入口、`AGENTS.md` 与 `GLOSSARY.md`。现有启动命令仍为 `python tools/webui.py --host 127.0.0.1 --port 8002`。
+根目录保留安装配置、许可证、双语 README、Windows 启动入口、`AGENTS.md` 与 `GLOSSARY.md`。现有启动命令仍为 `python -m lisca --host 127.0.0.1 --port 8002`。
 
 ## 按任务查找
 
@@ -49,8 +49,12 @@ docs/
 
 ## 本地数据与新增文件
 
-`logs/`、`uploads/`、`.data/`、`.cache/`、模型和虚拟环境是忽略的本地数据；目录整理不迁移或清理这些内容。`.scratch/original-caption-release/issues/` 保留已跟踪的历史任务，当前工作跟踪使用 GitHub Issues。
+`logs/`、`uploads/`、`.data/`、`.cache/`、模型和虚拟环境是忽略的本地数据；目录整理不迁移或清理这些内容。源码启动继续使用仓库内的上传与配置目录；安装 wheel 后默认在当前工作目录保存。可用 `LISCA_DATA_DIR` 指定上传和配置的共同数据目录。`.scratch/original-caption-release/issues/` 保留已跟踪的历史任务，当前工作跟踪使用 GitHub Issues。
 
 新增自动回归放入对应的 `tests/python/` 或 `tests/frontend/`；需显式运行的浏览器旅程和验收工具分别放入 `tests/browser/`、`tests/acceptance/`。新指南放 `docs/guides/`，调查和带日期的执行记录沿用 `research/`、`plans/`，失效的开发入口归 `archive/`。
+
+新增应用代码放在 `lisca/`，使用 `lisca.*` 导入。`tools/` 不承载业务实现，测试配置也不再把它加入运行时导入路径。WebUI 入口为 `python -m lisca`，字幕 CLI 为 `python -m lisca.stream_subs`，Windows 环境准备入口为 `python -m lisca.windows_launcher`。
+
+2026-11-09 核心迁移：原 `tools/` 的应用实现、`streamparser/` 和 `whisper_streaming/` 分别归入 `lisca/`、`lisca/asr/` 和 `lisca/_vendor/`。旧脚本路径与 `streamparser.*` 导入改用上述包入口；仓库内的调用、测试和启动器已同步。
 
 2026-11-05 目录迁移：原 `test/<文件名>` 已按上述用途归类，文件名保留；根目录的 `SPEC.md`、`CONTEXT.md`、`handoff.md` 已移至 `docs/archive/`，`notes/real-browser-collector.md` 已移至 `docs/guides/`。历史提交和报告中的路径以其候选版本为准。
