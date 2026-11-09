@@ -592,6 +592,12 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
     all_sources_started = threading.Condition(counts_lock)
     all_sources_closed = threading.Condition(counts_lock)
     release_sources = threading.Event()
+    handler_finished = threading.Event()
+
+    async def observed_app(scope, receive, send):
+        await webui.app(scope, receive, send)
+        if scope["type"] == "websocket":
+            handler_finished.set()
 
     class BlockingSource:
         def __init__(self, *_args, **_kwargs):
@@ -615,7 +621,7 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
                 all_sources_closed.notify_all()
 
     monkeypatch.setattr(webui, "StreamSource", BlockingSource)
-    with TestClient(webui.app) as client:
+    with TestClient(observed_app) as client:
         client.put("/api/cloud", json={"api_key": "TEST_ONLY_KEY"})
         try:
             for expected_started in range(1, 9):
@@ -628,6 +634,7 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
                         assert all_sources_started.wait_for(
                             lambda: started >= expected_started, timeout=2)
 
+            handler_finished.clear()
             ticket = client.post("/api/cloud/sessions", json={
                 "mode": "transcribe", "url": "https://media.test/live.mp4",
                 "source": "auto",
@@ -639,6 +646,8 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
                     received.append(event)
                     if event["type"] == "end":
                         break
+                # TestClient cancels the ASGI task on context exit; await its normal cleanup first.
+                assert handler_finished.wait(timeout=2)
             terminal = [event for event in received if event["type"] in ("error", "end")]
             assert terminal == [
                 {"type": "error", "failure_category": "capacity", "retryable": False,
@@ -657,6 +666,7 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
         # fresh worker instead of leaking capacity permanently.
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
+            handler_finished.clear()
             ticket = client.post("/api/cloud/sessions", json={
                 "mode": "transcribe", "url": "https://media.test/live.mp4",
                 "source": "auto",
@@ -668,6 +678,7 @@ def test_disconnected_sessions_cannot_grow_unbounded_blocked_workers(monkeypatch
                     reopened_events.append(event)
                     if event["type"] == "end":
                         break
+                assert handler_finished.wait(timeout=2)
             reopened_errors = [event for event in reopened_events if event["type"] == "error"]
             if not any(event.get("failure_category") == "capacity" for event in reopened_errors):
                 break
