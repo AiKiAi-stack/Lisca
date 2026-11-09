@@ -8,8 +8,8 @@ import pytest
 
 from fastapi.testclient import TestClient
 
-import webui  # noqa: E402
-from cloud_translation import CloudConfig, CloudConfigStore, CloudError, QwenTranslator, RequestStop  # noqa: E402
+from lisca.web import app as webui  # noqa: E402
+from lisca.cloud_translation import CloudConfig, CloudConfigStore, CloudError, QwenTranslator, RequestStop  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -228,7 +228,7 @@ def test_stop_during_request_start_prevents_later_requests():
 
 
 def test_complete_source_correction_can_replace_an_already_translated_clause():
-    from cloud_translation import TranslationSession
+    from lisca.cloud_translation import TranslationSession
     first = threading.Event()
     cues = []
 
@@ -257,7 +257,7 @@ def test_complete_source_correction_can_replace_an_already_translated_clause():
 
 
 def test_withdrawal_prevents_an_inflight_translation_from_returning_after_removal():
-    from cloud_translation import TranslationSession
+    from lisca.cloud_translation import TranslationSession
     started, release = threading.Event(), threading.Event()
     cues = []
 

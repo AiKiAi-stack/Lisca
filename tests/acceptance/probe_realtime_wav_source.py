@@ -12,13 +12,12 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "tools"))
 from fixed_realtime_startup_acceptance import (
     DEFAULT_OUTPUT, PacingOrigin, _read_jsonl, _wav_data_offset, prepare_sample,
 )
 from startup_timing_probe import install_stream_source_probe
-from stream_source import StreamSource  # pylint: disable=import-error
-import stream_source as stream_source_module  # pylint: disable=import-error
+from lisca.stream_source import StreamSource  # pylint: disable=import-error
+import lisca.stream_source as stream_source_module  # pylint: disable=import-error
 
 
 def run(language, output=DEFAULT_OUTPUT):

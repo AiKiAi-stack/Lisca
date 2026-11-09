@@ -7,10 +7,10 @@ from typing import Optional
 
 from dashscope.audio.asr import RecognitionCallback, RecognitionResult
 
-from streamparser.asr_config import ASRSettings
-from streamparser.recognition_process import (RecognitionProcess as Recognition,
+from lisca.asr.asr_config import ASRSettings
+from lisca.asr.recognition_process import (RecognitionProcess as Recognition,
                                               RecognitionCapacityError, RecognitionProviderError)
-from streamparser.subtitle import SubtitleEntry
+from lisca.asr.subtitle import SubtitleEntry
 
 CANCEL_TIMEOUT_SECONDS = 5.0
 FINALIZE_TIMEOUT_SECONDS = 15.0

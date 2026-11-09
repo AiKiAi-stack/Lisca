@@ -74,7 +74,7 @@ def main():
     logs = ROOT / "logs"
     logs.mkdir(exist_ok=True)
     with (logs / "webui-windows.log").open("a", encoding="utf-8") as log:
-        process = subprocess.Popen([str(python), "-u", str(ROOT / "tools/webui.py"),
+        process = subprocess.Popen([str(python), "-u", "-m", "lisca",
                                     "--host", "0.0.0.0", "--port", "8002"],
                                    cwd=ROOT, stdout=log, stderr=log,
                                    env={**os.environ, "PATH": str(python.parent) + os.pathsep + os.environ.get("PATH", "")},

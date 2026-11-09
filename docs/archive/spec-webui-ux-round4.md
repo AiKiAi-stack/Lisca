@@ -5,7 +5,7 @@
 
 ## 0. 架构事实（实现者必读）
 
-- 前端唯一文件 `tools/webui_static/index.html`（内嵌 `<style>` + `<script>`）；后端 `GET /`
+- 前端唯一文件 `lisca/web/static/index.html`（内嵌 `<style>` + `<script>`）；后端 `GET /`
   整体读取返回 `HTMLResponse`，`Cache-Control: no-store`——改样式/JS 后浏览器必拿到新版
 - 叠加字幕 `#current`（index.html 行 58-60 容器 / 行 20-24 CSS）：
   `position:absolute` 于 `#playerWrap`（`bottom:12%`）、`font-size: clamp(26px,3.4vw,38px)`、

@@ -3,21 +3,16 @@
 拉流（StreamSource）→ 引擎（Engine，可配置切换）→ 实时句子级字幕。
 
 用法:
-    python stream_subs.py <本地文件或流URL> [--engine faster-whisper] [--model_dir ...]
+    python -m lisca.stream_subs <本地文件或流URL> [--engine faster-whisper] [--model_dir ...]
 
 注意: 本地引擎需要 CUDA 运行库在 LD_LIBRARY_PATH（GPU 推理），建议用 run_subs.sh 启动。
 """
 import argparse
-import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whisper_streaming"))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from engines import create_engine  # noqa: E402
-from input_resolver import resolve_stream_url  # noqa: E402
-from stream_source import StreamSource, s16_to_f32  # noqa: E402
+from lisca.engines import create_engine  # noqa: E402
+from lisca.input_resolver import resolve_stream_url  # noqa: E402
+from lisca.stream_source import StreamSource, s16_to_f32  # noqa: E402
 
 
 def main():
@@ -34,12 +29,12 @@ def main():
     srt_writer = None
     SubtitleEntry = None  # 延迟导入（仅 --srt 需要）；先声明避免 pylint E0606
     if args.srt:
-        # streamparser 的 logger.py 在 import 时用 dictConfig 把 root 配成 INFO+stdout，
+        # lisca.asr 的 logger.py 在 import 时用 dictConfig 把 root 配成 INFO+stdout，
         # 会污染字幕输出流，这里压回 WARNING
         import logging
 
-        from streamparser.srt_writer import SRTWriter
-        from streamparser.subtitle import SubtitleEntry
+        from lisca.asr.srt_writer import SRTWriter
+        from lisca.asr.subtitle import SubtitleEntry
 
         srt_writer = SRTWriter(base_dir=args.srt)
         srt_writer.open(args.input)

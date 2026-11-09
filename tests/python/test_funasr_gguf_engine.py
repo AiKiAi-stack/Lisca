@@ -6,7 +6,7 @@ import wave
 import numpy as np
 
 
-from engines.funasr_gguf import FunASRGGUFEngine, _parse_srt, _wav_bytes  # noqa: E402
+from lisca.engines.funasr_gguf import FunASRGGUFEngine, _parse_srt, _wav_bytes  # noqa: E402
 
 
 def test_parse_srt_preserves_sentence_timestamps():
@@ -52,5 +52,5 @@ def test_engine_posts_wav_and_reads_openai_style_text(monkeypatch):
         assert b"RIFF" in request.data
         assert timeout == 600.0
         return Response()
-    monkeypatch.setattr("engines.funasr_gguf.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("lisca.engines.funasr_gguf.urllib.request.urlopen", fake_urlopen)
     assert engine.finish() == (0.0, 1.0, "测试", None)

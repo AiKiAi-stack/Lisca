@@ -11,6 +11,8 @@ node --test tests/frontend/*.test.cjs
 
 `pyproject.toml` 将默认 pytest 收集限定为 `tests/python/`，并配置源码与验收工具的导入路径。Python 回归包含 HTTP/WebSocket、合成媒体和验收工具 CLI，使用替身服务，不需要真实 Key。前端回归使用 Node.js；CI 使用 22。
 
+CI 另行构建 wheel，并在源码目录外安装后运行 `acceptance/check_installed_package.py`，核对模块入口、页面资源、随附代码和上传存储。应用导入统一使用 `lisca.*`。
+
 运行单项：
 
 ```sh

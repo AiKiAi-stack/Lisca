@@ -122,19 +122,19 @@ ADR 的演变顺序：
 
 ## 5. 代码地图和接口边界
 
-- [tools/webui.py](../../tools/webui.py)：FastAPI 入口、管理权限、Key 配置、云端会话、HTTP 媒体代理、HLS 重写、上传、频道、主机与观众 WebSocket，以及音频投送工作线程。
-- [tools/webui_static/index.html](../../tools/webui_static/index.html)：主界面与主要交互状态，媒体时钟、原文短句、暂停/跳转/换源、对话框和 HLS 事件。
-- [caption_presenter.js](../../tools/webui_static/caption_presenter.js)：字幕展示辅助及历史翻译阅读队列；修改前确认当前分支走的是原文还是显式翻译路径。
-- [playback_guard.js](../../tools/webui_static/playback_guard.js)：等待预算、无进展保护、降级状态；不能把发送音频或普通心跳当真实字幕进展。
-- [player.css](../../tools/webui_static/player.css)：播放器、字幕、对话框与响应式样式；[hls.min.js](../../tools/webui_static/hls.min.js) 是本地分发依赖，许可见 [tools/licenses](../../tools/licenses)。
-- [caption_preview.py](../../tools/caption_preview.py)：从累计 partial 提取稳定短句，处理前缀修订和剩余文本。
-- [cloud_translation.py](../../tools/cloud_translation.py)：虽然名字含 translation，仍承载当前原文模式的 `CloudConfigStore`、`RequestStop`；同时保留显式翻译兼容实现和取消。
-- [tools/engines/base.py](../../tools/engines/base.py)、[aliyun_funasr.py](../../tools/engines/aliyun_funasr.py)、[streamparser/asr_client.py](../../streamparser/asr_client.py)：引擎边界、DashScope `Recognition`、16kHz 音频及字幕事件。服务商毫秒时间转换到应用秒时间；需保留句身份、final、词时间和修订信息。
-- [stream_source.py](../../tools/stream_source.py)、[input_resolver.py](../../tools/input_resolver.py)、[platform_resolver.py](../../tools/platform_resolver.py)：PyAV 解码/媒体时钟、输入类别、平台页解析。列表、平台解析、媒体拉流、浏览器播放错误必须分开。
-- [live_share.py](../../tools/live_share.py)：主机共享会话、容量、链接和观众资源生命周期。
-- [windows_launcher.py](../../tools/windows_launcher.py)、[start-windows.cmd](../../start-windows.cmd)、[requirements-webui.txt](../../requirements-webui.txt)：Windows 产品启动链路，Ubuntu 不运行 `.cmd`。
-- [tools/stream_subs.py](../../tools/stream_subs.py)、[streamparser/subtitle.py](../../streamparser/subtitle.py)、[srt_writer.py](../../streamparser/srt_writer.py)：原有媒体工具链与烧录/SRT。
-- [tools/funasr_gguf_server.py](../../tools/funasr_gguf_server.py)、[funasr_gguf.py](../../tools/engines/funasr_gguf.py)：历史本地整文件转写接口，默认 8765，不能当实时云端识别的替代验收。
+- [lisca/web/app.py](../../lisca/web/app.py)：FastAPI 入口、管理权限、Key 配置、云端会话、HTTP 媒体代理、HLS 重写、上传、频道、主机与观众 WebSocket，以及音频投送工作线程。
+- [lisca/web/static/index.html](../../lisca/web/static/index.html)：主界面与主要交互状态，媒体时钟、原文短句、暂停/跳转/换源、对话框和 HLS 事件。
+- [caption_presenter.js](../../lisca/web/static/caption_presenter.js)：字幕展示辅助及历史翻译阅读队列；修改前确认当前分支走的是原文还是显式翻译路径。
+- [playback_guard.js](../../lisca/web/static/playback_guard.js)：等待预算、无进展保护、降级状态；不能把发送音频或普通心跳当真实字幕进展。
+- [player.css](../../lisca/web/static/player.css)：播放器、字幕、对话框与响应式样式；[hls.min.js](../../lisca/web/static/hls.min.js) 是本地分发依赖，许可见 [tools/licenses](../../tools/licenses)。
+- [caption_preview.py](../../lisca/caption_preview.py)：从累计 partial 提取稳定短句，处理前缀修订和剩余文本。
+- [cloud_translation.py](../../lisca/cloud_translation.py)：虽然名字含 translation，仍承载当前原文模式的 `CloudConfigStore`、`RequestStop`；同时保留显式翻译兼容实现和取消。
+- [lisca/engines/base.py](../../lisca/engines/base.py)、[aliyun_funasr.py](../../lisca/engines/aliyun_funasr.py)、[lisca/asr/asr_client.py](../../lisca/asr/asr_client.py)：引擎边界、DashScope `Recognition`、16kHz 音频及字幕事件。服务商毫秒时间转换到应用秒时间；需保留句身份、final、词时间和修订信息。
+- [stream_source.py](../../lisca/stream_source.py)、[input_resolver.py](../../lisca/input_resolver.py)、[platform_resolver.py](../../lisca/platform_resolver.py)：PyAV 解码/媒体时钟、输入类别、平台页解析。列表、平台解析、媒体拉流、浏览器播放错误必须分开。
+- [live_share.py](../../lisca/live_share.py)：主机共享会话、容量、链接和观众资源生命周期。
+- [windows_launcher.py](../../lisca/windows_launcher.py)、[start-windows.cmd](../../start-windows.cmd)、[requirements-webui.txt](../../requirements-webui.txt)：Windows 产品启动链路，Ubuntu 不运行 `.cmd`。
+- [lisca/stream_subs.py](../../lisca/stream_subs.py)、[lisca/asr/subtitle.py](../../lisca/asr/subtitle.py)、[srt_writer.py](../../lisca/asr/srt_writer.py)：原有媒体工具链与烧录/SRT。
+- [lisca/funasr_gguf_server.py](../../lisca/funasr_gguf_server.py)、[funasr_gguf.py](../../lisca/engines/funasr_gguf.py)：历史本地整文件转写接口，默认 8765，不能当实时云端识别的替代验收。
 
 当前公开会话接口：
 
@@ -282,7 +282,7 @@ VENV="$HOME/.venvs/stream-with-asr"
 
 ```bash
 ss -ltnp 'sport = :8002'
-"$VENV/bin/python" tools/webui.py --host 127.0.0.1 --port 8002
+"$VENV/bin/python" lisca/web/app.py --host 127.0.0.1 --port 8002
 ```
 
 先检查端口所属，再判断是否需停止旧实例。浏览器打开 `http://127.0.0.1:8002/`，另一个终端可检查：

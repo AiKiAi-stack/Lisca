@@ -64,7 +64,7 @@ def main():
                   "代理/播放机制已由 VOD 回路覆盖，请用真实直播源人工验证。")
             return 2
     server = subprocess.Popen(
-        [sys.executable, os.path.join(ROOT, "tools", "webui.py"),
+        [sys.executable, os.path.join(ROOT, "tools", "lisca.web.app.py"),
          "--host", "127.0.0.1", "--port", str(PORT)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
@@ -123,8 +123,8 @@ def main():
         # 源静音时跳过（mux 测试源偶发无音轨，2026-08-09 实测 PyAV 解出静音）
         if hist_max < 3 or hits < 4:
             try:
-                sys.path.insert(0, os.path.join(ROOT, "tools"))
-                from stream_source import StreamSource  # noqa: E402
+                sys.path.insert(0, ROOT)
+                from lisca.stream_source import StreamSource  # noqa: E402
                 import numpy as np
                 src = StreamSource(stream)
                 n = energy = 0

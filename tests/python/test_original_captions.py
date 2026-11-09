@@ -4,9 +4,9 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
-import webui
-from cloud_translation import CloudConfigStore
-from stream_source import AudioTimelineError
+from lisca.web import app as webui
+from lisca.cloud_translation import CloudConfigStore
+from lisca.stream_source import AudioTimelineError
 
 
 @pytest.mark.parametrize("text,request_data,hints", [

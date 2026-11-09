@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 from typing import TextIO
 
-from streamparser.subtitle import SubtitleEntry
-from streamparser.logger import Loggers
+from lisca.asr.subtitle import SubtitleEntry
+from lisca.asr.logger import Loggers
 
 
 class SRTWriter:

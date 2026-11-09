@@ -3,7 +3,7 @@
 单页：输入流地址/文件路径 → 引擎选择 → 大字号实时字幕（WebSocket 推送）。
 
 用法:
-    python webui.py [--host 0.0.0.0] [--port 8002]
+    python -m lisca [--host 0.0.0.0] [--port 8002]
     # SSH 远程访问: ssh -L 8002:localhost:8002 user@host 后浏览器开 localhost:8002
 
 管理页面只允许主机本机访问；观众通过应用内生成的随机链接从局域网只读观看。
@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 import warnings
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from itertools import chain
@@ -34,29 +35,28 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlsplit, urlu
 # 代理 verify=False 的告警压掉（ticket-17）
 warnings.filterwarnings("ignore", message=".*InsecureRequestWarning.*")
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whisper_streaming"))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse  # noqa: E402
 from starlette.background import BackgroundTask  # noqa: E402
 import uvicorn  # noqa: E402
 
-from engines import create_engine  # noqa: E402
-from caption_preview import StableCaptionPreview, TranslationClauses  # noqa: E402
-from input_resolver import classify, resolve_stream_url  # noqa: E402
-from platform_resolver import resolve_platform_url  # noqa: E402
-from stream_source import AudioTimelineError, DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
-from live_share import LiveShare, MAX_VIEWERS  # noqa: E402
-from cloud_translation import (CloudConfigStore, CloudError, QwenTranslator, RequestStop,
+from lisca.engines import create_engine  # noqa: E402
+from lisca.caption_preview import StableCaptionPreview, TranslationClauses  # noqa: E402
+from lisca.input_resolver import classify, resolve_stream_url  # noqa: E402
+from lisca.platform_resolver import resolve_platform_url  # noqa: E402
+from lisca.stream_source import AudioTimelineError, DEFAULT_UA, StreamSource, s16_to_f32  # noqa: E402
+from lisca.live_share import LiveShare, MAX_VIEWERS  # noqa: E402
+from lisca.cloud_translation import (CloudConfigStore, CloudError, QwenTranslator, RequestStop,
                                TranslationSession, validate_pair)  # noqa: E402
-from provider_errors import classify_provider_failure  # noqa: E402
-from streamparser.recognition_process import RecognitionCapacityError  # noqa: E402
+from lisca.provider_errors import classify_provider_failure  # noqa: E402
+from lisca.asr.recognition_process import RecognitionCapacityError  # noqa: E402
+from lisca.paths import DATA_DIR
 
 app = FastAPI(title="Lisca")
 
-STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui_static")
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uploads")
+STATIC_DIR = str(Path(__file__).with_name("static"))
+UPLOAD_DIR = str(DATA_DIR / "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 UA = DEFAULT_UA
@@ -72,7 +72,7 @@ _MAX_SESSION_CAPTION_VARIANTS = 8
 _MAX_SESSION_CAPTION_RETENTION_FINGERPRINTS = 20_000
 _MAX_PENDING_CAPTIONS = 2_048
 _MAX_ACTIVE_RECOGNITION_WORKERS = 8
-logger = logging.getLogger("webui")  # 会话生命周期 INFO 日志（用户可见）
+logger = logging.getLogger("lisca.web.app")  # 会话生命周期 INFO 日志（用户可见）
 _SHARES: dict[str, LiveShare] = {}
 _SHARE_LOCK = threading.RLock()
 _CLOUD = CloudConfigStore(os.path.join(os.path.dirname(UPLOAD_DIR), ".data", "cloud.bin"))

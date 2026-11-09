@@ -19,8 +19,8 @@ from urllib.parse import urlsplit
 import dashscope
 import pytest
 
-import streamparser.recognition_process as process_module
-from streamparser.recognition_process import RecognitionProcess
+import lisca.asr.recognition_process as process_module
+from lisca.asr.recognition_process import RecognitionProcess
 
 
 class LocalService:

@@ -96,7 +96,7 @@ python tests/acceptance/fixed_hls_startup_acceptance.py analyze --language zh \
 
 在确认“同步 unknown”主要由本地播放中途等待字幕造成后，另建独立工作树候选：
 
-- 分支：`codex/pr89-acceptance-local-buffer-v2`；提交 `23f9292`（基于 `027b325`，只改 `tools/webui.py` + 回归）。
+- 分支：`codex/pr89-acceptance-local-buffer-v2`；提交 `23f9292`（基于 `027b325`，只改 `lisca/web/app.py` + 回归）。
 - 行为：已知时长足够长的本地原文字幕文件首次播放使用 5 秒有界预缓冲；确认静音仍按 1.5 秒规则释放；直播 HLS 仍 0.1 秒；短文件/未知时长保持 0.1 秒。
 - 回归：新增本地预缓冲测试；相关 39 项通过；完整 Python **541 passed / 1 skipped**（7:46）。
 - **真实复测失败：** `sync-fix/zh-sync-fix-01.*` 在 480 秒上限内以 `local_timeout` 结束（1 次 POST、9602 个采样、采样有效、0 个公开错误），没有完成 316.6 秒参考文件，无法评分。首次 ready 3614ms、首可见 4400ms。该候选没有解决中途停顿，不能作为同步修复；补丁保留在 `local-buffer-v2-failed.patch`，不合并。

@@ -3,15 +3,15 @@ import threading
 import time
 from unittest.mock import ANY, MagicMock, Mock, patch, call
 import pytest
-from streamparser.asr_client import ASRClient, ASRState
-from streamparser.asr_config import ASRSettings
+from lisca.asr.asr_client import ASRClient, ASRState
+from lisca.asr.asr_config import ASRSettings
 
 
 class TestASRClient:
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_provider_send_failure_is_not_reported_as_transport_failure(self, mock_rec):
-        from streamparser.asr_client import RecognitionFailure
-        from streamparser.recognition_process import RecognitionProviderError
+        from lisca.asr.asr_client import RecognitionFailure
+        from lisca.asr.recognition_process import RecognitionProviderError
 
         mock_rec.return_value.send_audio_frame.side_effect = RecognitionProviderError(
             403, "Model.AccessDenied")
@@ -23,9 +23,9 @@ class TestASRClient:
         assert caught.value.status_code == 403
         assert caught.value.code == "Model.AccessDenied"
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_eof_provider_error_keeps_structured_cause_after_shutdown(self, mock_rec):
-        from streamparser.asr_client import RecognitionFailure
+        from lisca.asr.asr_client import RecognitionFailure
 
         client = ASRClient(ASRSettings(api_key="fake-test-key"))
         callback = mock_rec.call_args.kwargs["callback"]
@@ -42,10 +42,10 @@ class TestASRClient:
         assert caught.value.code == "Model.AccessDenied"
         mock_rec.return_value.cancel.assert_called_once()
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_audio_thread_start_failure_cancels_started_transport(self, mock_rec):
         client = ASRClient(ASRSettings(api_key="fake-test-key"))
-        with patch("streamparser.asr_client.Thread.start", side_effect=RuntimeError("no thread")):
+        with patch("lisca.asr.asr_client.Thread.start", side_effect=RuntimeError("no thread")):
             with pytest.raises(RuntimeError, match="no thread"):
                 client.start()
         mock_rec.return_value.cancel.assert_called_once()
@@ -53,7 +53,7 @@ class TestASRClient:
         with pytest.raises(RuntimeError):
             client.feed_audio(b"\x00" * 3200)
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_cancel_interrupts_transport_before_waiting_for_audio_sender(self, mock_rec):
         """Cancellation releases an in-flight sender and discards later audio."""
         recognition = mock_rec.return_value
@@ -86,7 +86,7 @@ class TestASRClient:
             release.set()
             client.stop()
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_explicit_restart_never_sends_audio_discarded_by_cancel(self, mock_rec):
         recognition = mock_rec.return_value
         entered, release = threading.Event(), threading.Event()
@@ -116,7 +116,7 @@ class TestASRClient:
             release.set()
             client.stop()
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_cancel_preserves_results_but_rejects_late_callbacks(self, mock_rec):
         client = ASRClient(ASRSettings(api_key="fake-test-key"))
         callback = mock_rec.call_args.kwargs["callback"]
@@ -139,7 +139,7 @@ class TestASRClient:
         assert [item.text for item in client.subtitle_buffer] == ["kept"]
         client.raise_if_error()
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_local_transport_failure_keeps_its_type(self, mock_rec):
         client = ASRClient(ASRSettings(api_key="fake-test-key"))
         callback = mock_rec.call_args.kwargs["callback"]
@@ -149,7 +149,7 @@ class TestASRClient:
             client.raise_if_error()
         assert caught.value is failure
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_start_stop_lifecycle(self, mock_rec):
         """start() should set state to RUNNING and call recognition.start(); stop() sets STOPPED."""
         mock_instance = MagicMock()
@@ -167,7 +167,7 @@ class TestASRClient:
         assert client.state == ASRState.STOPPED
         mock_instance.stop.assert_called_once()
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_feed_audio_buffers_below_chunk_size(self, mock_rec):
         """Audio under chunk size should be buffered, not sent immediately."""
         mock_instance = MagicMock()
@@ -184,7 +184,7 @@ class TestASRClient:
 
         client.stop()
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_feed_audio_sends_when_buffer_full(self, mock_rec):
         """When cumulative audio reaches chunk_size, should call send_audio_frame."""
         mock_instance = MagicMock()
@@ -200,7 +200,7 @@ class TestASRClient:
 
         client.stop()
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_stop_flushes_partial_audio_frame(self, mock_rec):
         """结束流时也要把不足一帧的尾部音频送给识别服务。"""
         mock_instance = MagicMock()
@@ -215,7 +215,7 @@ class TestASRClient:
         mock_instance.send_audio_frame.assert_called_once_with(tail)
         mock_instance.stop.assert_called_once()
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_stop_drains_queued_audio_before_stopping_recognition(self, mock_rec):
         """stop 应排空已接收队列，且在最后一帧发送后才关闭 SDK。"""
         mock_instance = MagicMock()
@@ -238,7 +238,7 @@ class TestASRClient:
         ]
         assert 0 < mock_instance.stop.call_args.kwargs["timeout"] <= 15
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_callback_preserves_structured_sdk_error_without_raw_message(self, mock_rec):
         """保留 SDK 状态码/错误码，丢弃可能带敏感信息的服务端消息。"""
         mock_instance = MagicMock()
@@ -261,7 +261,7 @@ class TestASRClient:
         assert caught.value.code == "Model.AccessDenied"
         assert "private provider response" not in str(caught.value)
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_callback_reports_error_when_sdk_stringification_fails(self, mock_rec):
         client = ASRClient(ASRSettings(api_key="sk-test"))
         callback = mock_rec.call_args.kwargs["callback"]
@@ -276,7 +276,7 @@ class TestASRClient:
         assert caught.value.status_code is None
         assert caught.value.code is None
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_subtitle_buffer_accessible(self, mock_rec):
         """subtitle_buffer should be an accessible deque attribute."""
         mock_instance = MagicMock()
@@ -287,7 +287,7 @@ class TestASRClient:
         from collections import deque
         assert isinstance(client.subtitle_buffer, deque)
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_recognition_kwargs_forwarded(self, mock_rec):
         """断句灵敏度/心跳/语种参数应透传给 Recognition（ticket-10）"""
         mock_instance = MagicMock()
@@ -302,12 +302,12 @@ class TestASRClient:
         assert kwargs["language_hints"] == ["zh"]
         assert kwargs["multi_threshold_mode_enabled"] is True
 
-    @patch("streamparser.asr_client.Recognition")
+    @patch("lisca.asr.asr_client.Recognition")
     def test_callback_extracts_words(self, mock_rec):
         """on_event 应提取 sentence.words 字级时间戳（partial 尾字 end 可为 None）"""
         from collections import deque
 
-        from streamparser.asr_client import _Callback
+        from lisca.asr.asr_client import _Callback
 
         class FakeResult:
             def __init__(self, sentence):
@@ -343,9 +343,9 @@ class TestASRClient:
 
 
 def test_full_local_audio_queue_is_a_capacity_failure_not_an_unknown_provider_error():
-    from streamparser.recognition_process import RecognitionCapacityError
+    from lisca.asr.recognition_process import RecognitionCapacityError
 
-    with patch('streamparser.asr_client.Recognition'):
+    with patch('lisca.asr.asr_client.Recognition'):
         client = ASRClient(ASRSettings(api_key='fake-test-key'))
     client._running.set()
     client._input_queue = Mock()

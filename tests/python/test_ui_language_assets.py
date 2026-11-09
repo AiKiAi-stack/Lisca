@@ -4,7 +4,7 @@ from pathlib import Path
 
 import httpx
 
-import webui  # noqa: E402
+from lisca.web import app as webui  # noqa: E402
 
 
 def test_language_script_is_served_without_exposing_management():

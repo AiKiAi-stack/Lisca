@@ -3,7 +3,7 @@
 import pytest
 
 
-from engines import create_engine  # noqa: E402
+from lisca.engines import create_engine  # noqa: E402
 
 
 class FakeOnline:
@@ -36,7 +36,7 @@ def test_create_engine_funasr_gguf_is_file_mode():
 
 
 def test_create_engine_aliyun_requires_key(monkeypatch):
-    import engines.aliyun_funasr as af
+    import lisca.engines.aliyun_funasr as af
 
     # 屏蔽真实 dashscope/streamparser import（无 key 路径不会触达）
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
@@ -45,7 +45,7 @@ def test_create_engine_aliyun_requires_key(monkeypatch):
 
 
 def test_faster_whisper_engine_delegates(monkeypatch):
-    import engines.faster_whisper as fw
+    import lisca.engines.faster_whisper as fw
 
     fake_online = FakeOnline()
     monkeypatch.setattr(fw, "FasterWhisperASR", lambda **kw: FakeASR())
@@ -58,7 +58,7 @@ def test_faster_whisper_engine_delegates(monkeypatch):
 
 
 def test_engine_interface_abstract():
-    from engines.base import Engine
+    from lisca.engines.base import Engine
 
     with pytest.raises(TypeError):
         Engine()  # 抽象类不可实例化

@@ -11,7 +11,7 @@ import httpx
 import numpy as np
 import pytest
 
-from tools.stream_source import OPEN_TIMEOUT_SEC, READ_TIMEOUT_SEC, StreamSource
+from lisca.stream_source import OPEN_TIMEOUT_SEC, READ_TIMEOUT_SEC, StreamSource
 
 
 HLS_URL = "https://media.example.test/live/index.m3u8?token=secret-url"
@@ -103,7 +103,7 @@ def _install_audio(monkeypatch, frames):
     resampler.resample.side_effect = lambda frame: (
         [] if frame is None else [frame_by_input[frame]]
     )
-    monkeypatch.setattr("tools.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
+    monkeypatch.setattr("lisca.stream_source.av.AudioResampler", lambda **_kwargs: resampler)
     return container
 
 
@@ -148,7 +148,7 @@ def test_initial_manifest_timeout_recovers_and_yields_original_pcm(monkeypatch, 
     )
     frame = _pcm_frame(1234)
     container = _install_audio(monkeypatch, [frame])
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     source = StreamSource(HLS_URL, chunk_sec=0.01, http_headers={"Authorization": AUTH_HEADER})
     try:
@@ -188,7 +188,7 @@ def test_nested_playlist_open_uses_the_same_retry_boundary(monkeypatch):
         child.close()
         return container
 
-    monkeypatch.setattr("tools.stream_source.av.open", av_open)
+    monkeypatch.setattr("lisca.stream_source.av.open", av_open)
     source = StreamSource(HLS_URL)
     source.close()
 
@@ -203,7 +203,7 @@ def test_direct_connection_error_recovers_once(monkeypatch):
         [ConnectionError("private connection detail"), manifest],
     )
     container = _install_audio(monkeypatch, [])
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     source = StreamSource(HLS_URL)
     source.close()
@@ -223,7 +223,7 @@ def test_second_open_failure_exhausts_the_single_recovery(monkeypatch):
         kwargs["io_open"](segment_url, 0, {})
         return container
 
-    monkeypatch.setattr("tools.stream_source.av.open", av_open)
+    monkeypatch.setattr("lisca.stream_source.av.open", av_open)
     with pytest.raises(TimeoutError, match="second private failure"):
         StreamSource(HLS_URL)
 
@@ -248,7 +248,7 @@ def test_successful_other_resource_without_pcm_does_not_reset_budget(monkeypatch
         kwargs["io_open"](second_url, 0, {})
         return container
 
-    monkeypatch.setattr("tools.stream_source.av.open", av_open)
+    monkeypatch.setattr("lisca.stream_source.av.open", av_open)
     with pytest.raises(TimeoutError, match="second resource timeout"):
         StreamSource(HLS_URL)
 
@@ -283,7 +283,7 @@ def test_new_pcm_resets_recovery_budget_for_later_hls_open(monkeypatch):
         container.decode.side_effect = decode
         return container
 
-    monkeypatch.setattr("tools.stream_source.av.open", av_open)
+    monkeypatch.setattr("lisca.stream_source.av.open", av_open)
     source = StreamSource(HLS_URL, chunk_sec=0.01)
     try:
         pcm = b"".join(source.iter_chunks())
@@ -304,7 +304,7 @@ def test_temporary_http_status_recovers_once(monkeypatch, status):
     response_body = failure.fp
     calls = _install_http(monkeypatch, [failure, manifest])
     container = _install_audio(monkeypatch, [])
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     source = StreamSource(HLS_URL)
     source.close()
@@ -327,7 +327,7 @@ def test_concurrent_temporary_http_errors_share_one_recovery(monkeypatch):
                       _Response(child_url)],
     )
     container = _install_audio(monkeypatch, [])
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
     source = StreamSource(HLS_URL)
     results = []
     failures = []
@@ -367,7 +367,7 @@ def test_exhausted_http_recovery_closes_both_bodies_and_preserves_second_error(m
     second_body = second_error.fp
     calls = _install_http(monkeypatch, [initial, first_error, second_error])
     container = _install_audio(monkeypatch, [])
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
     source = StreamSource(HLS_URL)
 
     try:
@@ -382,14 +382,14 @@ def test_exhausted_http_recovery_closes_both_bodies_and_preserves_second_error(m
 
 
 def test_http_error_close_failure_does_not_replace_original(monkeypatch, caplog):
-    caplog.set_level("DEBUG", logger="tools.stream_source")
+    caplog.set_level("DEBUG", logger="lisca.stream_source")
     initial = _Response(HLS_URL, b"#EXTM3U\n", "application/vnd.apple.mpegurl")
     child_url = "https://media.example.test/live/segment.ts"
     body = _CloseErrorBody()
     failure = _http_error(child_url, 403, body)
     calls = _install_http(monkeypatch, [initial, failure])
     container = _install_audio(monkeypatch, [])
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
     source = StreamSource(HLS_URL)
 
     try:
@@ -460,7 +460,7 @@ def test_body_read_failure_never_reopens_or_replays_segment(monkeypatch):
         container.decode.side_effect = decode
         return container
 
-    monkeypatch.setattr("tools.stream_source.av.open", av_open)
+    monkeypatch.setattr("lisca.stream_source.av.open", av_open)
     source = StreamSource(HLS_URL)
     try:
         with pytest.raises(TimeoutError, match="HLS HTTP timed out"):
@@ -476,7 +476,7 @@ def test_close_cancels_retry_wait_without_a_second_get(monkeypatch):
     initial = _Response(HLS_URL, b"#EXTM3U\n", "application/vnd.apple.mpegurl")
     calls = _install_http(monkeypatch, [initial, TimeoutError("private timeout")])
     container = _install_audio(monkeypatch, [])
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
     source = StreamSource(HLS_URL)
 
     class SignaledEvent:
@@ -530,8 +530,8 @@ def test_non_hls_source_keeps_using_pyav_without_urlopen(monkeypatch):
     def unexpected_urlopen(*_args, **_kwargs):
         raise AssertionError("non-HLS source must not use urllib")
 
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", unexpected_urlopen)
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_args, **_kwargs: container)
+    monkeypatch.setattr("lisca.stream_source.urllib.request.urlopen", unexpected_urlopen)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_args, **_kwargs: container)
 
     source = StreamSource("https://media.example.test/live/audio.mp4", chunk_sec=0.01)
     try:
@@ -555,8 +555,8 @@ def test_non_hls_nested_timeout_keeps_original_single_open(monkeypatch):
         kwargs["io_open"](child_url, 0, {})
         return container
 
-    monkeypatch.setattr("tools.stream_source.urllib.request.urlopen", urlopen)
-    monkeypatch.setattr("tools.stream_source.av.open", av_open)
+    monkeypatch.setattr("lisca.stream_source.urllib.request.urlopen", urlopen)
+    monkeypatch.setattr("lisca.stream_source.av.open", av_open)
 
     with pytest.raises(TimeoutError, match="private non-HLS timeout"):
         StreamSource("https://media.example.test/audio.wav")

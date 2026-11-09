@@ -52,11 +52,11 @@
 ## 5. 里程碑
 
 - **M0 ✅**：whisper_streaming 验证 —— 本地文件实时字幕（延迟 ~0.5s）、系统音频链路（parec→nc→server）均已打通
-- **M1 ✅**：拉流字幕工具 `tools/stream_subs.py`（URL/文件 → 实时字幕，ticket-01/02）
-- **M2 ✅**：输入自动识别 `tools/input_resolver.py`（流地址 / 平台页面 yt-dlp / 本地文件，ticket-03）
+- **M1 ✅**：拉流字幕工具 `lisca/stream_subs.py`（URL/文件 → 实时字幕，ticket-01/02）
+- **M2 ✅**：输入自动识别 `lisca/input_resolver.py`（流地址 / 平台页面 yt-dlp / 本地文件，ticket-03）
 - **M3 ✅**：引擎抽象层 `tools/engines/`（Engine 接口 + FasterWhisperEngine + create_engine，ticket-04）
 - **M4 ⏳**：阿里云 FunASR API 引擎（`AliyunFunASREngine` 已实现复用 streamparser ASRClient，**待用户提供 DASHSCOPE_API_KEY + workspace_id 实测**，ticket-05 issue #3）
-- **M5 ✅/🔜**：webUI 单页 MVP（`tools/webui.py`，流地址输入 + 引擎下拉 + 大字号字幕，ticket-06）；SRT 导出/悬浮窗/SenseVoice 待后续
+- **M5 ✅/🔜**：webUI 单页 MVP（`lisca/web/app.py`，流地址输入 + 引擎下拉 + 大字号字幕，ticket-06）；SRT 导出/悬浮窗/SenseVoice 待后续
 - **CI ✅**：GitHub Actions —— Test（pytest 53 用例 × 3.10-3.12）+ Pylint（errors-only，排除 vendored）全绿
 
 ## 6. 已知限制

@@ -15,7 +15,7 @@ def run_channel_selection_check(page):
     channel_url = "https://media.test/live.m3u8?case=channel-picker"
     pending_sessions = []
     session_posts = []
-    html = (ROOT / "tools" / "webui_static" / "index.html").read_text(encoding="utf-8")
+    html = (ROOT / "lisca" / "web" / "static" / "index.html").read_text(encoding="utf-8")
 
     def serve_worktree_html(route):
         route.fulfill(status=200, content_type="text/html; charset=utf-8", body=html)

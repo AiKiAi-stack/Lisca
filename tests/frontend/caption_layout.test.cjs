@@ -1,7 +1,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {spawnSync}=require('node:child_process');
-const {CaptionLayout}=require('../../tools/webui_static/caption_presenter.js');
+const {CaptionLayout}=require('../../lisca/web/static/caption_presenter.js');
 
 function measure(text){
  return Array.from(text).reduce((sum,char)=>sum+(/\p{Script=Han}/u.test(char)?20:10),0);
@@ -67,7 +67,7 @@ test('timed pagination keeps complete ASR words and maps pages to their actual w
 });
 
 test('cold long-caption pagination stays bounded and preserves every word',()=>{
- const modulePath=JSON.stringify(require.resolve('../../tools/webui_static/caption_presenter.js'));
+ const modulePath=JSON.stringify(require.resolve('../../lisca/web/static/caption_presenter.js'));
  const script=`
   const {CaptionLayout}=require(${modulePath});
   const text=Array(1000).fill('laboratory').join(' ');

@@ -5,7 +5,7 @@
 
 ## 0. 架构事实（实现者必读）
 
-- 后端 `tools/webui.py`：`GET /video?url=` / `GET /audio?url=`（httpx 代理：Referer/UA 补头 + verify=False + Range 透传；HLS 列表经 `_rewrite_hls_playlist` 改写后返回；LIVE 列表每次请求实时拉上游，无媒体缓存）；`WS /ws?url&engine&silence&win`（worker：StreamSource/PyAV 按实时速率 0.1s/chunk 推引擎 → emit 字幕 + ready 信号，直播延时模型已就绪）；`GET /` 单页 index.html（no-store）
+- 后端 `lisca/web/app.py`：`GET /video?url=` / `GET /audio?url=`（httpx 代理：Referer/UA 补头 + verify=False + Range 透传；HLS 列表经 `_rewrite_hls_playlist` 改写后返回；LIVE 列表每次请求实时拉上游，无媒体缓存）；`WS /ws?url&engine&silence&win`（worker：StreamSource/PyAV 按实时速率 0.1s/chunk 推引擎 → emit 字幕 + ready 信号，直播延时模型已就绪）；`GET /` 单页 index.html（no-store）
 - `_rewrite_hls_playlist(text, stream_url)`（webui.py ~行 128）：普通行 urljoin、`URI="..."` 属性改写（EXT-X-KEY/MEDIA/STREAM-INF，ticket-11）；**当前输出 = 上游绝对 URL** → 浏览器直连上游分片
 - **实测根因（2026-08-09 已定位）**：上游 `58.19.43.66:1111` 对直连分片做 UA/防盗链检查——curl 无 Referer+普通 UA → 200；curl Chrome UA 或 `live.zbds.top` Referer → 404；浏览器 `<video>` 播放列表能加载但分片 `Failed to fetch` → err=4 黑屏。**必须分片也走本地代理**
 - 浏览器：**Chrome 原生 HLS 仅支持 fMP4 分片**（2026-08-09 实测：mux VOD fMP4 可播、IPTV MPEG-TS 源 rs=0 不可播）→ **必须用 hls.js**（TS→fMP4 转封装，vendored 本地文件 + `GET /hls.min.js` 路由）；`##EXT-X-VERSION:3` 双井号等瑕疵需代理侧清洗
@@ -24,7 +24,7 @@
 ### R2 分片代理化 + hls.js（核心修复，Q3 实测修正：原生 HLS 不支持 TS 分片）
 - `_rewrite_hls_playlist` 输出改为**本地代理 URL**：`/video?url=<urlencode(绝对上游 URL)>`（普通分片行与 `URI="..."` 属性一致处理），浏览器只与 `127.0.0.1:8000` 同源通信
 - 播放列表清洗：`##EXT` → `#EXT` 归一化（实测源存在双井号行）
-- **hls.js 播放内核**：vendored `tools/webui_static/hls.min.js`（本地路由 `GET /hls.min.js`，GFW 下不依赖 CDN）；m3u8 源经 `Hls.isSupported()` 走 hls.js（`liveSyncDurationCount:3` 降延迟，网络/媒体错误自动恢复）；非 m3u8 源保持原生 `<video>` src
+- **hls.js 播放内核**：vendored `lisca/web/static/hls.min.js`（本地路由 `GET /hls.min.js`，GFW 下不依赖 CDN）；m3u8 源经 `Hls.isSupported()` 走 hls.js（`liveSyncDurationCount:3` 降延迟，网络/媒体错误自动恢复）；非 m3u8 源保持原生 `<video>` src
 - LIVE 播放列表保持每次实时拉上游（浏览器轮询刷新自然生效）；VOD 行为不变
 - 分片 Content-Type 透传上游（video/mp2t 等），Range 透传已支持
 
