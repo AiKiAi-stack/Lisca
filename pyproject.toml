@@ -1,7 +1,7 @@
 [project]
-name = "streamparser"
+name = "lisca"
 version = "0.1.0"
-description = "A high-performance stream media processing and parsing toolkit"
+description = "Original-language captions for live streams and local video"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = { file = "LICENSE" }
@@ -40,9 +40,12 @@ dependencies = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[project.scripts]
+lisca = "lisca.web.app:main"
+
 [tool.hatch.build]
-packages = ["streamparser"]
-include = ["pyproject.toml", "requirements.txt", "README.md", "LICENSE"]
+packages = ["lisca"]
+include = ["lisca/**", "pyproject.toml", "requirements.txt", "README.md", "LICENSE"]
 exclude = ["**/__pycache__"]
 
 [dependency-groups]
@@ -51,4 +54,4 @@ dev = ["pytest>=8.3.4"]
 [tool.pytest.ini_options]
 cache_dir = "~/.cache/pytest"
 testpaths = ["tests/python"]
-pythonpath = [".", "tools", "tests/acceptance", "tests/browser"]
+pythonpath = [".", "tests/acceptance", "tests/browser"]

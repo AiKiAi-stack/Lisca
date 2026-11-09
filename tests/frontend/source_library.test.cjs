@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {RecentChannels} = require('../../tools/webui_static/source_library.js');
+const {RecentChannels} = require('../../lisca/web/static/source_library.js');
 function storage(initial='[]') {
   return {value:initial,getItem(){return this.value;},setItem(_,value){this.value=value;},removeItem(){this.value=null;}};
 }

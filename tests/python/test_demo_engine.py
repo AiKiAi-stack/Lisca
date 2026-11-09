@@ -1,7 +1,7 @@
 """Demo ASR engine emits deterministic, timestamped captions without credentials."""
 
 
-from engines import create_engine  # noqa: E402
+from lisca.engines import create_engine  # noqa: E402
 
 
 def test_demo_engine_emits_timestamped_captions_without_api_key(monkeypatch):

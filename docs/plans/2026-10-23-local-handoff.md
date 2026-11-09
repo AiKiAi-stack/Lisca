@@ -38,7 +38,7 @@
 Linux 启动命令（重启前仍须检查 8002 端口所属进程）：
 
 ```bash
-.scratch/linux-venv/bin/python tools/webui.py --host 127.0.0.1 --port 8002
+.scratch/linux-venv/bin/python -m lisca --host 127.0.0.1 --port 8002
 ```
 
 离线回归命令：

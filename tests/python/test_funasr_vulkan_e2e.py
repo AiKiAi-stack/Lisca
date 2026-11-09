@@ -7,9 +7,9 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 
-import funasr_gguf_server  # noqa: E402
-import webui  # noqa: E402
-import engines.funasr_gguf as engine_module  # noqa: E402
+from lisca import funasr_gguf_server  # noqa: E402
+from lisca.web import app as webui  # noqa: E402
+import lisca.engines.funasr_gguf as engine_module  # noqa: E402
 
 
 def test_local_file_transcription_websocket_and_video_proxy(monkeypatch, tmp_path):

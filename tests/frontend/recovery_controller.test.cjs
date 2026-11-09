@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const {RecoveryController,disableHlsAutomaticRetries}=require('../../tools/webui_static/recovery_controller.js');
+const {RecoveryController,disableHlsAutomaticRetries}=require('../../lisca/web/static/recovery_controller.js');
 
 function clock(){
   let now=0,nextId=1;
@@ -47,7 +47,7 @@ test('nonretryable failures do not wait and cancellation interrupts a pending re
 });
 
 test('default retry timers keep the browser global receiver',()=>{
-  const source=fs.readFileSync(require.resolve('../../tools/webui_static/recovery_controller.js'),'utf8');
+  const source=fs.readFileSync(require.resolve('../../lisca/web/static/recovery_controller.js'),'utf8');
   const browserGlobal={receiverTag:'browser-window',scheduled:[],cancelled:[]};
   browserGlobal.setTimeout=function(callback,delay){
     assert.equal(this.receiverTag,'browser-window','setTimeout lost its Window receiver');
@@ -109,7 +109,7 @@ test('late captions and stationary playback cannot reset the shared recovery bud
 });
 
 test('all vendored HLS loader retries are disabled so recovery budget remains authoritative',()=>{
-  const Hls=require('../../tools/webui_static/hls.min.js');
+  const Hls=require('../../lisca/web/static/hls.min.js');
   const policies=disableHlsAutomaticRetries(Hls.DefaultConfig);
   const policyNames=Object.keys(Hls.DefaultConfig).filter(name=>name.endsWith('LoadPolicy'));
   assert.ok(policyNames.includes('fragLoadPolicy'));

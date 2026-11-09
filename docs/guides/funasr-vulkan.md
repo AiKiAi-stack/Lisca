@@ -13,7 +13,7 @@ virtual environment:
 
 ```powershell
 $funasrRoot = 'D:\codex_tmp\2026-10-17\amd-asr-ollama\work\funasr-win-vulkan'
-& .\.venv\Scripts\python.exe tools\funasr_gguf_server.py `
+& .\.venv\Scripts\python.exe -m lisca.funasr_gguf_server `
   --host 127.0.0.1 --port 8765 `
   --binary "$funasrRoot\runtime\llama-funasr-sensevoice.exe" `
   --model "$funasrRoot\sensevoice-small-q8.gguf" `
@@ -44,10 +44,10 @@ curl.exe -F 'file=@D:\path\to\audio.wav' `
 In another PowerShell window, from the repository root:
 
 ```powershell
-& .\.venv\Scripts\python.exe tools\webui.py --host 127.0.0.1 --port 8000
+& .\.venv\Scripts\python.exe -m lisca --host 127.0.0.1 --port 8002
 ```
 
-Open `http://127.0.0.1:8000`, select **FunASR Vulkan（文件模式）**, choose a
+Open `http://127.0.0.1:8002`, select **FunASR Vulkan（文件模式）**, choose a
 local audio/video file, and connect. The transcript is prepared first; the
 video then plays with sentence-level SRT timing. Live URLs are rejected by this
 engine. The API key is not needed.

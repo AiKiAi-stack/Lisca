@@ -95,7 +95,7 @@ def main():
         return 2
     scenarios = [("direct", videos[0]), ("upload", videos[1] if len(videos) > 1 else videos[0])]
     server = subprocess.Popen(
-        [sys.executable, os.path.join(ROOT, "tools", "webui.py"),
+        [sys.executable, os.path.join(ROOT, "tools", "lisca.web.app.py"),
          "--host", "127.0.0.1", "--port", str(PORT)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )

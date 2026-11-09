@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-import webui  # noqa: E402
+from lisca.web import app as webui  # noqa: E402
 
 
 def test_unsupported_hls_video_is_rejected_before_api_starts(monkeypatch):

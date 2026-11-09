@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {createI18n}=require('../../tools/webui_static/i18n.js');
+const {createI18n}=require('../../lisca/web/static/i18n.js');
 function host(query='',stored='zh'){
  const values=new Map([['lisca-ui-language',stored]]);
  return {location:{search:query,href:'http://localhost:8002/'+query},

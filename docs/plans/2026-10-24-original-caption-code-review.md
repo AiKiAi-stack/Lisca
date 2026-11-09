@@ -8,8 +8,8 @@
 
 初审两项判断性 `Duplicated Code`，均已解决：
 
-1. `tools/webui.py` 的 `video_proxy` / `audio_proxy` 重复页面解析失败和媒体拉流异常映射。建议提取只服务这两条路由的小型私有辅助函数。
-2. `tools/webui_static/index.html` 的 WebSocket `onerror` / 异常 `onclose` 重复登记识别恢复、等待/耗尽处理与自动 `connect`。建议共用恢复函数，事件资格判断与提示文案留在调用处。
+1. `lisca/web/app.py` 的 `video_proxy` / `audio_proxy` 重复页面解析失败和媒体拉流异常映射。建议提取只服务这两条路由的小型私有辅助函数。
+2. `lisca/web/static/index.html` 的 WebSocket `onerror` / 异常 `onclose` 重复登记识别恢复、等待/耗尽处理与自动 `connect`。建议共用恢复函数，事件资格判断与提示文案留在调用处。
 
 `3050136` 分别抽取窄范围 `_proxy_media_route` 和 `scheduleRecognitionSocketRecovery`；复审确认原两项解决。复审另提分享历史兼容提示分支重复，`ef990b6` 用 `showShareHistoryWarning` 聚合；再次独立复审确认解决，无新增硬性违例或明确气味。Standards当前剩余：0项。
 

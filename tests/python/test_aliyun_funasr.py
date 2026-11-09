@@ -11,10 +11,10 @@ def _patch_deps(monkeypatch, with_client=True):
     fake_dashscope = types.ModuleType("dashscope")
     monkeypatch.setitem(sys.modules, "dashscope", fake_dashscope)
 
-    fake_streamparser = types.ModuleType("streamparser")
-    monkeypatch.setitem(sys.modules, "streamparser", fake_streamparser)
+    fake_streamparser = types.ModuleType("lisca.asr")
+    monkeypatch.setitem(sys.modules, "lisca.asr", fake_streamparser)
 
-    fake_client_mod = types.ModuleType("streamparser.asr_client")
+    fake_client_mod = types.ModuleType("lisca.asr.asr_client")
 
     class FakeClient:
         instances = []
@@ -35,21 +35,21 @@ def _patch_deps(monkeypatch, with_client=True):
             pass
 
     fake_client_mod.ASRClient = FakeClient
-    monkeypatch.setitem(sys.modules, "streamparser.asr_client", fake_client_mod)
+    monkeypatch.setitem(sys.modules, "lisca.asr.asr_client", fake_client_mod)
 
-    fake_config_mod = types.ModuleType("streamparser.asr_config")
+    fake_config_mod = types.ModuleType("lisca.asr.asr_config")
 
     class FakeSettings:
         def __init__(self, **kwargs):
             self.__dict__.update(kwargs)
 
     fake_config_mod.ASRSettings = FakeSettings
-    monkeypatch.setitem(sys.modules, "streamparser.asr_config", fake_config_mod)
+    monkeypatch.setitem(sys.modules, "lisca.asr.asr_config", fake_config_mod)
     return FakeClient
 
 
 def test_aliyun_without_key_raises(monkeypatch):
-    from engines import create_engine
+    from lisca.engines import create_engine
 
     _patch_deps(monkeypatch)
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
@@ -59,7 +59,7 @@ def test_aliyun_without_key_raises(monkeypatch):
 
 def test_aliyun_without_workspace_ok(monkeypatch):
     """新版 SDK 支持默认业务空间，workspace_id 可选"""
-    from engines import create_engine
+    from lisca.engines import create_engine
 
     FakeClient = _patch_deps(monkeypatch)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
@@ -69,7 +69,7 @@ def test_aliyun_without_workspace_ok(monkeypatch):
 
 
 def test_aliyun_success_constructs_client(monkeypatch):
-    from engines import create_engine
+    from lisca.engines import create_engine
 
     FakeClient = _patch_deps(monkeypatch)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
@@ -85,7 +85,7 @@ def test_aliyun_success_constructs_client(monkeypatch):
 
 def test_aliyun_passes_recognition_kwargs(monkeypatch):
     """断句灵敏度/心跳/语种应透传 ASRClient → Recognition（ticket-10）"""
-    from engines import create_engine
+    from lisca.engines import create_engine
 
     FakeClient = _patch_deps(monkeypatch)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
@@ -100,7 +100,7 @@ def test_aliyun_passes_recognition_kwargs(monkeypatch):
 
 def test_aliyun_preserves_missing_sentence_end(monkeypatch):
     """Unknown ASR end times must not be shortened to a fabricated one-second cue."""
-    from engines import create_engine
+    from lisca.engines import create_engine
 
     FakeClient = _patch_deps(monkeypatch)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
@@ -121,7 +121,7 @@ def test_aliyun_preserves_missing_sentence_end(monkeypatch):
 
 
 def test_aliyun_preserves_empty_final_revision_for_caption_withdrawal(monkeypatch):
-    from engines import create_engine
+    from lisca.engines import create_engine
 
     fake_client = _patch_deps(monkeypatch)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
@@ -133,7 +133,7 @@ def test_aliyun_preserves_empty_final_revision_for_caption_withdrawal(monkeypatc
 
 
 def test_finalize_closes_input_once_without_consuming_pending_captions(monkeypatch):
-    from engines import create_engine
+    from lisca.engines import create_engine
 
     FakeClient = _patch_deps(monkeypatch)
     engine = create_engine('aliyun-funasr', api_key='test-private-key')

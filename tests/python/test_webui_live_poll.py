@@ -3,8 +3,8 @@ import threading
 
 from fastapi.testclient import TestClient
 
-import webui
-from cloud_translation import CloudConfigStore
+from lisca.web import app as webui
+from lisca.cloud_translation import CloudConfigStore
 
 
 def test_live_caption_does_not_wait_for_the_next_source_read(tmp_path, monkeypatch):

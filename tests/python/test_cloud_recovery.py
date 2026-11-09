@@ -7,9 +7,9 @@ from urllib.error import HTTPError, URLError
 import pytest
 from fastapi.testclient import TestClient
 
-import webui  # noqa: E402
-from cloud_translation import CloudConfigStore  # noqa: E402
-from streamparser.recognition_process import RecognitionCapacityError  # noqa: E402
+from lisca.web import app as webui  # noqa: E402
+from lisca.cloud_translation import CloudConfigStore  # noqa: E402
+from lisca.asr.recognition_process import RecognitionCapacityError  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -85,8 +85,8 @@ def test_media_read_failure_exposes_safe_recovery_evidence_and_releases_session(
 
 
 def test_partial_asr_send_failure_is_reported_by_public_cloud_websocket(monkeypatch):
-    from streamparser import asr_client
-    from engines.aliyun_funasr import AliyunFunASREngine
+    from lisca.asr import asr_client
+    from lisca.engines.aliyun_funasr import AliyunFunASREngine
 
     closed = {"source": 0, "recognition": 0}
 

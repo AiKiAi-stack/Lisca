@@ -18,12 +18,12 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from tools.stream_source import (
+from lisca.stream_source import (
     MAX_REDIRECTED_HLS_BYTES, StreamSource, _HlsHttpSession, _rewrite_hls_playlist,
 )
 
-import webui
-from cloud_translation import CloudConfigStore
+from lisca.web import app as webui
+from lisca.cloud_translation import CloudConfigStore
 
 
 @pytest.fixture(scope="module")
@@ -291,7 +291,7 @@ def test_hls_manifest_response_is_closed_with_source(monkeypatch):
     container = MagicMock()
     container.streams.audio = [object()]
     _install_http_response(monkeypatch, response)
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_a, **_k: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_a, **_k: container)
 
     source = StreamSource("https://asr.test/live/index.m3u8")
     source.close()
@@ -317,7 +317,7 @@ def test_hls_manifest_response_is_closed_when_open_fails(monkeypatch):
     def fail_open(*_args, **_kwargs):
         raise RuntimeError("invalid HLS manifest")
 
-    monkeypatch.setattr("tools.stream_source.av.open", fail_open)
+    monkeypatch.setattr("lisca.stream_source.av.open", fail_open)
     with pytest.raises(RuntimeError, match="invalid HLS manifest"):
         StreamSource("https://asr.test/live/index.m3u8")
 
@@ -459,8 +459,8 @@ def test_https_live_playlist_refreshes_and_reads_new_segments(
     monkeypatch.delenv("SSL_CERT_DIR", raising=False)
     monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
     monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
-    monkeypatch.setattr("tools.stream_source.OPEN_TIMEOUT_SEC", 1.0)
-    monkeypatch.setattr("tools.stream_source.READ_TIMEOUT_SEC", 1.0)
+    monkeypatch.setattr("lisca.stream_source.OPEN_TIMEOUT_SEC", 1.0)
+    monkeypatch.setattr("lisca.stream_source.READ_TIMEOUT_SEC", 1.0)
 
     source = StreamSource(f"{base_url}/live.m3u8", chunk_sec=0.05)
     iterator = source.iter_chunks()
@@ -501,11 +501,11 @@ def test_hls_constructor_failure_closes_opened_resources(
     ca_file = tmp_path / "ca-bundle.pem"
     ca_file.write_text("temporary test CA bundle", encoding="ascii")
     monkeypatch.setattr(
-        "tools.stream_source._https_trust",
+        "lisca.stream_source._https_trust",
         lambda: (object(), str(ca_file), str(ca_file)),
     )
     _install_http_response(monkeypatch, response)
-    monkeypatch.setattr("tools.stream_source.av.open", lambda *_a, **_k: container)
+    monkeypatch.setattr("lisca.stream_source.av.open", lambda *_a, **_k: container)
 
     if failure_stage == "seek":
         container.seek.side_effect = RuntimeError("seek failed")
@@ -514,7 +514,7 @@ def test_hls_constructor_failure_closes_opened_resources(
         def fail_resampler(**_kwargs):
             raise RuntimeError("resampler failed")
 
-        monkeypatch.setattr("tools.stream_source.av.AudioResampler", fail_resampler)
+        monkeypatch.setattr("lisca.stream_source.av.AudioResampler", fail_resampler)
         start_sec = 0
 
     with pytest.raises(RuntimeError, match=f"{failure_stage} failed"):

@@ -13,7 +13,7 @@ from fastapi import Response
 from fastapi.testclient import TestClient
 
 
-import webui  # noqa: E402
+from lisca.web import app as webui  # noqa: E402
 
 
 def _page_url(label):

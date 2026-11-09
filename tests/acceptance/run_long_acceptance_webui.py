@@ -31,11 +31,10 @@ def main(argv=None, *, webui_module=None, sdk_recognition_class=None,
     if webui_module is None:
         root = Path(__file__).resolve().parents[2]
         sys.path.insert(0, str(root))
-        sys.path.insert(0, str(root / "tools"))
-        import webui as webui_module  # pylint: disable=import-error
+        import lisca.web.app as webui_module  # pylint: disable=import-error
     if sdk_recognition_class is None:
         from dashscope.audio.asr import RecognitionCallback
-        from streamparser.asr_client import Recognition
+        from lisca.asr.asr_client import Recognition
         sdk_recognition_class, sdk_callback_class = Recognition, RecognitionCallback
 
     installation = install_probe(

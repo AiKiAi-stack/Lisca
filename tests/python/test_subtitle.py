@@ -1,6 +1,6 @@
 # encoding:utf-8
 import pytest
-from streamparser.subtitle import SubtitleEntry
+from lisca.asr.subtitle import SubtitleEntry
 
 
 class TestSubtitleEntry:

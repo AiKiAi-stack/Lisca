@@ -35,7 +35,7 @@ def main():
             exhausted = wait_state(page, lambda state: state["active"] == 0)
             page.wait_for_timeout(2500)
             assert request("/__fixture/state")["started"] == before + 3
-            engines = exhausted["engines"][-3:]
+            engines = exhausted["lisca.engines"][-3:]
             waits = [following["created_at"] - current["closed_at"]
                      for current, following in zip(engines, engines[1:])]
             assert waits[0] >= .85 and waits[1] >= 1.85, waits

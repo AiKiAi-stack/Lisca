@@ -5,8 +5,8 @@
 
 ## 0. 架构事实（实现者必读）
 
-- 后端 `tools/webui.py`（FastAPI）：
-  - `GET /` 单页 `tools/webui_static/index.html`（no-store）
+- 后端 `lisca/web/app.py`（FastAPI）：
+  - `GET /` 单页 `lisca/web/static/index.html`（no-store）
   - `GET /video?url=` / `GET /audio?url=`：本地文件→FileResponse；平台链接→yt-dlp 解析
     bv*/ba 后经 httpx 代理（补 Referer/UA）；5 分钟进程内 `_CACHE`（按 url 键）
   - `WS /ws?url&engine`：worker 线程 `StreamSource`(PyAV) 按实时速率（0.1s/chunk）

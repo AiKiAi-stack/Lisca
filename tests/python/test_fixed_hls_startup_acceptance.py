@@ -273,7 +273,7 @@ def test_generated_live_hls_decodes_through_real_stream_source_without_eof_prefe
     url = f"http://127.0.0.1:{server.server_port}/zh.m3u8?startup_case=zh-startup-01"
     source = None
     try:
-        from stream_source import StreamSource
+        from lisca.stream_source import StreamSource
 
         source = StreamSource(url, chunk_sec=0.1)
         assert source.container.format.name == "hls"

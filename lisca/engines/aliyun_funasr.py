@@ -1,14 +1,12 @@
 """AliyunFunASREngine：阿里云百炼 FunASR 实时识别（dashscope SDK）
 
-复用 streamparser 的 ASRClient（DashScope WebSocket 封装）。
+复用 lisca.asr 的 ASRClient（DashScope WebSocket 封装）。
 API key 从参数或环境变量 DASHSCOPE_API_KEY 读取（建议经 .env / 环境注入，勿硬编码）。
 workspace_id 可选：新版 dashscope SDK（>=1.20）支持默认业务空间。
 """
 import os
-import sys
 import threading
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
 from .base import Engine, Subtitle  # noqa: E402
 
@@ -40,8 +38,8 @@ class AliyunFunASREngine(Engine):
                 f"wss://{workspace_id}.{region}.maas.aliyuncs.com/api-ws/v1/inference"
             )
 
-        from streamparser.asr_client import ASRClient
-        from streamparser.asr_config import ASRSettings
+        from lisca.asr.asr_client import ASRClient
+        from lisca.asr.asr_config import ASRSettings
 
         settings = ASRSettings(
             api_key=self._api_key, workspace_id=workspace_id,

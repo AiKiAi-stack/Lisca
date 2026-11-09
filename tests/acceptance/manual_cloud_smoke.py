@@ -9,9 +9,9 @@ import av
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools"))
-import webui  # noqa: E402
-from cloud_translation import CloudConfigStore  # noqa: E402
+sys.path.insert(0, str(ROOT))
+from lisca.web import app as webui  # noqa: E402
+from lisca.cloud_translation import CloudConfigStore  # noqa: E402
 
 
 def make_video(path):

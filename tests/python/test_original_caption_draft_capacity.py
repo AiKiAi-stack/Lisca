@@ -2,8 +2,8 @@
 
 from fastapi.testclient import TestClient
 
-import webui
-from cloud_translation import CloudConfigStore
+from lisca.web import app as webui
+from lisca.cloud_translation import CloudConfigStore
 
 
 def _run_cloud_session(tmp_path, monkeypatch, **scenario):

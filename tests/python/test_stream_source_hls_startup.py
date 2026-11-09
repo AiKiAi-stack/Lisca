@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 import av
 import numpy as np
 
-from tools.stream_source import StreamSource
+from lisca.stream_source import StreamSource
 
 
 SAMPLE_RATE = 16000
