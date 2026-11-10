@@ -36,6 +36,10 @@ def check_runtime():
 if __name__ == "__main__":
     # PyInstaller needs this before importing the server, including on Linux.
     multiprocessing.freeze_support()
+    # Redirected Windows output otherwise uses CP1252 and cannot print Chinese.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None:
+            stream.reconfigure(encoding="utf-8")
     if Path(sys.executable).stem.lower() == "yt-dlp":
         import yt_dlp
 

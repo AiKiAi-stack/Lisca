@@ -30,3 +30,15 @@ def test_windows_launcher_check_without_starting_service(tmp_path):
     report = json.loads(result.stdout)
     assert report["missing"] == []
     assert (Path(report["project_directory"]) / "start-windows.cmd").is_file()
+
+
+def test_portable_help_with_windows_redirected_output_encoding(tmp_path):
+    entry = Path(__file__).resolve().parents[2] / "tools/release/entry.py"
+    result = subprocess.run(
+        [sys.executable, str(entry), "--help"], cwd=tmp_path,
+        env={**os.environ, "PYTHONIOENCODING": "cp1252",
+             "LISCA_DATA_DIR": str(tmp_path / "data")},
+        capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "实时字幕" in result.stdout and "--port" in result.stdout
