@@ -38,6 +38,7 @@ docs/
 | 理解字幕行为 | [术语](../GLOSSARY.md)、[ADR-0008](adr/0008-original-language-captions.md) |
 | 核对预览验收与正式发布缺口 | [ADR-0009](adr/0009-pr89-preview-acceptance-2026-11-04.md)、[PR89 复测](plans/2026-11-04-pr89-acceptance-recheck.md)、[GitHub Issues](https://github.com/AiKiAi-stack/Lisca/issues) |
 | 运行回归、浏览器或真实验收 | [测试说明](../tests/README.md) |
+| 构建和发布便携二进制 | [发布流程](guides/releasing.md) |
 | 采集真实播放器证据 | [浏览器采集指南](guides/real-browser-collector.md) |
 | 本地新闻回放 | [回放方法与证据](research/p0-local-news-2026-11-04.md) |
 | 离线整段转写 | [FunASR Vulkan 指南](guides/funasr-vulkan.md) |
