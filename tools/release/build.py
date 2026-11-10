@@ -27,6 +27,7 @@ def main():
                    "--specpath", str(work), "--paths", str(source),
                    "--add-data", f"{source / 'lisca/web/static'}:lisca/web/static",
                    "--add-data", f"{source / 'lisca/web/licenses'}:lisca/web/licenses",
+                   "--add-data", f"{source / 'lisca/_vendor/whisper_streaming/LICENSE'}:lisca/_vendor/whisper_streaming",
                    "--hidden-import", "lisca.engines.aliyun_funasr",
                    "--collect-submodules", "uvicorn",
                    "--collect-all", "av", "--collect-all", "dashscope",
