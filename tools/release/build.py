@@ -11,6 +11,15 @@ import sys
 import tempfile
 
 
+def build_target():
+    systems = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}
+    machines = {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}
+    try:
+        return systems[platform.system()], machines[platform.machine().lower()]
+    except KeyError as error:
+        raise RuntimeError(f"Unsupported build host: {platform.system()} {platform.machine()}") from error
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -18,6 +27,7 @@ def main():
     args = parser.parse_args()
     source, output = args.source.resolve(), args.output.resolve()
     tooling = Path(__file__).resolve().parents[2]
+    system, architecture = build_target()
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="lisca-build-") as temporary:
         work = Path(temporary)
@@ -31,7 +41,10 @@ def main():
                    "--hidden-import", "lisca.engines.aliyun_funasr",
                    "--collect-submodules", "uvicorn",
                    "--collect-all", "av", "--collect-all", "dashscope",
-                   "--collect-all", "yt_dlp", str(Path(__file__).with_name("entry.py"))]
+                   "--collect-all", "yt_dlp"]
+        if system == "macos":
+            command.extend(["--target-architecture", "arm64" if architecture == "arm64" else "x86_64"])
+        command.append(str(Path(__file__).with_name("entry.py")))
         subprocess.run(command, cwd=source, check=True)
         bundle = work / "dist/Lisca"
         suffix = ".exe" if sys.platform == "win32" else ""
@@ -51,25 +64,36 @@ def main():
             return subprocess.check_output(["git", "-C", str(directory), "rev-parse", "HEAD"], text=True).strip()
         (bundle / "build-info.json").write_text(json.dumps({
             "source_commit": commit(source), "packaging_commit": commit(tooling),
-            "platform": platform.platform(), "python": platform.python_version(),
+            "platform": platform.platform(), "target": f"{system}-{architecture}",
+            "python": platform.python_version(),
             "dependencies": {d.metadata["Name"]: d.version for d in importlib.metadata.distributions()},
         }, indent=2), encoding="utf-8")
         (bundle / "README.txt").write_text(
             "Lisca\n\n"
             "Windows: double-click Lisca.exe. Linux: run ./Lisca.\n"
+            "macOS: copy the Lisca folder to your computer, then double-click Start Lisca.command.\n"
             "Open http://127.0.0.1:8002/ and configure your DashScope API key.\n"
             "Keep this folder together; close the terminal to stop the server.\n"
             "Settings and uploads are stored in data/ next to the executable.\n"
             "Cloud recognition sends audio to DashScope and incurs API charges.\n"
             "Use --check for offline diagnostics, or --help for server options.\n",
             encoding="utf-8")
+        if system == "macos":
+            launcher = bundle / "Start Lisca.command"
+            launcher.write_text('#!/bin/sh\ncd "$(dirname "$0")" || exit 1\nexec ./Lisca\n', encoding="utf-8")
+            launcher.chmod(0o755)
         # Read the tag's version, not the packaging checkout's installed metadata.
         version = re.search(r'^version = "([^"]+)"',
                             (source / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
-        name = f"Lisca-{version}-{'windows' if suffix else 'linux'}-x64"
+        name = f"Lisca-{version}-{system}-{architecture}"
         archive = shutil.make_archive(str(output / name), "zip" if suffix else "gztar",
                                       root_dir=bundle.parent, base_dir=bundle.name)
         print(archive)
+        if system == "macos":
+            image = output / (name + ".dmg")
+            subprocess.run(["hdiutil", "create", "-volname", "Lisca", "-srcfolder", str(bundle.parent),
+                            "-ov", "-format", "UDZO", str(image)], check=True)
+            print(image)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ permissions:
 
 concurrency:
   group: release-binaries-${{ github.event_name }}-${{ inputs.tag || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -32,8 +32,22 @@ jobs:
         include:
           - os: windows-2022
             platform: windows-x64
+            python_arch: x64
+          - os: windows-11-arm
+            platform: windows-arm64
+            python_arch: arm64
           - os: ubuntu-22.04
             platform: linux-x64
+            python_arch: x64
+          - os: ubuntu-22.04-arm
+            platform: linux-arm64
+            python_arch: arm64
+          - os: macos-15-intel
+            platform: macos-x64
+            python_arch: x64
+          - os: macos-15
+            platform: macos-arm64
+            python_arch: arm64
     runs-on: ${{ matrix.os }}
     env:
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name || 'v0.1.0' }}
@@ -48,15 +62,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          architecture: ${{ matrix.python_arch }}
       - name: Install build dependencies
-        run: python -m pip install -r source/requirements-webui.txt concurrent-log-handler pyinstaller==6.22.3
+        run: |
+          python -m pip install --only-binary=:all: -r source/requirements-webui.txt concurrent-log-handler pyinstaller==6.22.3
       - name: Build portable archive
         run: python packaging/tools/release/build.py --source source --output dist
       - name: Check extracted executable
         shell: bash
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
         run: |
           for archive in dist/*; do
-            python packaging/tools/release/check_binary.py "$archive"
+            python packaging/tools/release/check_binary.py "$archive" --platform "$TARGET_PLATFORM"
           done
       - uses: actions/upload-artifact@v4
         if: always()
@@ -83,4 +101,17 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Upload checked binaries
-        run: gh release upload "$RELEASE_TAG" dist/* --clobber
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          files = sorted(Path('dist').glob('Lisca-*'))
+          assert len(files) == 8, [path.name for path in files]
+          lines = []
+          for path in files:
+              with path.open('rb') as binary:
+                  digest = hashlib.file_digest(binary, 'sha256').hexdigest()
+              lines.append(f'{digest}  {path.name}\n')
+          Path('dist/SHA256SUMS').write_text(''.join(lines), encoding='utf-8')
+          PY
+          gh release upload "$RELEASE_TAG" dist/* --clobber
