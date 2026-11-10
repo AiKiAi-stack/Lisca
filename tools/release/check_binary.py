@@ -63,7 +63,8 @@ def main():
                                   headers={"Content-Type": "multipart/form-data; boundary=lisca-boundary"})
                 with urlopen(request, timeout=5) as response:
                     uploaded = Path(json.load(response)["path"])
-                assert uploaded.parent == bundle / "data/uploads", uploaded
+                # Windows may return the long form of an 8.3 temporary path.
+                assert uploaded.parent.samefile(bundle / "data/uploads"), uploaded
                 assert uploaded.read_bytes() == b"portable-check"
             finally:
                 server.terminate()
