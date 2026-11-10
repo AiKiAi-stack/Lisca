@@ -2,6 +2,7 @@
 import multiprocessing
 import os
 from pathlib import Path
+import platform
 import sys
 
 
@@ -30,7 +31,8 @@ def check_runtime():
         child.terminate()
         child.join(5)
     assert child.exitcode == 0, f"Spawned worker failed: {child.exitcode}"
-    print(json.dumps({"audio_decode": "ok", "asr_imports": "ok", "spawn": "ok"}))
+    print(json.dumps({"audio_decode": "ok", "asr_imports": "ok", "spawn": "ok",
+                      "system": platform.system(), "machine": platform.machine()}))
 
 
 if __name__ == "__main__":

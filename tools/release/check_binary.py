@@ -11,18 +11,54 @@ import time
 from urllib.request import Request, urlopen
 
 
+def binary_architecture(path):
+    """Read the native executable header independently of its filename."""
+    with path.open("rb") as binary:
+        header = binary.read(64)
+        if header[:2] == b"MZ":
+            binary.seek(int.from_bytes(header[60:64], "little"))
+            assert binary.read(4) == b"PE\0\0"
+            return {0x8664: "x64", 0xAA64: "arm64"}[int.from_bytes(binary.read(2), "little")]
+        if header[:4] == b"\x7fELF":
+            assert header[4:6] == b"\x02\x01", "Expected little-endian ELF64"
+            return {62: "x64", 183: "arm64"}[int.from_bytes(header[18:20], "little")]
+        assert header[:4] == b"\xcf\xfa\xed\xfe", "Expected a thin Mach-O 64-bit executable"
+        return {0x01000007: "x64", 0x0100000C: "arm64"}[int.from_bytes(header[4:8], "little")]
+
+
+def extract_archive(archive, root):
+    if archive.suffix != ".dmg":
+        shutil.unpack_archive(str(archive), root)
+        return
+    mount = root / "mounted"
+    mount.mkdir()
+    subprocess.run(["hdiutil", "attach", str(archive), "-nobrowse", "-readonly",
+                    "-mountpoint", str(mount)], check=True, timeout=60)
+    try:
+        # The normal DMG install copies the folder to writable storage first.
+        shutil.copytree(mount / "Lisca", root / "Lisca", symlinks=True)
+    finally:
+        subprocess.run(["hdiutil", "detach", str(mount)], check=True, timeout=30)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
+    parser.add_argument("--platform", required=True,
+                        choices=[f"{system}-{arch}" for system in ("windows", "linux", "macos")
+                                 for arch in ("x64", "arm64")])
     args = parser.parse_args()
+    expected_system, expected_architecture = args.platform.rsplit("-", 1)
     with socket.socket() as check:
         check.bind(("127.0.0.1", 8002))
     with tempfile.TemporaryDirectory(prefix="lisca-smoke-") as temporary:
         root = Path(temporary)
-        shutil.unpack_archive(str(args.archive.resolve()), root)
+        extract_archive(args.archive.resolve(), root)
         bundle = root / "Lisca"
         executable = bundle / ("Lisca.exe" if os.name == "nt" else "Lisca")
         resolver = bundle / ("yt-dlp.exe" if os.name == "nt" else "yt-dlp")
+        assert binary_architecture(executable) == expected_architecture, f"Expected {args.platform} application binary"
+        assert binary_architecture(resolver) == expected_architecture, f"Expected {args.platform} resolver binary"
         env = {k: v for k, v in os.environ.items()
                if k not in ("PYTHONPATH", "PYTHONHOME", "LISCA_DATA_DIR", "DASHSCOPE_API_KEY")}
         # Remove the runner's Python and yt-dlp commands from the application's PATH.
@@ -34,7 +70,10 @@ def main():
             return result
         assert "--port" in run([str(executable), "--help"]).stdout
         report = json.loads(run([str(executable), "--check"]).stdout)
-        assert report == {"audio_decode": "ok", "asr_imports": "ok", "spawn": "ok"}
+        assert all(report[key] == "ok" for key in ("audio_decode", "asr_imports", "spawn"))
+        assert report["system"] == {"windows": "Windows", "linux": "Linux", "macos": "Darwin"}[expected_system]
+        metadata = json.loads((bundle / "build-info.json").read_text(encoding="utf-8"))
+        assert metadata["target"] == args.platform
         assert run([str(resolver), "--version"]).stdout.strip()
         assert "Youtube" in run([str(resolver), "--list-extractors"]).stdout
         with (root / "server.log").open("w", encoding="utf-8") as log:
