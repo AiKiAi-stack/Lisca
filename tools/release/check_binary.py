@@ -28,8 +28,10 @@ def main():
         # Remove the runner's Python and yt-dlp commands from the application's PATH.
         env["PATH"] = os.environ.get("SystemRoot", "C:/Windows") + "/System32" if os.name == "nt" else "/usr/bin:/bin"
         def run(command):
-            return subprocess.run(command, cwd=root, env=env, check=True,
-                                  capture_output=True, text=True, timeout=60)
+            result = subprocess.run(command, cwd=root, env=env,
+                                    capture_output=True, encoding="utf-8", errors="replace", timeout=60)
+            assert result.returncode == 0, (command, result.returncode, result.stdout, result.stderr)
+            return result
         assert "--port" in run([str(executable), "--help"]).stdout
         report = json.loads(run([str(executable), "--check"]).stdout)
         assert report == {"audio_decode": "ok", "asr_imports": "ok", "spawn": "ok"}

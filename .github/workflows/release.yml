@@ -3,9 +3,6 @@ name: Release binaries
 on:
   pull_request:
     paths: ['tools/release/**', '.github/workflows/release.yml']
-  push:
-    branches: ['codex/release-binaries']
-    paths: ['tools/release/**', '.github/workflows/release.yml']
   release:
     types: [published]
   workflow_dispatch:
@@ -62,10 +59,11 @@ jobs:
             python packaging/tools/release/check_binary.py "$archive"
           done
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Lisca-${{ matrix.platform }}
           path: dist/*
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
 
   publish:
