@@ -49,8 +49,14 @@ def main():
                                  for arch in ("x64", "arm64")])
     args = parser.parse_args()
     expected_system, expected_architecture = args.platform.rsplit("-", 1)
-    with socket.socket() as check:
-        check.bind(("127.0.0.1", 8002))
+    # A closed server can leave TIME_WAIT; only a live listener occupies the port.
+    try:
+        connection = socket.create_connection(("127.0.0.1", 8002), timeout=1)
+    except ConnectionRefusedError:
+        pass
+    else:
+        connection.close()
+        raise RuntimeError("Port 8002 already has a listener; leave that service running.")
     with tempfile.TemporaryDirectory(prefix="lisca-smoke-") as temporary:
         root = Path(temporary)
         extract_archive(args.archive.resolve(), root)
