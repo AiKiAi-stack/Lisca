@@ -43,6 +43,8 @@ WebUI 只使用 `127.0.0.1:8002`。替换为夹具前核对占用进程和活动
 | `acceptance/prepare_acoustic_review.py` | 准备独立听审材料 |
 | `acceptance/manual_cloud_smoke.py` | 合成视频与替身识别/翻译的手动浏览器夹具服务，不调用真实云端 |
 
+`node tests/acceptance/replay_sentence_policy.cjs --recording <录制.json> --wait-ms 6000 --wait-ms 10000 --output <结果.json>` 可对已有录制比较首次整句/超时提交策略，执行过程中不调用 ASR。输出标明语句身份、未知项、观测范围和实验参数；首次提交回放的范围见[测量记录](../docs/research/2026-11-14-sentence-policy-replay.md)。
+
 真实识别会产生费用，只在有授权、明确输入和运行上限时执行。采集与评分工具支持 `--help`；服务入口需先查看文件开头的配置前提。结果默认写到被忽略的 `logs/` 等目录，原始失败和 unknown 结论保留。
 
 ## 历史复现

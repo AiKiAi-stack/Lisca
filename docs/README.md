@@ -34,7 +34,9 @@ docs/
 | 要做的事 | 入口 |
 | --- | --- |
 | 安装、使用、报告问题 | [中文 README](../README_zh.md) / [English README](../README.md) |
+| 后续本机任务读取 ASR Key | [本机凭据读取与内存配置](guides/local-asr-credentials.md) |
 | 理解当前产品范围 | [原文字幕 PRD](plans/2026-10-21-live-translation-prd.md)、[实现规格](plans/2026-10-23-original-caption-release-spec.md) |
+| 制订下一轮字幕体验规格 | [规格草案](plans/2026-11-14-caption-experience-spec-draft.md)、[技术可行性审查](research/2026-11-14-caption-experience-feasibility-review.md)、[完整句历史信号基线](research/2026-11-14-complete-sentence-history-baseline.md) |
 | 理解字幕行为 | [术语](../GLOSSARY.md)、[ADR-0008](adr/0008-original-language-captions.md) |
 | 核对预览验收与正式发布缺口 | [ADR-0009](adr/0009-pr89-preview-acceptance-2026-11-04.md)、[PR89 复测](plans/2026-11-04-pr89-acceptance-recheck.md)、[GitHub Issues](https://github.com/AiKiAi-stack/Lisca/issues) |
 | 运行回归、浏览器或真实验收 | [测试说明](../tests/README.md) |

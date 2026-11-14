@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "scope": "first_commit_per_provider_sentence_only",
+  "runtime": {
+    "node": "v26.13.0",
+    "icu": "78.3",
+    "unicode": "17.0"
+  },
+  "tool_sha256": "b8de938161d2db2d0d119bef76f863e98737f56668148553e1390f4653dd8206",
+  "time_origin": "recording observed_after_ms; wait starts at first draft, not source ingress or user click",
+  "new_asr_calls": 0,
+  "word_boundary_method": "Intl.Segmenter on the latest text; an estimate, not an independent reference",
+  "limitations": [
+    "No player, acoustic synchronization, coverage or resource acceptance is assessed.",
+    "Stable punctuation is a candidate signal; semantic sentence completeness is not assessed.",
+    "Only first commits are modelled; later revisions, withdrawals and subsequent timeout chunks require separate validation.",
+    "Right-censored observations remain unknown; deadlines are never advanced beyond recorded observation.",
+    "Reported wait budgets are experiment parameters, not approved product thresholds."
+  ],
+  "analysis_date": "2026-11-14",
+  "original_evidence_date": "2026-11-04",
+  "original_candidate": "027b3254cc56cc7ea58b1e2066958e86481cc6a0",
+  "analysis_candidate": "d491581",
+  "full_result_path": "/home/wbb/.local/share/stream-with-asr/notes/caption-experience-20261114/first-commit-replay-reviewed.json",
+  "full_result_sha256": "3c2b00c2dde8acc66d56301c8f1207c7380fda8e41bf32a81d66bceeae7689e1",
+  "recordings": [
+    {
+      "recording": "zh-long-pr89.recording.json",
+      "recording_sha256": "cfd7d5b5d16b6e0198c80b471b9b5fa089342505169ee4edc291ee190e352140",
+      "simulated_recognition": false,
+      "policies": [
+        {
+          "policy": "sentence_or_timeout_6000ms",
+          "wait_budget_from_first_draft_ms": 6000,
+          "observed_through_ms": 1800073,
+          "missing_identity_event_count": 0,
+          "status_counts": {
+            "committed": 75,
+            "no_stable_at_deadline": 1
+          },
+          "commit_reason_counts": {
+            "provider_final": 5,
+            "stable_punctuation_signal": 0,
+            "timeout": 70
+          },
+          "wait_from_first_draft_ms": {
+            "n": 75,
+            "min": 805,
+            "p50": 6000,
+            "p95": 6000,
+            "max": 6000
+          }
+        },
+        {
+          "policy": "sentence_or_timeout_10000ms",
+          "wait_budget_from_first_draft_ms": 10000,
+          "observed_through_ms": 1800073,
+          "missing_identity_event_count": 0,
+          "status_counts": {
+            "committed": 75,
+            "no_stable_at_deadline": 1
+          },
+          "commit_reason_counts": {
+            "provider_final": 9,
+            "stable_punctuation_signal": 7,
+            "timeout": 59
+          },
+          "wait_from_first_draft_ms": {
+            "n": 75,
+            "min": 805,
+            "p50": 10000,
+            "p95": 10000,
+            "max": 10000
+          }
+        },
+        {
+          "policy": "provider_final_only",
+          "wait_budget_from_first_draft_ms": null,
+          "observed_through_ms": 1800073,
+          "missing_identity_event_count": 0,
+          "status_counts": {
+            "committed": 74,
+            "right_censored": 2
+          },
+          "commit_reason_counts": {
+            "provider_final": 74,
+            "stable_punctuation_signal": 0,
+            "timeout": 0
+          },
+          "wait_from_first_draft_ms": {
+            "n": 74,
+            "min": 805,
+            "p50": 27825,
+            "p95": 31084,
+            "max": 32182
+          }
+        }
+      ]
+    },
+    {
+      "recording": "en-long-pr89.recording.json",
+      "recording_sha256": "7eb3849c182a21317704a33722a6f768be5e6557a6bd9b5146e5dce4390cd2ef",
+      "simulated_recognition": false,
+      "policies": [
+        {
+          "policy": "sentence_or_timeout_6000ms",
+          "wait_budget_from_first_draft_ms": 6000,
+          "observed_through_ms": 1800175,
+          "missing_identity_event_count": 0,
+          "status_counts": {
+            "committed": 138,
+            "no_stable_at_deadline": 3
+          },
+          "commit_reason_counts": {
+            "provider_final": 52,
+            "stable_punctuation_signal": 2,
+            "timeout": 84
+          },
+          "wait_from_first_draft_ms": {
+            "n": 138,
+            "min": 41,
+            "p50": 6000,
+            "p95": 6000,
+            "max": 6000
+          }
+        },
+        {
+          "policy": "sentence_or_timeout_10000ms",
+          "wait_budget_from_first_draft_ms": 10000,
+          "observed_through_ms": 1800175,
+          "missing_identity_event_count": 0,
+          "status_counts": {
+            "committed": 139,
+            "no_stable_at_deadline": 2
+          },
+          "commit_reason_counts": {
+            "provider_final": 72,
+            "stable_punctuation_signal": 9,
+            "timeout": 58
+          },
+          "wait_from_first_draft_ms": {
+            "n": 139,
+            "min": 41,
+            "p50": 8000,
+            "p95": 10000,
+            "max": 10000
+          }
+        },
+        {
+          "policy": "provider_final_only",
+          "wait_budget_from_first_draft_ms": null,
+          "observed_through_ms": 1800175,
+          "missing_identity_event_count": 0,
+          "status_counts": {
+            "committed": 139,
+            "right_censored": 2
+          },
+          "commit_reason_counts": {
+            "provider_final": 139,
+            "stable_punctuation_signal": 0,
+            "timeout": 0
+          },
+          "wait_from_first_draft_ms": {
+            "n": 139,
+            "min": 41,
+            "p50": 8696,
+            "p95": 29300,
+            "max": 32692
+          }
+        }
+      ]
+    }
+  ]
+}
