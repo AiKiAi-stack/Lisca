@@ -31,7 +31,8 @@ function analyse(events,waitMs,includeText){
  const complete=/(?:[。！？.!?])[”’"'）)】\]]*$/u;
  function commit(state,when,reason,text){
   state.result={status:'committed',commit_reason:reason,committed_after_ms:when,
-   wait_from_first_draft_ms:when-state.first,text_sha256:hash(text),characters:Array.from(text).length};
+   wait_from_first_draft_ms:state.firstDraft==null?null:when-state.firstDraft,
+   text_sha256:hash(text),characters:Array.from(text).length};
   if(includeText)state.result.text=text;
  }
  function deadlines(now,inclusive){
@@ -62,6 +63,7 @@ function analyse(events,waitMs,includeText){
     states.set(key,state);
    }
    const text=typeof event.text==='string'?event.text:'';
+   if(event.is_final!==true&&state.firstDraft==null)state.firstDraft=when;
    state.stable=stablePrefix(state.previous,text);
    state.previous=text;
    if(event.is_final===true&&state.firstFinal==null)state.firstFinal=when;
@@ -69,14 +71,17 @@ function analyse(events,waitMs,includeText){
    if(event.is_final===true){
     if(text.trim())commit(state,when,'provider_final',text);
     else state.result={status:'withdrawn',withdrawn_after_ms:when};
-   }else if(Number.isFinite(waitMs)&&complete.test(state.stable)){
-    commit(state,when,'stable_punctuation_signal',state.stable);
    }
+  }
+  if(Number.isFinite(waitMs))for(const state of states.values()){
+   if(!state.result&&complete.test(state.stable))
+    commit(state,when,'stable_punctuation_signal',state.stable);
   }
   deadlines(when,true);
  }
  const sentences=Array.from(states.values(),state=>({sentence_id:state.id,
-  first_draft_after_ms:state.first,first_provider_final_after_ms:state.firstFinal??null,
+  first_result_after_ms:state.first,first_draft_after_ms:state.firstDraft??null,
+  first_provider_final_after_ms:state.firstFinal??null,
   ...(state.result||{status:'right_censored',deadline_after_ms:Number.isFinite(waitMs)?state.first+waitMs:null})}));
  const committed=sentences.filter(row=>row.status==='committed');
  const count=field=>Object.fromEntries(Array.from(new Set(sentences.map(row=>row[field]))).map(value=>
@@ -87,7 +92,7 @@ function analyse(events,waitMs,includeText){
   status_counts:count('status'),commit_reason_counts:Object.fromEntries(
    ['provider_final','stable_punctuation_signal','timeout'].map(reason=>
     [reason,committed.filter(row=>row.commit_reason===reason).length])),
-  wait_from_first_draft_ms:distribution(committed.map(row=>row.wait_from_first_draft_ms)),sentences};
+  wait_from_first_draft_ms:distribution(committed.map(row=>row.wait_from_first_draft_ms).filter(Number.isFinite)),sentences};
 }
 function main(){
  const recordings=[],budgets=[];
@@ -103,6 +108,8 @@ function main(){
  if(!recordings.length||!budgets.length||!output||budgets.some(value=>!Number.isFinite(value)||value<=0))
   throw new Error('usage: --recording FILE [--recording FILE] --wait-ms POSITIVE_MS [--wait-ms POSITIVE_MS] --output FILE [--include-text]');
  const result={schema_version:1,scope:'first_commit_per_provider_sentence_only',
+  runtime:{node:process.version,icu:process.versions.icu,unicode:process.versions.unicode},
+  tool_sha256:hash(fs.readFileSync(__filename)),
   time_origin:'recording observed_after_ms; wait starts at first draft, not source ingress or user click',
   new_asr_calls:0,word_boundary_method:'Intl.Segmenter on the latest text; an estimate, not an independent reference',
   limitations:['No player, acoustic synchronization, coverage or resource acceptance is assessed.',

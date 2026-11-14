@@ -80,3 +80,25 @@ test('a subtitle without a timestamp cannot be silently removed from the evidenc
   {type:'subtitle',sentence_id:1,text:'The report is ready.',is_final:true},
  ]),/subtitle event has no valid timestamp/);
 });
+
+test('a first result that is already final does not invent a zero-duration draft wait',()=>{
+ const result=replay([
+  {type:'subtitle',sentence_id:1,text:'The report is ready.',is_final:true,observed_after_ms:7000},
+ ]);
+ const policy=result.recordings[0].policies[0];
+ assert.equal(policy.sentences[0].first_draft_after_ms,null);
+ assert.equal(policy.sentences[0].wait_from_first_draft_ms,null);
+ assert.equal(policy.wait_from_first_draft_ms,null);
+ assert.equal(policy.sentences[0].commit_reason,'provider_final');
+});
+
+test('a final result wins over punctuation becoming stable at the same timestamp',()=>{
+ const result=replay([
+  {type:'subtitle',sentence_id:1,text:'The report is ready.',is_final:false,observed_after_ms:1000},
+  {type:'subtitle',sentence_id:1,text:'The report is ready. Next',is_final:false,observed_after_ms:7000},
+  {type:'subtitle',sentence_id:1,text:'The report was ready.',is_final:true,observed_after_ms:7000},
+ ]);
+ const row=result.recordings[0].policies[0].sentences[0];
+ assert.equal(row.commit_reason,'provider_final');
+ assert.equal(row.text,'The report was ready.');
+});
