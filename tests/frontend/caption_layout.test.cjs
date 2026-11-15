@@ -122,6 +122,20 @@ test('Chinese measurement units stay attached to their quantity',()=>{
     `${unit}: ${JSON.stringify(pages)}`);
 });
 
+test('news caption rows and pages keep 女尸 and 失联 complete with character timestamps',()=>{
+ const text='广州女大学生登山失联4天，警方找到疑似女尸。';
+ const spans=Array.from(text,(_,i)=>({beg:i,end:i+1,rawStart:i,rawEnd:i+1}));
+ for(const maxWidth of [4,6,8]){
+  const options={maxWidth,measureText:value=>Array.from(value).length,maxLines:2};
+  for(const pages of [CaptionLayout.paginateText(text,options),CaptionLayout.paginateTimedWords(text,spans,options)]){
+   assert.equal(withoutSpaces(pages.map(page=>page.text).join('')),text);
+   for(const word of ['失联','女尸'])
+    assert.ok(pages.some(page=>page.text.split('\n').some(row=>row.includes(word))),
+     `${word}: ${JSON.stringify(pages)}`);
+  }
+ }
+});
+
 test('cold long-caption pagination stays bounded and preserves every word',()=>{
  const modulePath=JSON.stringify(require.resolve('../../lisca/web/static/caption_presenter.js'));
  const script=`
