@@ -841,7 +841,10 @@
       if (sourceText) currentEl.textContent = sourceText + '\n' + currentEl.textContent;
     }
     const preview = candidates.length === 1 ? candidates[0] : null;
-    if (preview?.previewSource) preview.previewSource.visibleThrough = preview.captionEnd;
+    if (preview?.previewSource) {
+      preview.previewSource.visibleThrough = preview.captionEnd;
+      preview.previewSource.visibleText = currentEl.textContent;
+    }
     currentEl.originalPage = preview?.previewSource ? {
       source:preview.previewSource, beg:preview.captionBeg, end:preview.captionEnd,
       text:currentEl.textContent, at:t, layoutKey:captionLayoutOptions().key,
@@ -1052,10 +1055,13 @@
           ? s.sentenceId === msg.sentence_id
           : !(s.end < msg.beg || (Number.isFinite(msg.end) && s.beg > msg.end));
         if (!replaced) return true;
-        if (Number.isFinite(s.visibleThrough) && s.visibleThrough <= player.currentTime)
-          previewBreaks.push(s.visibleThrough);
+        const activePage = displayed?.source === s;
+        const readEnd = CaptionLayout.extendReadBoundary(msg.text, msg.words,
+          activePage ? displayed.text : s.visibleText, activePage ? displayed.end : s.visibleThrough);
+        if (Number.isFinite(readEnd) && readEnd <= player.currentTime) previewBreaks.push(readEnd);
         if (displayed?.source === s) {
           displayed.beg = Math.max(displayed.beg, msg.beg);
+          displayed.end = readEnd;
           if (Number.isFinite(msg.end)) displayed.end = Math.min(displayed.end, msg.end);
           if (displayed.beg <= player.currentTime && player.currentTime < displayed.end) {
             previewBreaks.push(displayed.end);
@@ -1573,9 +1579,10 @@
         }
         const start = Number.isFinite(msg.start_at) ? msg.start_at : player.currentTime;
         if (originalCaptionMode && !sharedViewerActive && !playStarted
-            && ![...subs.filter(s => s.isFinal !== false), ...previewSubs]
-              .some(s => s.text?.trim() && s.end > Math.max(s.beg, start))
-            && !(playbackGuard.silenceSpans || []).some(s => s.beg <= start + .15 && s.end > start)) {
+            && !(playbackGuard.silenceSpans || []).some(s => s.beg <= start + .15 && s.end > start)
+            && (previewSubs.some(s => !s.retired && Number.isFinite(s.unpreparedFrom) && s.unpreparedFrom <= start)
+              || ![...subs.filter(s => s.isFinal !== false), ...previewSubs]
+                .some(s => s.text?.trim() && s.end > Math.max(s.beg, start)))) {
           pendingReady = input;
           return;
         }
@@ -1725,7 +1732,9 @@
     if (cloudPlayback && originalCaptionMode) {
       const limit = Number.isFinite(playbackLimit) ? Math.min(playbackLimit,
         Math.max(player.currentTime, ...playbackGuard.allCoverageSpans().map(span => span.end)),
-        ...previewSubs.filter(s => !s.retired && Number.isFinite(s.unpreparedFrom)).map(s => s.unpreparedFrom))
+        ...previewSubs.filter(s => !s.retired && Number.isFinite(s.unpreparedFrom)
+          && !playbackGuard.silenceSpans.some(span => span.beg <= s.unpreparedFrom + .15
+            && span.end > Math.max(s.unpreparedFrom, player.currentTime))).map(s => s.unpreparedFrom))
         : playbackGuard.live && player.readyState >= 2 ? player.currentTime : null;
       const action = playbackGuard.tick({now:performance.now(), time:player.currentTime,
         limit:(useCaptionBuffer || playbackGuard.live) ? limit : null,
