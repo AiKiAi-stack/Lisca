@@ -25,6 +25,21 @@ def test_recording_preserves_sentence_commit_context_for_independent_replay(tmp_
         assert saved[field] == event[field]
 
 
+def test_recording_preserves_the_live_preparation_requirement(tmp_path):
+    media = tmp_path / "sample.mp4"
+    media.write_bytes(b"fixed candidate input")
+    output = tmp_path / "recording.json"
+    acceptance.write_browser_recording(
+        media_path=str(media), output_path=output,
+        events=[{"type": "ready", "original": True, "buffered": True,
+                 "start_at": 0, "prepare_ahead_sec": 10}], status="cancelled",
+        completion_signal="cancelled", completion_reason="cancelled", errors=[],
+        started_at="2026-11-15T00:00:00+00:00", started=time.monotonic(), metadata={},
+    )
+    saved = json.loads(output.read_text())["events"][0]
+    assert saved["prepare_ahead_sec"] == 10
+
+
 def test_capped_recording_keeps_cancelled_truth_and_redacts_transport_secrets(tmp_path):
     media = tmp_path / "sample.mp4"
     media.write_bytes(b"fixed local test input")
