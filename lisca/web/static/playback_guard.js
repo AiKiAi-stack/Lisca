@@ -87,7 +87,8 @@
         this.externalPauseAt = null;
       }
       if (this.preparationStartedAt != null) {
-        if (ready && this.allCoverageSpans().some(span => span.end > span.beg)) {
+        if (ready && (!Number.isFinite(limit) || limit > time)
+            && this.allCoverageSpans().some(span => span.end > span.beg)) {
           this.preparationStartedAt = null;
           this.preparationHolding = false;
           return 'resume';

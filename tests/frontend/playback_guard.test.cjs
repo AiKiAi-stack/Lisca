@@ -25,6 +25,21 @@ test('draft progress cannot renew the absolute preparation deadline',()=>{
   assert.equal(guard.tick({now:16000,time:0,limit:20,ready:false,userPaused:false}),'none');
 });
 
+test('preparation cannot resume beyond a finite playback ceiling at the current position',()=>{
+ for(const limit of [0,-.1]){
+  const guard=new CaptionPlaybackGuard();
+  guard.reset({now:0,live:true});guard.prepare({now:0,maxWaitMs:15000});
+  guard.captionProgress('future',5,7,0);
+  assert.equal(guard.tick({now:0,time:0,limit,ready:true,userPaused:false}),'hold');
+  assert.equal(guard.tick({now:2100,time:0,limit,ready:true,userPaused:false}),'none');
+  assert.equal(guard.tick({now:14999,time:0,limit,ready:true,userPaused:false}),'none');
+  assert.equal(guard.tick({now:15000,time:0,limit,ready:true,userPaused:false}),'preparation_timeout');
+ }
+ const unbuffered=new CaptionPlaybackGuard();
+ unbuffered.prepare({now:0,maxWaitMs:15000});unbuffered.captionProgress('first',.76,2,0);
+ assert.equal(unbuffered.tick({now:100,time:0,limit:null,ready:true,userPaused:false}),'resume');
+});
+
 test('a user pause suspends preparation and resetting the source discards its deadline',()=>{
   const guard=new CaptionPlaybackGuard();
   guard.reset({now:0,live:true});
