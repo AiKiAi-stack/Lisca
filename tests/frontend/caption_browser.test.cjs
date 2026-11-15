@@ -1073,6 +1073,34 @@ test('future silence or another sentence cannot release a retained incomplete wo
  }
 });
 
+test('an empty first preview keeps its preparation deadline despite a ready future sentence',()=>{
+ for(const live of [false,true])for(const unlock of ['word','silence','timeout']){
+  const {context:c}=preparingMessageBrowser({live});
+  const first={type:'preview',sentence_id:'first',commit_id:1,revision:1,
+   source_text:'发展趋势。',source_start:0,source_end:1,text:'发',beg:0,end:.2,words:[[0,.2,'发']]};
+  c.receiveMessage(first);
+  c.receiveMessage({type:'subtitle',sentence_id:'future',revision:1,beg:5,end:7,
+   text:'Future sentence.',is_final:true});
+  c.receiveMessage({type:'buffer',play_at:7});
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+  for(const now of [0,2100,14999]){
+   c.now=now;c.syncPlaybackToBuffer();
+   assert.equal(c.player.playCalls,0,`${live}/${unlock}/${now}`);
+   assert.equal(c.playStarted,false);assert.equal(c.playbackGuard.degraded,false);
+   assert.equal(c.failure,undefined);
+  }
+  if(unlock==='timeout'){
+   c.now=15000;c.syncPlaybackToBuffer();assert.match(c.failure,/准备.*超时/);
+  }else{
+   if(unlock==='word')c.receiveMessage({...first,revision:2,source_end:2,text:'发展',end:.4,
+    words:[[0,.2,'发'],[.2,.4,'展']]});
+   else c.receiveMessage({type:'buffer',play_at:7,local_silence_from:0,local_silence_through:2});
+   c.syncPlaybackToBuffer();assert.equal(c.player.paused,false,unlock);
+   assert.equal(c.playStarted,true);assert.equal(c.playbackGuard.degraded,false);
+  }
+ }
+});
+
 test('an empty preview correction withdraws its previously playable range',()=>{
  const {context:c}=preparingMessageBrowser();
  const first={type:'preview',sentence_id:'withdrawn',commit_id:1,revision:1,

@@ -1573,9 +1573,10 @@
         }
         const start = Number.isFinite(msg.start_at) ? msg.start_at : player.currentTime;
         if (originalCaptionMode && !sharedViewerActive && !playStarted
-            && ![...subs.filter(s => s.isFinal !== false), ...previewSubs]
-              .some(s => s.text?.trim() && s.end > Math.max(s.beg, start))
-            && !(playbackGuard.silenceSpans || []).some(s => s.beg <= start + .15 && s.end > start)) {
+            && !(playbackGuard.silenceSpans || []).some(s => s.beg <= start + .15 && s.end > start)
+            && (previewSubs.some(s => !s.retired && Number.isFinite(s.unpreparedFrom) && s.unpreparedFrom <= start)
+              || ![...subs.filter(s => s.isFinal !== false), ...previewSubs]
+                .some(s => s.text?.trim() && s.end > Math.max(s.beg, start)))) {
           pendingReady = input;
           return;
         }
@@ -1725,7 +1726,9 @@
     if (cloudPlayback && originalCaptionMode) {
       const limit = Number.isFinite(playbackLimit) ? Math.min(playbackLimit,
         Math.max(player.currentTime, ...playbackGuard.allCoverageSpans().map(span => span.end)),
-        ...previewSubs.filter(s => !s.retired && Number.isFinite(s.unpreparedFrom)).map(s => s.unpreparedFrom))
+        ...previewSubs.filter(s => !s.retired && Number.isFinite(s.unpreparedFrom)
+          && !playbackGuard.silenceSpans.some(span => span.beg <= s.unpreparedFrom + .15
+            && span.end > Math.max(s.unpreparedFrom, player.currentTime))).map(s => s.unpreparedFrom))
         : playbackGuard.live && player.readyState >= 2 ? player.currentTime : null;
       const action = playbackGuard.tick({now:performance.now(), time:player.currentTime,
         limit:(useCaptionBuffer || playbackGuard.live) ? limit : null,
