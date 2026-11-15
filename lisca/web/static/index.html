@@ -1578,11 +1578,18 @@
           setStatus('播放已开始，正在识别并翻译；当前句可能修订');
         }
         const start = Number.isFinite(msg.start_at) ? msg.start_at : player.currentTime;
+        const reserve = playbackGuard.live && Number.isFinite(msg.prepare_ahead_sec)
+          ? Math.max(0, Math.min(30, msg.prepare_ahead_sec)) : 0;
+        const lacksReserve = reserve > 0 && Math.min(
+          Number.isFinite(playbackLimit) ? playbackLimit : Infinity,
+          Math.max(start, ...playbackGuard.allCoverageSpans().map(span => span.end)),
+          ...previewSubs.filter(s => !s.retired && Number.isFinite(s.unpreparedFrom)).map(s => s.unpreparedFrom)
+        ) < start + reserve;
         if (originalCaptionMode && !sharedViewerActive && !playStarted
-            && !(playbackGuard.silenceSpans || []).some(s => s.beg <= start + .15 && s.end > start)
+            && (lacksReserve || !(playbackGuard.silenceSpans || []).some(s => s.beg <= start + .15 && s.end > start)
             && (previewSubs.some(s => !s.retired && Number.isFinite(s.unpreparedFrom) && s.unpreparedFrom <= start)
               || ![...subs.filter(s => s.isFinal !== false), ...previewSubs]
-                .some(s => s.text?.trim() && s.end > Math.max(s.beg, start)))) {
+                .some(s => s.text?.trim() && s.end > Math.max(s.beg, start))))) {
           pendingReady = input;
           return;
         }
@@ -1645,6 +1652,7 @@
         setStatus('出错', true);
         playStarted = true;  // 解除播放拦截，允许手动看片（无字幕）
       } else if (msg.type === 'end') {
+        pendingReady = null;
         const processingComplete = msg.reason === 'completed';
         playbackGuard.done = processingComplete;
         document.getElementById('captionActions').hidden = processingComplete;

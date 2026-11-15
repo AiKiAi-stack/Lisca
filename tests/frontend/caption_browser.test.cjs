@@ -1199,3 +1199,41 @@ test('a sub-100ms final fragment joins its adjacent phrase without extending the
  assert.equal(pages[0].beg,0);assert.equal(pages.at(-1).end,2);
  assert.equal(pages.map(p=>p.text).join('').replace(/\s/g,''),'Really?Yes.');
 });
+
+test('live preparation waits for its actual caption reserve without renewing the first deadline',()=>{
+ for(const finish of ['captions','timeout']){
+  const {context:c}=preparingMessageBrowser({live:true});
+  c.receiveMessage({type:'subtitle',sentence_id:1,beg:0,end:4.8,text:'First complete sentence.',is_final:true});
+  c.receiveMessage({type:'buffer',play_at:20});
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,prepare_ahead_sec:10});
+  c.now=14999;c.syncPlaybackToBuffer();
+  assert.equal(c.playStarted,false);assert.equal(c.player.paused,true);
+  assert.equal(c.playbackGuard.degraded,false);
+  if(finish==='timeout'){
+   c.now=15000;c.syncPlaybackToBuffer();assert.match(c.failure,/准备.*超时/);
+  }else{
+   c.receiveMessage({type:'subtitle',sentence_id:2,beg:5.5,end:8.8,text:'Second sentence.',is_final:true});
+   c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);
+   c.receiveMessage({type:'subtitle',sentence_id:3,beg:9.2,end:12.2,text:'Third sentence.',is_final:true});
+   c.syncPlaybackToBuffer();assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);
+   assert.equal(c.playbackGuard.heldForSessionMs,0);
+  }
+ }
+});
+
+test('a completed short stream can start with all its captions before reaching the live reserve',()=>{
+ const {context:c}=preparingMessageBrowser({live:true});c.ws={close(){}};c.recoveryController={pending:null};
+ c.receiveMessage({type:'subtitle',sentence_id:1,beg:0,end:4.8,text:'Complete short stream.',is_final:true});
+ c.receiveMessage({type:'buffer',play_at:4.8});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,prepare_ahead_sec:10});
+ c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);
+ c.receiveMessage({type:'end',reason:'completed'});
+ assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);
+});
+
+test('verified leading silence contributes to the live caption reserve',()=>{
+ const {context:c}=preparingMessageBrowser({live:true});
+ c.receiveMessage({type:'buffer',play_at:12,local_silence_from:0,local_silence_through:12});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,silent:true,prepare_ahead_sec:10});
+ c.syncPlaybackToBuffer();assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);
+});
