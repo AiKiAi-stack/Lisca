@@ -1027,6 +1027,29 @@ function preparingMessageBrowser({live=false}={}){
  return b;
 }
 
+test('recorded live final handoff follows the read 警方 boundary after timing and numeral revisions',()=>{
+ const fixture=require('./fixtures/zh-live-caption-handoff.json');
+ const {context:c}=preparingMessageBrowser({live:true});
+ let shown=false;
+ for(const step of fixture.steps){
+  if(!shown&&step.media_time>fixture.first_visible.media_time){
+   c.now=9754;c.player.currentTime=fixture.first_visible.media_time;c.syncSubtitle();
+   assert.equal(c.currentEl.textContent,fixture.first_visible.text);shown=true;
+  }
+  c.now=step.message.observed_after_ms;c.player.currentTime=step.media_time;
+  c.receiveMessage(step.message);
+  if(step.message.type==='preview')c.receiveMessage({type:'buffer',play_at:step.message.end});
+  c.syncPlaybackToBuffer();
+ }
+ assert.equal(c.currentEl.textContent,fixture.first_visible.text,'the current page keeps the already read numeral');
+ c.player.currentTime=7.253439;c.syncSubtitle();
+ assert.equal(c.currentEl.textContent,fixture.first_visible.text,'警方 stays on its original page through the corrected word end');
+ c.player.currentTime=7.5;c.syncSubtitle();
+ assert.equal(c.currentEl.textContent,'找到疑似女尸。','the next page neither repeats 警方 nor loses 找到');
+ c.player.currentTime=.9;c.syncSubtitle();
+ assert.ok(c.currentEl.textContent.includes('四天'),'replaying the final accepts the corrected numeral');
+});
+
 test('ready holds a retained half-word until a complete preview arrives',()=>{
  const {context:c}=preparingMessageBrowser();
  const source='发展趋势。',words=Array.from(source,(char,i)=>[i*.2,(i+1)*.2,char]);

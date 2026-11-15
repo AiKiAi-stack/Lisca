@@ -841,7 +841,10 @@
       if (sourceText) currentEl.textContent = sourceText + '\n' + currentEl.textContent;
     }
     const preview = candidates.length === 1 ? candidates[0] : null;
-    if (preview?.previewSource) preview.previewSource.visibleThrough = preview.captionEnd;
+    if (preview?.previewSource) {
+      preview.previewSource.visibleThrough = preview.captionEnd;
+      preview.previewSource.visibleText = currentEl.textContent;
+    }
     currentEl.originalPage = preview?.previewSource ? {
       source:preview.previewSource, beg:preview.captionBeg, end:preview.captionEnd,
       text:currentEl.textContent, at:t, layoutKey:captionLayoutOptions().key,
@@ -1052,10 +1055,13 @@
           ? s.sentenceId === msg.sentence_id
           : !(s.end < msg.beg || (Number.isFinite(msg.end) && s.beg > msg.end));
         if (!replaced) return true;
-        if (Number.isFinite(s.visibleThrough) && s.visibleThrough <= player.currentTime)
-          previewBreaks.push(s.visibleThrough);
+        const activePage = displayed?.source === s;
+        const readEnd = CaptionLayout.extendReadBoundary(msg.text, msg.words,
+          activePage ? displayed.text : s.visibleText, activePage ? displayed.end : s.visibleThrough);
+        if (Number.isFinite(readEnd) && readEnd <= player.currentTime) previewBreaks.push(readEnd);
         if (displayed?.source === s) {
           displayed.beg = Math.max(displayed.beg, msg.beg);
+          displayed.end = readEnd;
           if (Number.isFinite(msg.end)) displayed.end = Math.min(displayed.end, msg.end);
           if (displayed.beg <= player.currentTime && player.currentTime < displayed.end) {
             previewBreaks.push(displayed.end);
