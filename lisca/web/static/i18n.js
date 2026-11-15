@@ -176,6 +176,7 @@
   "观众人数已满（最多 3 台设备），请稍后再试": "The viewer limit (3 devices) has been reached. Try again later.",
   "直播已结束或连接已断开": "The live session ended or the connection was lost",
   "识别 15 秒没有进展，已停止新音频处理。可重试或仅播放。": "Recognition made no progress for 15 seconds. New audio processing stopped. Retry or play without captions.",
+  "字幕准备超时，已停止新音频处理。可重试或仅播放。": "Caption preparation timed out. New audio processing stopped. Retry or play without captions.",
   "等待当前片段的原文字幕…": "Waiting for captions for this segment…",
   "字幕暂不可用，部分缺失；媒体继续播放，完整结果见记录": "Some captions are unavailable; playback continues. See the transcript for available results.",
   "字幕已就绪，继续播放": "Captions ready; resuming playback",

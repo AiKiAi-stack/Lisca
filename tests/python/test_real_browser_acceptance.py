@@ -6,6 +6,25 @@ import pytest
 import run_real_browser_acceptance as acceptance
 
 
+def test_recording_preserves_sentence_commit_context_for_independent_replay(tmp_path):
+    media = tmp_path / "sample.mp4"
+    media.write_bytes(b"fixed candidate input")
+    output = tmp_path / "recording.json"
+    event = {"type": "preview", "sentence_id": 1, "beg": 0, "end": 2,
+             "text": "未来发", "source_text": "未来发展趋势", "source_start": 0,
+             "source_end": 3, "commit_reason": "timeout", "commit_id": 1,
+             "revision": 2, "is_final": False, "words": [[0, 1, "未来"], [1, 2, "发"]]}
+    acceptance.write_browser_recording(
+        media_path=str(media), output_path=output, events=[event], status="cancelled",
+        completion_signal="cancelled", completion_reason="cancelled", errors=[],
+        started_at="2026-11-14T00:00:00+00:00", started=time.monotonic(), metadata={},
+    )
+    saved = json.loads(output.read_text())["events"][0]
+    for field in ("source_text", "source_start", "source_end", "commit_reason",
+                  "commit_id", "revision", "is_final", "words"):
+        assert saved[field] == event[field]
+
+
 def test_capped_recording_keeps_cancelled_truth_and_redacts_transport_secrets(tmp_path):
     media = tmp_path / "sample.mp4"
     media.write_bytes(b"fixed local test input")

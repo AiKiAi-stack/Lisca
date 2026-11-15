@@ -4,6 +4,7 @@
 - 日期：2026-11-14。
 - 调查基点：main `79504994e477a842e9509f4941dc9d2f2c46348b`。
 - 既有责任：[父规格 #34](https://github.com/AiKiAi-stack/Lisca/issues/34)、[质量 #43](https://github.com/AiKiAi-stack/Lisca/issues/43)、[直播 #44](https://github.com/AiKiAi-stack/Lisca/issues/44)、[发布核对 #46](https://github.com/AiKiAi-stack/Lisca/issues/46)。
+- 本轮规格：[GitHub #99](https://github.com/AiKiAi-stack/Lisca/issues/99)；整句提交 #100、自然分页 #101、播放准备 #102、候选与预算 #103。#100/#101 独立就绪，#102 依赖 #100，#103 依赖 #100/#101/#102，已建立原生子项和阻塞关系。
 
 ## 已确认的目标
 
@@ -135,6 +136,8 @@ PY
 4. **预算确认**：给出首次准备、应用附加播放延迟、播放中等待次数/总时长/最长一次、词语完整、分页和有声缺失的并列表。以数据提出具体预算建议，交由用户确认，随后冻结验收门槛。
 
 阶段 2–4 的依赖只约束相应产品行为与指标；独立就绪的词语完整性回归、分页案例和来源身份核对可先准备。预算定稿前，规格保留 draft 状态。
+
+2026-11-14 已完成[首次提交策略回放](../research/2026-11-14-sentence-policy-replay.md)和[当前应用真实基线](../research/2026-11-14-caption-current-runtime-baseline.md)。回放显示服务商终稿在部分新闻中等待接近 30 秒，需要验证更早的完整句信号；当前真实基线确认两语均先 playing、后 ready。实现和候选测量承接这些具体反例。
 
 ## 测试与验收设计草案
 
