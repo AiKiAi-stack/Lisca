@@ -523,11 +523,12 @@ def test_ws_event_backlog_overflow_is_visible_and_not_normal_completion(monkeypa
     monkeypatch.setattr(webui, "_SERVER_LOGS", deque())
     send_json = webui.WebSocket.send_json
     delayed = {"done": False}
+    producer_finished = threading.Event()
 
     async def delay_first_owner_send(socket, data, mode="text"):
         if socket.scope["path"] == "/ws" and not delayed["done"]:
             delayed["done"] = True
-            await asyncio.sleep(0.1)
+            await asyncio.to_thread(producer_finished.wait, 2)
         await send_json(socket, data, mode)
 
     monkeypatch.setattr(webui.WebSocket, "send_json", delay_first_owner_send)
@@ -541,7 +542,7 @@ def test_ws_event_backlog_overflow_is_visible_and_not_normal_completion(monkeypa
             yield b"\x01" * 3200
 
         def close(self):
-            pass
+            producer_finished.set()
 
     class Engine:
         def transcribe_chunk(self, _audio):

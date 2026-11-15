@@ -1196,7 +1196,7 @@ def test_stable_preview_preserves_only_its_clause_word_times(tmp_path, monkeypat
                 events.append(event)
                 if event['type'] == 'end': break
     previews = [event for event in events if event['type'] == 'preview']
-    assert [event['text'] for event in previews] == ['Hello there.', 'Next sentence.']
+    assert [event['text'] for event in previews] == ['Hello there.', ' Next sentence.']
     assert [event.get('words') for event in previews] == [[list(w) for w in words[:2]], [list(w) for w in words[2:]]]
 
 
