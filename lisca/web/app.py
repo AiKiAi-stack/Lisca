@@ -156,6 +156,7 @@ async def create_cloud_session(request: Request):
         mode = data.get("mode", "transcribe")
         # This is an experiment parameter; product waiting budgets are measured separately.
         sentence_wait_sec = None
+        live_prepare_ahead_sec = 0.0
         if mode == "transcribe":
             try:
                 sentence_wait_sec = float(os.environ.get("LISCA_SENTENCE_WAIT_SEC", "6"))
@@ -163,6 +164,12 @@ async def create_cloud_session(request: Request):
                 raise CloudError("LISCA_SENTENCE_WAIT_SEC 必须是大于 0 且不超过 30 的有限秒数") from None
             if not math.isfinite(sentence_wait_sec) or not 0 < sentence_wait_sec <= 30:
                 raise CloudError("LISCA_SENTENCE_WAIT_SEC 必须是大于 0 且不超过 30 的有限秒数")
+            try:
+                live_prepare_ahead_sec = float(os.environ.get("LISCA_LIVE_PREPARE_AHEAD_SEC", "0"))
+            except ValueError:
+                raise CloudError("LISCA_LIVE_PREPARE_AHEAD_SEC 必须是 0 到 30 之间的有限秒数") from None
+            if not math.isfinite(live_prepare_ahead_sec) or not 0 <= live_prepare_ahead_sec <= 30:
+                raise CloudError("LISCA_LIVE_PREPARE_AHEAD_SEC 必须是 0 到 30 之间的有限秒数")
         source, target = data.get("source", "auto"), data.get("target")
         if mode == "translate":
             validate_pair(source, target)
@@ -191,6 +198,7 @@ async def create_cloud_session(request: Request):
             _CLOUD_JOBS[token] = {"url": url.strip(), "config": config,
                 "source": source, "target": target, "mode": mode, "start_at": position,
                 "sentence_wait_sec": sentence_wait_sec,
+                "live_prepare_ahead_sec": live_prepare_ahead_sec,
                 "stop": RequestStop(), "expires": now + 60, "active": False}
         return {"session": token, "mode": mode}
     except (ValueError, TypeError) as exc:
@@ -1186,6 +1194,8 @@ async def ws_endpoint(ws: WebSocket):
                 is_hls = parsed_real_url.path.lower().endswith(".m3u8")
                 is_live_hls = (parsed_real_url.scheme.lower() in {"http", "https"}
                                and is_hls)
+                # The client checks this against displayable captions and verified silence.
+                prepare_ahead_sec = cloud["live_prepare_ahead_sec"] if original_mode and is_live_hls else 0.0
                 if hasattr(src, "container"):
                     video_streams = src.container.streams.video
                     if is_hls and not video_streams:
@@ -1255,7 +1265,8 @@ async def ws_endpoint(ws: WebSocket):
                                 and playback_ceiling >= timeline_offset + 0.25:
                             put({"type": "ready", "delay": delay_sec,
                                  "start_at": timeline_offset, "original": original_mode,
-                                 "buffered": True, "silent": not caption_seen})
+                                 "buffered": True, "silent": not caption_seen,
+                                 "prepare_ahead_sec": prepare_ahead_sec})
                             ready_sent = True
 
                 def decoded_chunks():
@@ -1445,7 +1456,7 @@ async def ws_endpoint(ws: WebSocket):
                 if not ready_sent:
                     put({"type": "ready", "delay": delay_sec, "start_at": timeline_offset,
                          "original": original_mode, "buffered": not bool(translation),
-                         "prepared": prefetch_local})
+                         "prepared": prefetch_local, "prepare_ahead_sec": prepare_ahead_sec})
                     ready_sent = True
             finally:
                 if source_reader is None:
