@@ -22,6 +22,16 @@
       this.done = false;
       this.failed = false;
       this.externalPauseAt = null;
+      this.preparationStartedAt = null;
+      this.preparationBudgetMs = 0;
+      this.preparationHolding = false;
+    }
+    prepare({now, maxWaitMs}) {
+      if (!Number.isFinite(now) || !Number.isFinite(maxWaitMs) || maxWaitMs <= 0)
+        throw new TypeError('preparation needs a finite time and positive wait budget');
+      this.preparationStartedAt = now;
+      this.preparationBudgetMs = maxWaitMs;
+      this.preparationHolding = false;
     }
     progress(through, now) {
       this.noteProgress(through, now);
@@ -69,10 +79,28 @@
         return 'none';
       }
       if (this.externalPauseAt != null) {
-        this.lastProgress += now - this.externalPauseAt;
-        if (this.holdAt != null) this.holdAt += now - this.externalPauseAt;
+        const excludedMs = now - this.externalPauseAt;
+        this.lastProgress += excludedMs;
+        if (this.holdAt != null) this.holdAt += excludedMs;
+        if (this.preparationStartedAt != null) this.preparationStartedAt += excludedMs;
         this.recoveryCandidate = null;
         this.externalPauseAt = null;
+      }
+      if (this.preparationStartedAt != null) {
+        if (ready) {
+          this.preparationStartedAt = null;
+          this.preparationHolding = false;
+          return 'resume';
+        }
+        if (now - this.preparationStartedAt >= this.preparationBudgetMs) {
+          this.failed = true;
+          return 'preparation_timeout';
+        }
+        if (!this.preparationHolding) {
+          this.preparationHolding = true;
+          return 'hold';
+        }
+        return 'none';
       }
       if (!this.live) {
         if (now - this.lastProgress >= 15000) {

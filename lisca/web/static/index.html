@@ -672,59 +672,16 @@
         alignedWords[alignedWords.length - 1].rawEnd = sourceText.length;
       }
 
-      // Consecutive Latin/digit fragments with no textual separator belong to
-      // one displayed word. Keep their complete timing span before chunking so
-      // a 10-token or duration boundary cannot cut through that word.
-      const displayWords = [];
-      for (const word of alignedWords) {
-        const previous = displayWords[displayWords.length - 1];
-        const separator = previous ? sourceText.slice(previous.rawEnd, word.rawStart) : '';
-        const joinsWord = previous && /^[’'ʼ-]*$/u.test(separator)
-          && /[\p{Script=Latin}\p{N}]$/u.test(sourceText.slice(0, previous.rawEnd))
-          && /^[\p{Script=Latin}\p{N}]/u.test(sourceText.slice(word.rawStart));
-        if (joinsWord) {
-          previous.end = Math.max(previous.end, word.end);
-          previous.rawEnd = word.rawEnd;
-        } else {
-          displayWords.push({...word});
-        }
-      }
-
-      if (aligned && displayWords.length >= 2) {
-        const result = [];
-        let clause = [];
-        const previewEdges = new Set();
-        const pushSpan = span => {
-          if (!span.length) return;
-          const first = span[0];
-          const last = span[span.length - 1];
-          result.push({beg:first.beg, end:last.end,
-            text:sourceText.slice(first.rawStart, last.rawEnd).trim()});
-        };
-        const flushClause = () => {
-          if (!clause.length) return;
-          result.push(...CaptionLayout.paginateTimedWords(sourceText, clause, layout));
-          clause = [];
-        };
-        let previousWord = null;
-        for (const word of displayWords) {
-          if (previousWord && (s.previewBreaks || []).some(cut => previousWord.end <= cut && cut < word.end)) {
-            flushClause();
-            previewEdges.add(word.beg);
-          }
-          clause.push(word);
-          if (/[。.!?！？]$/.test(sourceText.slice(word.rawStart, word.rawEnd)))
-            flushClause();
-          previousWord = word;
-        }
-        flushClause();
+      if (aligned && alignedWords.length) {
+        const result = CaptionLayout.paginateTimedWords(sourceText, alignedWords,
+          {...layout, breakTimes:s.previewBreaks || []});
         // Join tiny punctuation fragments to adjacent speech, never extend them
         // past the source interval or carry them over unrelated speech.
         for (let i = 0; i < result.length && result.length > 1; i++) {
           if (result[i].end - result[i].beg >= .6) continue;
           const first = i + 1 < result.length ? i : i - 1;
           const left = result[first], right = result[first + 1];
-          if (previewEdges.has(right.beg)) continue;
+          if ((s.previewBreaks || []).some(cut => left.end <= cut && cut < right.end)) continue;
           if (right.beg - left.end > .15 || right.end - left.beg > 6) continue;
           const merged = CaptionLayout.paginateText(`${left.text} ${right.text}`, layout);
           if (merged.length !== 1) continue;
@@ -737,6 +694,23 @@
 
     const beg = Number.isFinite(s.beg) ? s.beg : null;
     const end = Number.isFinite(s.end) && s.end > beg ? s.end : null;
+    if (Number.isFinite(beg) && Number.isFinite(end) && sourceText.trim()) {
+      // Missing word times retain the existing estimated timing fallback.
+      const totalWidth = Math.max(1, layout.measureText(sourceText));
+      let rawOffset = 0;
+      let elapsed = beg;
+      const estimatedWords = Array.from(sourceText, char => {
+        const rawStart = rawOffset;
+        rawOffset += char.length;
+        const start = elapsed;
+        elapsed = rawOffset === sourceText.length ? end
+          : Math.min(end, elapsed + (end - beg) * layout.measureText(char) / totalWidth);
+        return {beg:start, end:elapsed, rawStart, rawEnd:rawOffset};
+      });
+      return rememberCaptionSegments(s, cacheKey,
+        CaptionLayout.paginateTimedWords(sourceText, estimatedWords, layout)
+          .map(page => ({...page, timing:'estimated'})));
+    }
     const rawParts = (s.text.match(/[^.!?。！？]+[.!?。！？]?/g) || [s.text])
       .map(part => part.trim()).filter(Boolean);
     const parts = rawParts.flatMap(part => CaptionLayout.paginateText(part, layout));
@@ -833,7 +807,7 @@
         && s.captionBeg <= t && s.captionEnd > t && s.text.trim())
         .sort((a, b) => a.captionBeg - b.captionBeg);
     if (!candidates.length) {
-      candidates = previewSubs.filter(s => !s.retired && s.beg <= t && s.end > t)
+      candidates = previewSubs.filter(s => !s.retired && s.text.trim() && s.beg <= t && s.end > t)
         .flatMap((s, index) => captionSegments(s).map((segment, segmentIndex) => ({
           ...s, text:segment.text, previewSource:s,
           sourceId:`preview-${s.sentenceId ?? index}`, segmentIndex,
@@ -1096,11 +1070,69 @@
   }
 
   function onPreview(msg) {
-    if (!msg.text || !Number.isFinite(msg.beg) || !Number.isFinite(msg.end)) return;
-    previewSubs.push({beg:msg.beg, end:msg.end, text:msg.text, words:msg.words,
-      sentenceId:msg.sentence_id});
+    if (typeof msg.text !== 'string' || !Number.isFinite(msg.beg) || !Number.isFinite(msg.end)) return null;
+    let cue;
+    const sourceChars = typeof msg.source_text === 'string' ? Array.from(msg.source_text) : [];
+    const hasRange = msg.sentence_id != null && msg.commit_id != null
+      && Number.isInteger(msg.source_start) && Number.isInteger(msg.source_end)
+      && msg.source_start >= 0 && msg.source_end >= msg.source_start && msg.source_end <= sourceChars.length
+      && sourceChars.slice(msg.source_start, msg.source_end).join('') === msg.text;
+    if (hasRange) {
+      cue = previewSubs.find(item => item.sentenceId === msg.sentence_id && item.previewCommits);
+      if (!cue) {
+        cue = {sentenceId:msg.sentence_id, previewCommits:[]};
+        previewSubs.push(cue);
+      }
+      if ((cue.sourceRevision ?? -1) > (msg.revision ?? 0) && cue.source_text !== msg.source_text)
+        return cue.text ? cue : null;
+      cue.sourceRevision = Math.max(cue.sourceRevision ?? -1, msg.revision ?? 0);
+      const old = cue.previewCommits.findIndex(item => item.commit_id === msg.commit_id);
+      if (old >= 0 && (cue.previewCommits[old].revision ?? 0) > (msg.revision ?? 0))
+        return cue.text ? cue : null;
+      if (old >= 0) cue.previewCommits.splice(old, 1);
+      cue.previewCommits.push(msg);
+      const commits = cue.previewCommits.filter(item => item.text
+        && sourceChars.slice(item.source_start, item.source_end).join('') === item.text)
+        .sort((left, right) => left.source_start - right.source_start);
+      const contiguous = [];
+      let rangeEnd = commits[0]?.source_start ?? msg.source_start;
+      for (const commit of commits) {
+        if (commit.source_start !== rangeEnd) break;
+        contiguous.push(commit);
+        rangeEnd = commit.source_end;
+      }
+      const rangeStart = contiguous[0]?.source_start ?? rangeEnd;
+      const safe = CaptionLayout.completeRange(msg.source_text, rangeStart, rangeEnd);
+      const normalize = text => text.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+      const before = normalize(sourceChars.slice(rangeStart, safe.start).join('')).length;
+      const through = normalize(sourceChars.slice(rangeStart, safe.end).join('')).length;
+      let offset = 0;
+      const timedWords = contiguous.flatMap(item => item.words || []).filter(word => {
+        if (!Array.isArray(word) || typeof word[2] !== 'string') return false;
+        const start = offset;
+        offset += normalize(word[2]).length;
+        return start >= before && offset <= through;
+      });
+      const displayed = currentEl.originalPage;
+      if (displayed?.source === cue && player.currentTime >= displayed.beg && player.currentTime < displayed.end)
+        cue.previewBreaks = [...new Set([...(cue.previewBreaks || []), displayed.end])];
+      cue.text = sourceChars.slice(safe.start, safe.end).join('');
+      cue.words = timedWords;
+      cue.beg = timedWords[0]?.[0] ?? contiguous[0]?.beg ?? msg.beg;
+      cue.end = timedWords.at(-1)?.[1] ?? contiguous.at(-1)?.end ?? msg.end;
+      cue.source_text = msg.source_text;
+      cue.source_start = safe.start;
+      cue.source_end = safe.end;
+      if (displayed?.source === cue && (!cue.text || cue.end < displayed.end)) currentEl.originalPage = null;
+      captionSegmentCache.delete(cue);
+    } else {
+      if (!msg.text) return null;
+      cue = {beg:msg.beg, end:msg.end, text:msg.text, words:msg.words, sentenceId:msg.sentence_id};
+      previewSubs.push(cue);
+    }
     if (previewSubs.length > 200) previewSubs.shift();
     syncSubtitle();
+    return cue.text.trim() ? cue : null;
   }
 
   // Decoder PTS and hls.js initPTS refer to the same encoded media clock.
@@ -1213,6 +1245,8 @@
     }
     cloudPlayback = !sharedViewerActive && engineEl.value === 'aliyun-funasr';
     originalCaptionMode = cloudPlayback;
+    if (originalCaptionMode && !preserveLiveMedia)
+      playbackGuard.prepare({now:performance.now(),maxWaitMs:15000});
     logEvent('connect', url.slice(0, 120));
     // 旧会话清理：不关旧 WS 则旧 worker 继续推流串字幕；
     // uiPaused 不重置则新会话字幕全被丢弃 → 自动播放死锁、画面卡在上一视频末帧
@@ -1506,13 +1540,11 @@
           }
         }
       } else if (msg.type === 'preview') {
-        onPreview(msg);
-        if (msg.text && Number.isFinite(msg.beg) && Number.isFinite(msg.end)) {
-          const sentence = subs.find(s => s.sentenceId === msg.sentence_id);
-          playbackGuard.captionProgress(msg.sentence_id, sentence?.beg ?? msg.beg,
-            msg.end, performance.now());
+        const cue = onPreview(msg);
+        if (cue) {
+          playbackGuard.captionProgress(msg.sentence_id, cue.beg, cue.end, performance.now());
           captionHasSpeech = true;
-          if (originalCaptionMode) markSessionRecoveryProgress(msg.end);
+          if (originalCaptionMode) markSessionRecoveryProgress(cue.end);
         }
       } else if (msg.type === 'buffer') {
         if (Number.isFinite(msg.local_silence_from) && Number.isFinite(msg.local_silence_through)) {
@@ -1676,6 +1708,7 @@
       const action = playbackGuard.tick({now:performance.now(), time:player.currentTime,
         limit:(useCaptionBuffer || playbackGuard.live) ? limit : null,
         ready:playStarted, userPaused:uiPaused, sourceBuffering:sourceBufferingSince != null});
+      if (action === 'preparation_timeout') { showRecognitionFailure('字幕准备超时，已停止新音频处理。可重试或仅播放。'); return; }
       if (action === 'timeout') { showRecognitionFailure('识别 15 秒没有进展，已停止新音频处理。可重试或仅播放。'); return; }
       if (action === 'hold') {
         holdingForBuffer = true;

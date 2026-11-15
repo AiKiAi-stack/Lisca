@@ -341,6 +341,64 @@ test('stable previews paginate with speech word times rather than text-length ti
    assert.equal(b.current.textContent,segment.text);
  }
 });
+test('timeout ranges retain an incomplete Chinese tail and join its next commit without replay',()=>{
+ const b=browser({playerWidth:1216}),c=b.context;
+ const source='我们关注发展趋势。';
+ const words=Array.from(source,(char,i)=>[i*.2,(i+1)*.2,char]);
+ c.player.currentTime=.3;
+ const first=b.preview({sentence_id:'tail',commit_id:1,revision:1,commit_reason:'timeout',
+  source_text:source,source_start:0,source_end:5,text:'我们关注发',beg:0,end:1,words:words.slice(0,5)});
+ assert.equal(first.text,'我们关注');
+ assert.equal(first.end,.8);
+ const held=b.current.textContent;
+ const next=b.preview({sentence_id:'tail',commit_id:2,revision:2,commit_reason:'sentence_end',
+  source_text:source,source_start:5,source_end:9,text:'展趋势。',beg:1,end:1.8,words:words.slice(5)});
+ assert.equal(next.text,source);
+ assert.equal(b.current.textContent,held);
+ c.player.currentTime=1.1;b.tick(0);
+ assert.equal(b.current.textContent.replace(/\s/gu,''),'发展趋势。');
+ const pages=c.captionSegments(next);
+ assert.equal(pages.map(page=>page.text).join('').replace(/\s/gu,''),source);
+ assert.deepEqual(Array.from(pages,page=>[page.beg,page.end]),[[0,.8],[.8,1.8]]);
+});
+test('a timeout keeps complete stable words visible without another callback',()=>{
+ for(const source of ['Hello','发展','Hello.','发展。']) {
+  const b=browser({playerWidth:1216}),c=b.context;
+  const text=source.replace(/[.。]$/u,'');
+  c.player.currentTime=.5;
+  const visible=b.preview({sentence_id:'one-word',commit_id:1,revision:1,commit_reason:'timeout',
+   source_text:source,source_start:0,source_end:Array.from(text).length,text,beg:0,end:2,
+   words:[[0,2,text]]});
+  assert.equal(visible?.text,text,source);
+  b.tick(1200);
+  assert.equal(b.current.textContent,text,source);
+ }
+});
+test('an older timeout context cannot replace a newer sentence correction',()=>{
+ const b=browser({playerWidth:1216}),c=b.context;c.player.currentTime=.1;
+ const update=(revision,source,commitId,start,end)=>b.preview({sentence_id:'revised-tail',
+  commit_id:commitId,revision,commit_reason:'timeout',source_text:source,source_start:start,source_end:end,
+  text:Array.from(source).slice(start,end).join(''),beg:start*.2,end:end*.2,
+  words:Array.from(source).slice(start,end).map((char,i)=>[(start+i)*.2,(start+i+1)*.2,char])});
+ update(1,'我们关注发展。',1,0,4);
+ const corrected=update(3,'我们关心发展。',1,0,4);
+ assert.equal(corrected.text,'我们关心');
+ update(2,'我们关注发展。',2,4,7);
+ assert.equal(corrected.text,'我们关心');
+ update(4,'我们关心发展。',2,4,7);
+ assert.equal(corrected.text,'我们关心发展。');
+});
+test('an empty preview revision retracts its commit and rejects its older duplicate',()=>{
+ const b=browser({playerWidth:1216}),c=b.context;c.player.currentTime=.5;
+ const first={sentence_id:'removed-commit',commit_id:1,revision:1,commit_reason:'timeout',
+  source_text:'我们关注',source_start:0,source_end:4,text:'我们关注',beg:0,end:2,words:[[0,2,'我们关注']]};
+ b.preview(first);
+ assert.ok(b.current.textContent);
+ assert.equal(b.preview({...first,revision:3,source_end:0,text:'',words:[]}),null);
+ assert.equal(b.current.textContent,'');
+ assert.equal(b.preview(first),null);
+ assert.equal(b.current.textContent,'');
+});
 test('a final revision does not replace an already visible preview for its last 100ms',()=>{
  const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
  c.player.currentTime=.5;
@@ -414,6 +472,16 @@ test('word-timed original pages retain quotes, punctuation, and symbols outside 
  const words=Array.from(text.matchAll(/[\p{L}\p{N}]+/gu),(match,index)=>[index*.2,index*.2+.15,match[0]]);
  const segments=b.context.captionSegments({beg:0,end:10,text,words});
  assertOriginalPages(b,segments,text);
+});
+test('the original-caption entry point keeps decimal model names and quantities complete',()=>{
+ const b=browser({playerWidth:260,fontSize:30});
+ const text="今天达到25℃，OpenAI's GPT-4.1达到3.5kg。";
+ const words=Array.from(text,(char,i)=>[i*.2,(i+1)*.2,char]);
+ const segments=b.context.captionSegments({beg:0,end:words.at(-1)[1],text,words});
+ assertOriginalPages(b,segments,text);
+ for(const unit of ['25℃',"OpenAI's",'GPT-4.1','3.5kg'])
+  assert.ok(segments.some(page=>page.text.split('\n').some(row=>row.includes(unit))),
+   `${unit}: ${JSON.stringify(segments)}`);
 });
 test('stable caption pages are cached and resize changes the layout key',()=>{
  const b=browser({playerWidth:260,fontSize:30});
@@ -594,6 +662,15 @@ test('original captions follow source word times rather than the translated read
 test('completed original captions resume locally without opening another billed session',()=>{const b=browser();b.context.originalCaptionsComplete=true;b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),false);assert.equal(b.context.reconnected,undefined);});
 
 function bufferBrowser(){const b=browser(),c=b.context;const {CaptionPlaybackGuard}=require('../../lisca/web/static/playback_guard.js');c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live:true});c.showCaptionRecovery=message=>{c.status=message};Object.assign(c,{sourceBufferingSince:null,useCaptionBuffer:true,originalCaptionMode:true,holdingForBuffer:false,uiPaused:false,playbackLimit:10,urlEl:{value:'https://stream.test/live.m3u8'},setStatus(t){c.status=t},audioEl:{pause(){},play(){return Promise.resolve()}},player:{currentTime:10,paused:false,pause(){this.paused=true},play(){this.paused=false;return Promise.resolve()}}});const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');vm.runInContext(html.slice(html.indexOf('function syncPlaybackToBuffer()'),html.indexOf('// 字幕整句快照')),c);return b;}
+test('preparation expiry offers recovery instead of silently keeping the player held',()=>{
+ const b=bufferBrowser(),c=b.context;
+ c.playStarted=false;c.player.currentTime=0;c.player.paused=true;
+ c.playbackGuard.prepare({now:0,maxWaitMs:15000});
+ c.showRecognitionFailure=message=>{c.failure=message;};
+ c.now=15000;c.syncPlaybackToBuffer();
+ assert.match(c.failure,/准备.*超时/);
+ assert.equal(c.playStarted,false);
+});
 test('live original captions release the playback hold after the two-second failure budget',()=>{const b=bufferBrowser();b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,true);b.context.now=2100;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,false);assert.match(b.context.status,/部分缺失|暂不可用/);b.context.now=2400;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,false);});
 test('a live source starts after the bounded wait even when no first caption or ready event arrives',()=>{const b=bufferBrowser(),c=b.context;c.playStarted=false;c.player.currentTime=0;c.player.paused=true;c.playbackLimit=5;c.playbackGuard.reset({now:0,live:true});c.now=0;c.syncPlaybackToBuffer();assert.equal(c.holdingForBuffer,true);assert.equal(c.player.paused,true);c.now=1999;c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);c.now=2000;c.syncPlaybackToBuffer();assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);assert.match(c.status,/部分缺失|暂不可用/);});
 test('an unfinished local file holds at its caption boundary rather than playing ahead',()=>{const b=bufferBrowser();b.context.urlEl.value='test.mp4';b.context.playbackGuard.live=false;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,true);});
@@ -862,6 +939,29 @@ test('draft history cannot claim visible caption coverage or announce ready',()=
  c.receiveMessage({type:'subtitle',sentence_id:900,revision:2,beg:0,end:4,
    is_final:true,text:'A stable clause, with its ending.'});
  assert.equal(covered.length,2);
+});
+
+test('preview messages release playback coverage only through their complete displayed words',()=>{
+ const {context:c,current}=shareHistoryViewer();
+ const {CaptionPlaybackGuard}=require('../../lisca/web/static/playback_guard.js');
+ c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live:false});
+ c.originalCaptionMode=true;c.sharedViewerActive=false;c.activeInput='local.mp4';c.player.currentTime=.1;
+ const source='发展趋势。',words=Array.from(source,(char,i)=>[i*.2,(i+1)*.2,char]);
+ const first={type:'preview',sentence_id:'coverage-tail',commit_id:1,revision:1,commit_reason:'timeout',
+  source_text:source,source_start:0,source_end:1,text:'发',beg:0,end:.2,words:words.slice(0,1)};
+ c.receiveMessage(first);
+ assert.equal(current.textContent,'');
+ assert.equal(c.captionHasSpeech,false);
+ assert.equal(c.playbackGuard.covers(.1),false);
+ c.receiveMessage({...first,revision:2,source_end:3,text:'发展趋',end:.6,words:words.slice(0,3)});
+ assert.equal(current.textContent,'发展');
+ assert.equal(c.playbackGuard.coversRange(0,.4),true);
+ assert.equal(c.playbackGuard.coversRange(0,.6),false);
+ c.receiveMessage({...first,commit_id:2,revision:3,commit_reason:'sentence_end',
+  source_start:3,source_end:5,text:'势。',beg:.6,end:1,words:words.slice(3)});
+ assert.equal(c.playbackGuard.coversRange(0,1),true);
+ c.player.currentTime=.7;c.syncSubtitle();
+ assert.equal(current.textContent.replace(/\s/gu,''),'趋势。');
 });
 
 test('wide original captions keep readable phrase lengths instead of filling the whole screen',()=>{
