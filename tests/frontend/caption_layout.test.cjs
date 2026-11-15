@@ -66,6 +66,62 @@ test('timed pagination keeps complete ASR words and maps pages to their actual w
  }
 });
 
+test('character timestamps paginate the complete Chinese words from the sentence',()=>{
+ const text='我们正关注未来发展趋势和后续安排';
+ const spans=Array.from(text,(_,i)=>({beg:i,end:i+1,rawStart:i,rawEnd:i+1}));
+ const pages=CaptionLayout.paginateTimedWords(text,spans,
+  {maxWidth:4,measureText:value=>Array.from(value).length,maxLines:2});
+ assert.deepEqual(pages.map(page=>page.text),['我们正\n关注未来','发展趋势\n和后续','安排']);
+ assert.deepEqual(pages.map(page=>[page.beg,page.end]),[[0,7],[7,14],[14,16]]);
+ assert.equal(withoutSpaces(pages.map(page=>page.text).join('')),text);
+});
+
+test('long prepared sentences prefer clause punctuation for their page boundary',()=>{
+ const text='我们关注发展，研究未来趋势。';
+ const options={maxWidth:6,measureText:value=>Array.from(value).length,maxLines:2};
+ const spans=Array.from(text,(_,i)=>({beg:i,end:i+1,rawStart:i,rawEnd:i+1}));
+ for(const pages of [CaptionLayout.paginateText(text,options),
+   CaptionLayout.paginateTimedWords(text,spans,options)]) {
+  assert.deepEqual(pages.map(page=>page.text),['我们关注\n发展，','研究未来\n趋势。']);
+ }
+});
+
+test('mixed captions keep quantities and named Latin spellings across rows and pages',()=>{
+ const text="今天达到25℃，OpenAI's GPT-4.1达到3.5kg。";
+ const spans=Array.from(text,(_,i)=>({beg:i,end:i+1,rawStart:i,rawEnd:i+1}));
+ for(const pages of [CaptionLayout.paginateText(text,{maxWidth:10,measureText:s=>s.length,maxLines:2}),
+   CaptionLayout.paginateTimedWords(text,spans,{maxWidth:10,measureText:s=>s.length,maxLines:2})]) {
+  assert.equal(withoutSpaces(pages.map(page=>page.text).join('')),withoutSpaces(text));
+  for(const protectedUnit of ['25℃',"OpenAI's",'GPT-4.1','3.5kg'])
+   assert.ok(pages.some(page=>page.text.split('\n').some(row=>row.includes(protectedUnit))),
+    `${protectedUnit}: ${JSON.stringify(pages)}`);
+ }
+});
+
+test('a unit wider than a whole page uses an explicit ordered grapheme fallback',()=>{
+ const text='internationalization';
+ const pages=CaptionLayout.paginateTimedWords(text,[{beg:2,end:6,rawStart:0,rawEnd:20}],
+  {maxWidth:4,measureText:value=>value.length,maxLines:2});
+ assert.deepEqual(pages.map(page=>page.text),['inte\nrnat','iona\nliza','tion']);
+ assert.equal(pages[0].beg,2);
+ assert.equal(pages.at(-1).end,6);
+ for(let index=0;index<pages.length;index++) {
+  assert.equal(pages[index].splitUnit,true);
+  assert.equal(pages[index].timing,'estimated');
+  if(index) assert.equal(pages[index].beg,pages[index-1].end);
+ }
+});
+
+test('Chinese measurement units stay attached to their quantity',()=>{
+ const text='每组需要25公斤，客流达到100多组。';
+ const options={maxWidth:5,measureText:value=>value.length,maxLines:2};
+ const spans=Array.from(text,(_,i)=>({beg:i,end:i+1,rawStart:i,rawEnd:i+1}));
+ for(const pages of [CaptionLayout.paginateText(text,options),CaptionLayout.paginateTimedWords(text,spans,options)])
+  for(const unit of ['25公斤','100多组'])
+   assert.ok(pages.some(page=>page.text.split('\n').some(row=>row.includes(unit))),
+    `${unit}: ${JSON.stringify(pages)}`);
+});
+
 test('cold long-caption pagination stays bounded and preserves every word',()=>{
  const modulePath=JSON.stringify(require.resolve('../../lisca/web/static/caption_presenter.js'));
  const script=`
