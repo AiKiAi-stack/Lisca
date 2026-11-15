@@ -47,7 +47,7 @@ EVENT_FIELDS = {
     "timeline": ("audio_pts",),
     "buffer": ("play_at", "local_silence_from", "local_silence_through"),
     "ready": ("delay", "start_at", "original", "buffered", "silent", "prepared",
-              "progressive"),
+              "progressive", "prepare_ahead_sec"),
     "error": ("failure_category", "retryable"),
     "end": ("reason",),
 }
