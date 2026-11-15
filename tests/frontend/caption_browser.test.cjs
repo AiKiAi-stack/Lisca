@@ -62,7 +62,7 @@ function lateHlsClockViewer(){
    preserveLiveMedia:true,originalCaptionMode:true,sharedViewerActive:false,isHls:true,
    audioClockPts:null,videoClockPts:null,hlsVideoClockPts:null,timelineMapped:false,mediaOffset:0,
    queuedMediaMessages:[],captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:1000,
-   captionHasSpeech:false,originalCaptionsComplete:false,playbackLimit:null,
+   captionHasSpeech:false,originalCaptionsComplete:false,playbackLimit:null,playStarted:true,
    playbackGuard:{live:true,degraded:false,done:false,captionProgress(){},removeCaption(){}},
    recoveryController:new RecoveryController(),stallWatchdog(){},markSessionRecoveryProgress(){},
    syncPlaybackToBuffer(){},useCaptionBuffer:true,aligningInitialPlayback:false,
@@ -81,9 +81,6 @@ function lateHlsClockViewer(){
  const identityStart=html.indexOf('  function scopeSessionCaptionIdentity(');
  const identityEnd=html.indexOf('\n\n  async function connect(',identityStart);
  vm.runInContext(html.slice(identityStart,identityEnd),c);
- const receiveStart=html.indexOf('    function receiveMessage(input) {');
- const receiveEnd=html.indexOf('    ws.onmessage = ',receiveStart);
- vm.runInContext(html.slice(receiveStart,receiveEnd),c);
  return {context:c,current:b.current};
 }
 function socketRecoveryBrowser(eventName,status='scheduled'){
@@ -399,6 +396,24 @@ test('an empty preview revision retracts its commit and rejects its older duplic
  assert.equal(b.preview(first),null);
  assert.equal(b.current.textContent,'');
 });
+test('long cumulative preview delivery retains linear data while displaying every committed word',t=>{
+ const observe=count=>{
+  const b=browser({playerWidth:1216}),c=b.context;c.player.currentTime=.1;
+  let cue;
+  for(let i=1;i<=count;i++)cue=b.preview({sentence_id:'long',commit_id:i,revision:i,
+   source_text:'readable '.repeat(i),source_start:(i-1)*9,source_end:i*9,text:'readable ',
+   beg:i-1,end:i,words:[[i-1,i,'readable']]});
+  const visible=[];
+  for(const page of c.captionSegments(cue)){
+   c.player.currentTime=(page.beg+page.end)/2;b.tick(0);visible.push(b.current.textContent);
+  }
+  assert.equal(visible.join('').replace(/\s/gu,''),'readable'.repeat(count));
+  return Buffer.byteLength(JSON.stringify(cue));
+ };
+ const small=observe(64),large=observe(128);
+ t.diagnostic(`retained preview bytes: 64 commits=${small}, 128 commits=${large}`);
+ assert.ok(large<small*2.5,`retained preview bytes grew from ${small} to ${large}`);
+});
 test('a final revision does not replace an already visible preview for its last 100ms',()=>{
  const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
  c.player.currentTime=.5;
@@ -409,6 +424,35 @@ test('a final revision does not replace an already visible preview for its last 
   words:[[0,1,'We'],[1,1.5,'are'],[1.5,2.5,'already'],[2.5,3,'ready.'],[3,3.5,'Next'],[3.5,5,'words.']]});
  assert.equal(b.current.textContent,'We are ready.');
  c.player.currentTime=3.1;b.tick(0);
+ assert.equal(b.current.textContent,'Next words.');
+});
+test('a final arriving before the preview is visible repaginates the complete 女尸 word',()=>{
+ const text='广州女大学生登山失联4天，警方找到疑似女尸。';
+ const words=[[.76,1.36,'广州'],[1.36,1.64,'女'],[1.64,2.68,'大学生'],[2.68,4.12,'登山'],
+  [4.24,4.52,'失'],[4.52,5.12,'联'],[5.2,5.56,'4'],[5.56,5.92,'天'],[6.44,7.2,'警'],
+  [7.2,7.426,'方'],[7.426,7.653,'找'],[7.653,7.88,'到'],[7.88,8.44,'疑似'],[8.44,8.76,'女'],[8.76,9.16,'尸']];
+ for(const reading of [false,true]){
+  const b=browser({playerWidth:reading?288:1216,cssMaxWidth:'24em'}),c=b.context;
+  c.player.currentTime=reading?1:0;c.player.paused=!reading;c.playStarted=reading;
+  b.preview({sentence_id:1,commit_id:0,revision:11,source_text:text.slice(0,-1),
+   source_start:0,source_end:20,beg:.6,end:8.76,text:text.slice(0,-2),words:words.slice(0,-1)});
+  const active=b.current.textContent;
+  b.push({translated:false,sentence_id:1,revision:12,beg:.76,end:9.16,text,words});
+  if(reading)assert.equal(b.current.textContent,active,'the already visible first page stays stable');
+  c.playStarted=true;c.player.paused=false;c.player.currentTime=8.9;b.tick(0);
+  assert.ok(b.current.textContent.split('\n').some(row=>row.includes('女尸')),b.current.textContent);
+  assert.notEqual(b.current.textContent,'尸。');
+  const pages=c.captionSegments(c.subs[0]);
+  assert.equal(pages.map(p=>p.text).join('').replace(/\s/gu,''),text);
+ }
+});
+test('a final arriving after a preview page ended continues past the consumed words',()=>{
+ const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
+ c.player.currentTime=.5;
+ b.preview({sentence_id:7,beg:0,end:3,text:'We are ready.',words:[[0,1,'We'],[1,2,'are'],[2,3,'ready.']]});
+ c.player.currentTime=3.1;b.tick(0);assert.equal(b.current.textContent,'');
+ b.push({translated:false,sentence_id:7,beg:0,end:5,text:'We are already ready. Next words.',
+  words:[[0,1,'We'],[1,1.5,'are'],[1.5,2.5,'already'],[2.5,3,'ready.'],[3,3.5,'Next'],[3.5,5,'words.']]});
  assert.equal(b.current.textContent,'Next words.');
 });
 test('real final handoffs keep only table and 阶段 after their held previews',()=>{
@@ -917,6 +961,7 @@ test('late first ready never rewinds an already playing live source, but initial
   const {context:c}=lateHlsClockViewer();
   c.preserveLiveMedia=state.preserve;c.playStarted=state.started;
   c.playbackGuard.live=state.live;c.player.currentTime=40.833;
+  c.receiveMessage({type:'preview',sentence_id:'aligned',beg:35.160,end:38,text:'Prepared sentence.'});
   c.receiveMessage({type:'ready',original:true,buffered:true,start_at:35.160});
   assert.equal(c.player.currentTime,state.expected,JSON.stringify(state));
   assert.equal(c.playStarted,true);
@@ -962,6 +1007,127 @@ test('preview messages release playback coverage only through their complete dis
  assert.equal(c.playbackGuard.coversRange(0,1),true);
  c.player.currentTime=.7;c.syncSubtitle();
  assert.equal(current.textContent.replace(/\s/gu,''),'趋势。');
+});
+
+function preparingMessageBrowser({live=false}={}){
+ const b=shareHistoryViewer(),c=b.context;
+ const {CaptionPlaybackGuard}=require('../../lisca/web/static/playback_guard.js');
+ c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live});
+ c.playbackGuard.prepare({now:0,maxWaitMs:15000});
+ Object.assign(c,{cloudPlayback:true,originalCaptionMode:true,sharedViewerActive:false,
+  activeInput:live?'https://stream.test/live.m3u8':'local.mp4',isHls:live,
+  sourceBufferingSince:null,useCaptionBuffer:true,playbackLimit:null,uiPaused:false,
+  urlEl:{value:'local.mp4'},now:0,performance:{now:()=>c.now},
+  audioEl:{pause(){}},showRecognitionFailure(message){c.failure=message;},
+  markSessionRecoveryProgress(){},setTimeout(){return 1;},
+  player:{currentTime:0,paused:true,playCalls:0,pause(){this.paused=true;},
+   play(){this.paused=false;this.playCalls++;return Promise.resolve();}}});
+ const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
+ vm.runInContext(html.slice(html.indexOf('function syncPlaybackToBuffer()'),html.indexOf('// 字幕整句快照')),c);
+ return b;
+}
+
+test('ready holds a retained half-word until a complete preview arrives',()=>{
+ const {context:c}=preparingMessageBrowser();
+ const source='发展趋势。',words=Array.from(source,(char,i)=>[i*.2,(i+1)*.2,char]);
+ const first={type:'preview',sentence_id:'first',commit_id:1,revision:1,
+  source_text:source,source_start:0,source_end:1,text:'发',beg:0,end:.2,words:words.slice(0,1)};
+ c.receiveMessage(first);
+ c.receiveMessage({type:'buffer',play_at:.4});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+ c.now=100;c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,true,'a server-ready half-word must not start the media');
+ assert.equal(c.playStarted,false);
+ c.receiveMessage({...first,revision:2,source_end:2,text:'发展',end:.4,words:words.slice(0,2)});
+ c.now=200;c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,false,'the remembered ready must release a later complete word');
+ c.syncSubtitle();assert.equal(c.currentEl.textContent,'发展');
+});
+
+test('a shortened preview limits playback even when the server buffer still covers its old tail',()=>{
+ const {context:c}=preparingMessageBrowser();
+ const source='发展趋势。',words=Array.from(source,(char,i)=>[i*.2,(i+1)*.2,char]);
+ const first={type:'preview',sentence_id:'shortened',commit_id:1,revision:1,
+  source_text:source,source_start:0,source_end:4,text:'发展趋势',beg:0,end:.8,words:words.slice(0,4)};
+ c.receiveMessage(first);c.receiveMessage({type:'buffer',play_at:2});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+ c.syncPlaybackToBuffer();assert.equal(c.player.paused,false);
+ c.receiveMessage({...first,revision:2,source_end:3,text:'发展趋',end:.6,words:words.slice(0,3)});
+ c.player.currentTime=.39;c.now=200;c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,true,'the raw .6s tail and historical .8s coverage cannot release the retained word');
+});
+
+test('future silence or another sentence cannot release a retained incomplete word',()=>{
+ for(const future of ['silence','caption']){
+  const {context:c}=preparingMessageBrowser();
+  c.receiveMessage({type:'preview',sentence_id:'retained',commit_id:1,revision:1,
+   source_text:'发展趋势。',source_start:0,source_end:3,text:'发展趋',beg:0,end:.6,
+   words:[[0,.2,'发'],[.2,.4,'展'],[.4,.6,'趋']]});
+  if(future==='caption')c.receiveMessage({type:'subtitle',sentence_id:'future',revision:1,
+   beg:5,end:7,text:'Future sentence.',is_final:true});
+  c.receiveMessage({type:'buffer',play_at:1,
+   ...(future==='silence'?{local_silence_from:5,local_silence_through:7}:{})});
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});c.syncPlaybackToBuffer();
+  c.player.currentTime=.39;c.now=200;c.syncPlaybackToBuffer();
+  assert.equal(c.player.paused,true,future);
+ }
+});
+
+test('an empty preview correction withdraws its previously playable range',()=>{
+ const {context:c}=preparingMessageBrowser();
+ const first={type:'preview',sentence_id:'withdrawn',commit_id:1,revision:1,
+  source_text:'发展趋势。',source_start:0,source_end:4,text:'发展趋势',beg:0,end:.8,
+  words:[[0,.4,'发展'],[.4,.8,'趋势']]};
+ c.receiveMessage(first);c.receiveMessage({type:'buffer',play_at:2});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});c.syncPlaybackToBuffer();
+ c.receiveMessage({...first,revision:2,source_end:0,text:'',words:[]});
+ c.player.currentTime=.1;c.now=200;c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,true);
+ c.syncSubtitle();assert.equal(c.currentEl.textContent,'');
+});
+
+test('a remembered ready accepts a later final or verified silence without inventing a caption',()=>{
+ for(const silent of [false,true]){
+  const {context:c}=preparingMessageBrowser();
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,silent});
+  assert.equal(c.player.paused,true);
+  if(silent)c.receiveMessage({type:'buffer',play_at:2,local_silence_from:0,local_silence_through:2});
+  else {
+   c.receiveMessage({type:'subtitle',sentence_id:'late-final',revision:1,beg:0,end:2,
+    is_final:true,text:'发展趋势。',words:[[0,1,'发展'],[1,2,'趋势。']]});
+   c.receiveMessage({type:'buffer',play_at:2});
+  }
+  c.syncPlaybackToBuffer();c.syncSubtitle();
+  assert.equal(c.player.paused,false);
+  assert.equal(c.currentEl.textContent,silent?'':'发展趋势。');
+ }
+});
+
+test('retained half-words keep the original preparation deadline and ignore cancelled generations',()=>{
+ for(const live of [false,true])for(const cancel of ['source','stop']){
+  const {context:c}=preparingMessageBrowser({live});
+  c.receiveMessage({type:'preview',sentence_id:'half',commit_id:1,revision:1,beg:0,end:.2,
+   source_text:'发展趋势。',source_start:0,source_end:1,text:'发',words:[[0,.2,'发']]});
+  c.receiveMessage({type:'buffer',play_at:5});
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+  c.now=14999;c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);
+  c.now=15000;c.syncPlaybackToBuffer();assert.match(c.failure,/准备.*超时/);
+  if(cancel==='source')c.connectionGeneration++;else c.recognitionOnlyStopped=true;
+  c.receiveMessage({type:'subtitle',sentence_id:'half',revision:2,beg:0,end:2,text:'发展趋势。',is_final:true});
+  assert.equal(c.playStarted,false);
+ }
+});
+
+test('the prepared playback ceiling permits a normal pause between two accepted sentences',()=>{
+ const {context:c}=preparingMessageBrowser();
+ for(const [id,beg,end,text] of [[1,0,1,'First sentence.'],[2,1.6,3,'Next sentence.']])
+  c.receiveMessage({type:'subtitle',sentence_id:id,revision:1,beg,end,text,is_final:true});
+ c.receiveMessage({type:'buffer',play_at:3});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});c.syncPlaybackToBuffer();
+ c.player.currentTime=1.3;c.syncPlaybackToBuffer();c.syncSubtitle();
+ assert.equal(c.player.paused,false);assert.equal(c.currentEl.textContent,'');
+ c.receiveMessage({type:'caption_remove',sentence_id:2,revision:2});c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,true,'removing future speech must also retract its playback ceiling');
 });
 
 test('wide original captions keep readable phrase lengths instead of filling the whole screen',()=>{

@@ -54,6 +54,12 @@
         result[result.length - 1] += token;
         continue;
       }
+      if (previous && !opening && /^\p{Script=Han}$/u.test(token)
+          && /^\p{Script=Han}$/u.test(tokens[index - 1] || '')
+          && /^[\p{Ps}\p{Pi}]*\p{Script=Han}$/u.test(previous)) {
+        result[result.length - 1] += token;
+        continue;
+      }
       if (/^[,.;:!?，。！？；：、\p{Pe}\p{Pf}…]+$/u.test(token) && result.length) {
         let gap = '';
         if (/^\s+$/u.test(result[result.length - 1])) gap = result.pop();

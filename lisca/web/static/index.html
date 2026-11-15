@@ -841,6 +841,7 @@
       if (sourceText) currentEl.textContent = sourceText + '\n' + currentEl.textContent;
     }
     const preview = candidates.length === 1 ? candidates[0] : null;
+    if (preview?.previewSource) preview.previewSource.visibleThrough = preview.captionEnd;
     currentEl.originalPage = preview?.previewSource ? {
       source:preview.previewSource, beg:preview.captionBeg, end:preview.captionEnd,
       text:currentEl.textContent, at:t, layoutKey:captionLayoutOptions().key,
@@ -1051,11 +1052,13 @@
           ? s.sentenceId === msg.sentence_id
           : !(s.end < msg.beg || (Number.isFinite(msg.end) && s.beg > msg.end));
         if (!replaced) return true;
-        if (Number.isFinite(s.end)) previewBreaks.push(s.end);
+        if (Number.isFinite(s.visibleThrough) && s.visibleThrough <= player.currentTime)
+          previewBreaks.push(s.visibleThrough);
         if (displayed?.source === s) {
           displayed.beg = Math.max(displayed.beg, msg.beg);
           if (Number.isFinite(msg.end)) displayed.end = Math.min(displayed.end, msg.end);
           if (displayed.beg <= player.currentTime && player.currentTime < displayed.end) {
+            previewBreaks.push(displayed.end);
             s.retired = true;
             return true;
           }
@@ -1090,9 +1093,12 @@
       if (old >= 0 && (cue.previewCommits[old].revision ?? 0) > (msg.revision ?? 0))
         return cue.text ? cue : null;
       if (old >= 0) cue.previewCommits.splice(old, 1);
-      cue.previewCommits.push(msg);
-      const commits = cue.previewCommits.filter(item => item.text
-        && sourceChars.slice(item.source_start, item.source_end).join('') === item.text)
+      const {commit_id, revision, source_start, source_end, text, words, beg, end} = msg;
+      cue.previewCommits.push({commit_id, revision, source_start, source_end, text, words, beg, end});
+      cue.previewCommits = cue.previewCommits.map(item => !item.text
+        || sourceChars.slice(item.source_start, item.source_end).join('') === item.text
+        ? item : {commit_id:item.commit_id, revision:item.revision});
+      const commits = cue.previewCommits.filter(item => item.text)
         .sort((left, right) => left.source_start - right.source_start);
       const contiguous = [];
       let rangeEnd = commits[0]?.source_start ?? msg.source_start;
@@ -1123,6 +1129,7 @@
       cue.source_text = msg.source_text;
       cue.source_start = safe.start;
       cue.source_end = safe.end;
+      cue.unpreparedFrom = !cue.text.trim() ? cue.beg : safe.end < rangeEnd ? cue.end : null;
       if (displayed?.source === cue && (!cue.text || cue.end < displayed.end)) currentEl.originalPage = null;
       captionSegmentCache.delete(cue);
     } else {
@@ -1545,7 +1552,8 @@
           playbackGuard.captionProgress(msg.sentence_id, cue.beg, cue.end, performance.now());
           captionHasSpeech = true;
           if (originalCaptionMode) markSessionRecoveryProgress(cue.end);
-        }
+        } else if (previewSubs.some(s => s.sentenceId === msg.sentence_id && !s.text?.trim()))
+          playbackGuard.removeCaption(msg.sentence_id);
       } else if (msg.type === 'buffer') {
         if (Number.isFinite(msg.local_silence_from) && Number.isFinite(msg.local_silence_through)) {
           playbackGuard.verifiedSilence(msg.local_silence_from, msg.local_silence_through, performance.now());
@@ -1563,6 +1571,15 @@
           playbackLimit = null;
           setStatus('播放已开始，正在识别并翻译；当前句可能修订');
         }
+        const start = Number.isFinite(msg.start_at) ? msg.start_at : player.currentTime;
+        if (originalCaptionMode && !sharedViewerActive && !playStarted
+            && ![...subs.filter(s => s.isFinal !== false), ...previewSubs]
+              .some(s => s.text?.trim() && s.end > Math.max(s.beg, start))
+            && !(playbackGuard.silenceSpans || []).some(s => s.beg <= start + .15 && s.end > start)) {
+          pendingReady = input;
+          return;
+        }
+        pendingReady = null;
         // 音视频一起从输入进度前方 delay 秒启动；后续 buffer 消息持续控制播放上限。
         if (!preserveLiveMedia && !sharedViewerActive && isHls
             && !(playbackGuard.live && playStarted) && Number.isFinite(msg.start_at)) {
@@ -1647,7 +1664,10 @@
         }
         ws.close(1000, 'terminal-end');
       }
+      if (pendingReady && ['subtitle', 'preview', 'buffer'].includes(msg.type))
+        receiveMessage(pendingReady);
     }
+    let pendingReady = null;
     ws.onmessage = (e) => receiveMessage(JSON.parse(e.data));
     function scheduleRecognitionSocketRecovery(exhaustedMessage) {
       const recovery = scheduleSessionRecovery('recognition', true, () => {
@@ -1703,7 +1723,9 @@
 
   function syncPlaybackToBuffer() {
     if (cloudPlayback && originalCaptionMode) {
-      const limit = Number.isFinite(playbackLimit) ? playbackLimit
+      const limit = Number.isFinite(playbackLimit) ? Math.min(playbackLimit,
+        Math.max(player.currentTime, ...playbackGuard.allCoverageSpans().map(span => span.end)),
+        ...previewSubs.filter(s => !s.retired && Number.isFinite(s.unpreparedFrom)).map(s => s.unpreparedFrom))
         : playbackGuard.live && player.readyState >= 2 ? player.currentTime : null;
       const action = playbackGuard.tick({now:performance.now(), time:player.currentTime,
         limit:(useCaptionBuffer || playbackGuard.live) ? limit : null,
