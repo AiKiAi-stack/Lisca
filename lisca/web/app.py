@@ -165,7 +165,7 @@ async def create_cloud_session(request: Request):
             if not math.isfinite(sentence_wait_sec) or not 0 < sentence_wait_sec <= 30:
                 raise CloudError("LISCA_SENTENCE_WAIT_SEC 必须是大于 0 且不超过 30 的有限秒数")
             try:
-                live_prepare_ahead_sec = float(os.environ.get("LISCA_LIVE_PREPARE_AHEAD_SEC", "0"))
+                live_prepare_ahead_sec = float(os.environ.get("LISCA_LIVE_PREPARE_AHEAD_SEC", "10"))
             except ValueError:
                 raise CloudError("LISCA_LIVE_PREPARE_AHEAD_SEC 必须是 0 到 30 之间的有限秒数") from None
             if not math.isfinite(live_prepare_ahead_sec) or not 0 <= live_prepare_ahead_sec <= 30:

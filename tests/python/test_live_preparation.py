@@ -31,13 +31,15 @@ def test_transcribe_session_rejects_invalid_live_preparation_candidate(client, m
 @pytest.mark.parametrize("url,audio_seconds,value,expected", [
     ("https://media.test/live.m3u8", 1.0, "10", 10.0),
     ("https://media.test/live.m3u8", 0.2, "10", 10.0),
-    ("https://media.test/live.m3u8", 1.0, None, 0.0),
+    ("https://media.test/live.m3u8", 1.0, None, 10.0),
     ("https://media.test/live.m3u8", 1.0, "0", 0.0),
     ("https://media.test/live.m3u8", 1.0, "30", 30.0),
     ("local", 1.0, "10", 0.0),
     ("local", 0.2, "10", 0.0),
+    ("local", 1.0, None, 0.0),
     ("https://media.test/video.mp4", 1.0, "10", 0.0),
     ("https://media.test/video.mp4", 0.2, "10", 0.0),
+    ("https://media.test/video.mp4", 1.0, None, 0.0),
 ])
 def test_ready_scopes_the_session_preparation_candidate_to_original_live_hls(
         client, tmp_path, monkeypatch, url, audio_seconds, value, expected):
