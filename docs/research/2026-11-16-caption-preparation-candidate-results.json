@@ -1,0 +1,223 @@
+{
+  "date": "2026-11-16",
+  "sentence_wait_sec": 6,
+  "live_prepare_ahead_sec_candidate": 10,
+  "first_preparation_budget_ms": 15000,
+  "live_fault_session_budget_ms": 2000,
+  "budgets_confirmed": false,
+  "cases": [
+    {
+      "label": "zh-local-reserve10-20261116-01",
+      "language": "zh",
+      "input_kind": "local",
+      "candidate": "be7d96ac005f6157e3c44533b1801532be28a3e8",
+      "input_sha256": "bb74378a44651d603d9a59b61842e1c55c57be005584097e8ce188299efe9ce6",
+      "recording_status": "completed",
+      "preparation": {
+        "first_ready_after_ms": 9045,
+        "first_playing_after_ms": 9151,
+        "first_visible_caption": {
+          "after_ms": 10051,
+          "media_time": 0.870955,
+          "text": "广州女大学生登山失联4天，警方找到疑似女尸。"
+        }
+      },
+      "sampling": {
+        "requested_interval_ms": 50,
+        "tolerance_ms": 100,
+        "sample_count": 512,
+        "max_observed_gap_ms": 65,
+        "status": "valid"
+      },
+      "session_posts": 1,
+      "public_errors": 0,
+      "overflow_samples": 0,
+      "paused_samples_through_last_cue_end": 0,
+      "source_buffering_samples_through_last_cue_end": 0,
+      "last_cue_end": 15.95,
+      "last_observed_media_time": 16.264,
+      "visible_text_sequence": [
+        "广州女大学生登山失联4天，警方找到疑似女尸。",
+        "尊重科学规律的要求。",
+        "7路无人售票。"
+      ],
+      "video_eof_observed": true,
+      "live_seconds_cap_reached": false,
+      "observe_completed_playback": false,
+      "ready_requirements": [
+        0.0
+      ],
+      "report_path": "/home/wbb/.local/share/stream-with-asr/notes/caption-experience-20261114/real-reserve10-20261116/zh-local-reserve10-20261116-01.report.json",
+      "report_sha256": "07b3636eae4a0c4df8f2bbd4b40e0339c53a79aad7768cc015b68973b430b4a2",
+      "recording_sha256": "e5d85ac7add228796d1c636ba1a849f2b5a3127573856da9b928737e53500c8b"
+    },
+    {
+      "label": "en-local-reserve10-20261116-01",
+      "language": "en",
+      "input_kind": "local",
+      "candidate": "be7d96ac005f6157e3c44533b1801532be28a3e8",
+      "input_sha256": "2729cb457ffc36083017f5ff94998e2eb3c5830cba99cf66ec03446a91177e15",
+      "recording_status": "completed",
+      "preparation": {
+        "first_ready_after_ms": 3801,
+        "first_playing_after_ms": 3852,
+        "first_visible_caption": {
+          "after_ms": 4251,
+          "media_time": 0.349038,
+          "text": "He began a confused complaint against the\nwizard who had vanished behind the curtain"
+        }
+      },
+      "sampling": {
+        "requested_interval_ms": 50,
+        "tolerance_ms": 100,
+        "sample_count": 414,
+        "max_observed_gap_ms": 57,
+        "status": "valid"
+      },
+      "session_posts": 1,
+      "public_errors": 0,
+      "overflow_samples": 0,
+      "paused_samples_through_last_cue_end": 0,
+      "source_buffering_samples_through_last_cue_end": 0,
+      "last_cue_end": 16.36,
+      "last_observed_media_time": 16.664,
+      "visible_text_sequence": [
+        "He began a confused complaint against the\nwizard who had vanished behind the curtain",
+        "on the left.",
+        "Give not so earnest a mind to these mummerys,\nchild.",
+        "A golden fortune and a happy life.",
+        "He was like unto my father in a way, and yet was\nnot my father."
+      ],
+      "video_eof_observed": true,
+      "live_seconds_cap_reached": false,
+      "observe_completed_playback": false,
+      "ready_requirements": [
+        0.0
+      ],
+      "report_path": "/home/wbb/.local/share/stream-with-asr/notes/caption-experience-20261114/real-reserve10-20261116/en-local-reserve10-20261116-01.report.json",
+      "report_sha256": "8cf57b2d64850e33cd2e17f0a348ddfda4eebcecef2973c4c6d9bb671fe866ed",
+      "recording_sha256": "c35851c3b254af50092929ae02e7ec87c591d7ecaef6cde22cc64d1367d74549"
+    },
+    {
+      "label": "zh-live-reserve10-tail-20261116-01",
+      "language": "zh",
+      "input_kind": "fixed_hls",
+      "candidate": "8d30d3f6eadebdd31c3bd06d27f4c6528039f20c",
+      "input_sha256": null,
+      "recording_status": "completed",
+      "preparation": {
+        "first_ready_after_ms": 8831,
+        "first_playing_after_ms": 14951,
+        "first_visible_caption": {
+          "after_ms": 15801,
+          "media_time": 0.826068,
+          "text": "广州女大学生登山失联4天，警方找到疑似女尸。"
+        }
+      },
+      "sampling": {
+        "requested_interval_ms": 50,
+        "tolerance_ms": 100,
+        "sample_count": 806,
+        "max_observed_gap_ms": 55,
+        "status": "valid"
+      },
+      "session_posts": 1,
+      "public_errors": 0,
+      "overflow_samples": 0,
+      "paused_samples_through_last_cue_end": 0,
+      "source_buffering_samples_through_last_cue_end": 0,
+      "last_cue_end": 15.95,
+      "last_observed_media_time": 16.154958,
+      "visible_text_sequence": [
+        "广州女大学生登山失联4天，警方找到疑似女尸。",
+        "尊重科学规律的要求。",
+        "7路无人售票。"
+      ],
+      "video_eof_observed": false,
+      "live_seconds_cap_reached": true,
+      "observe_completed_playback": true,
+      "ready_requirements": [
+        10.0
+      ],
+      "report_path": "/home/wbb/.local/share/stream-with-asr/notes/caption-experience-20261114/real-reserve10-drain-20261116/zh-live-reserve10-tail-20261116-01.report.json",
+      "report_sha256": "9beb9dd283cc197eb6d124c355dd5b64759f2f12ce1c73e9a4aabbe9ecda9aa4",
+      "recording_sha256": "e37c5421f74cde913e363552c02bc1ed5be16c180957292bc9f1da9e850cc77b"
+    },
+    {
+      "label": "en-live-reserve10-tail-20261116-01",
+      "language": "en",
+      "input_kind": "fixed_hls",
+      "candidate": "8d30d3f6eadebdd31c3bd06d27f4c6528039f20c",
+      "input_sha256": null,
+      "recording_status": "completed",
+      "preparation": {
+        "first_ready_after_ms": 6217,
+        "first_playing_after_ms": 13401,
+        "first_visible_caption": {
+          "after_ms": 13801,
+          "media_time": 0.394732,
+          "text": "He began a confused complaint against the\nwizard who had vanished behind the curtain"
+        }
+      },
+      "sampling": {
+        "requested_interval_ms": 50,
+        "tolerance_ms": 100,
+        "sample_count": 806,
+        "max_observed_gap_ms": 61,
+        "status": "valid"
+      },
+      "session_posts": 1,
+      "public_errors": 0,
+      "overflow_samples": 0,
+      "paused_samples_through_last_cue_end": 0,
+      "source_buffering_samples_through_last_cue_end": 0,
+      "last_cue_end": 16.36,
+      "last_observed_media_time": 16.545484,
+      "visible_text_sequence": [
+        "He began a confused complaint against the\nwizard who had vanished behind the curtain",
+        "on the left.",
+        "Give not so earnest a mind to these mummerys,\nchild.",
+        "A golden fortune and a happy life.",
+        "He was like unto my father in a way, and yet",
+        "was not my father."
+      ],
+      "video_eof_observed": false,
+      "live_seconds_cap_reached": true,
+      "observe_completed_playback": true,
+      "ready_requirements": [
+        10.0
+      ],
+      "report_path": "/home/wbb/.local/share/stream-with-asr/notes/caption-experience-20261114/real-reserve10-drain-20261116/en-live-reserve10-tail-20261116-01.report.json",
+      "report_sha256": "b3ea5f994fd5e7b700af3f0990fd7dfa00ee4d2e512e685972d0ea6ebc9305ac",
+      "recording_sha256": "b317c854e9a95abae17211e25498c674aad41235552fdd5eca020166ce67898a"
+    }
+  ],
+  "local_inputs": [
+    {
+      "language": "zh",
+      "path": "/home/wbb/.local/share/stream-with-asr/notes/caption-experience-20261114/local-media/zh-reference-prefix.mp4",
+      "sha256": "bb74378a44651d603d9a59b61842e1c55c57be005584097e8ce188299efe9ce6",
+      "duration_seconds": 16.264,
+      "preparation": "remux original encoded HLS packets; no time stretch"
+    },
+    {
+      "language": "en",
+      "path": "/home/wbb/.local/share/stream-with-asr/notes/caption-experience-20261114/local-media/en-reference-prefix.mp4",
+      "sha256": "2729cb457ffc36083017f5ff94998e2eb3c5830cba99cf66ec03446a91177e15",
+      "duration_seconds": 16.664,
+      "preparation": "remux original encoded HLS packets; no time stretch"
+    }
+  ],
+  "fixed_hls_provenance_file_sha256": {
+    "fixed-hls/samples/hls/en/provenance.json": "2d460adefa045a1cf1b70cb89c0d09af11f93c6a38508158010586f16b25707a",
+    "fixed-hls/samples/hls/zh/provenance.json": "a9750a577d4f29a6e5c1cea18221e0a0af6245875ae942e92a23eba533d06bcd"
+  },
+  "unassessed": [
+    "independent_acoustic_sync",
+    "independent_voice_coverage",
+    "startup_p95",
+    "long_duration",
+    "unseen_chinese_word_boundaries"
+  ],
+  "local_python_baseline_failure": "parent_audio_buffer_is_bounded_when_worker_cannot_consume repeats at7950499; stopped after3 attempts"
+}
