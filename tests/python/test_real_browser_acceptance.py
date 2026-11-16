@@ -853,8 +853,9 @@ def test_opt_in_observation_stops_when_manual_retry_ui_persists_after_recovery_b
     assert clock["now"] - 100.0 < 7.0
 
 
-def test_opt_in_observation_stops_on_media_only_ui_exhaustion_and_keeps_delete_evidence(
-        tmp_path, monkeypatch):
+@pytest.mark.parametrize("observe_recovery,local", [(False, False), (True, False), (False, True)])
+def test_observation_stops_on_terminal_manual_retry_ui_and_keeps_delete_evidence(
+        tmp_path, monkeypatch, observe_recovery, local):
     def on_start(page):
         page.open_session()
         page.schedule(0.2, lambda: media_recovery_exhausted(page))
@@ -866,9 +867,14 @@ def test_opt_in_observation_stops_on_media_only_ui_exhaustion_and_keeps_delete_e
         page.retry_visible = True
         page.status = "media recovery exhausted"
 
+    media = None
+    if local:
+        media_file = tmp_path / "input.mp4"
+        media_file.write_bytes(b"synthetic parser-only input")
+        media = str(media_file)
     result, report, recording, _page, clock = _run_collect_with_fake_browser(
         monkeypatch, tmp_path, label="media-recovery-exhausted", seconds=5,
-        on_start=on_start)
+        on_start=on_start, observe_recovery=observe_recovery, media=media)
 
     assert report["live_seconds_cap_reached"] is False
     assert report["operator_stop"]["requested"] is False

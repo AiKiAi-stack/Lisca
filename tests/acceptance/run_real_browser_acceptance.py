@@ -786,8 +786,7 @@ def collect(args):
                             >= RECOVERY_BACKOFF_GRACE_SECONDS
                         )
                         ui_recovery_exhausted = (
-                            observe_recovery
-                            and latest_sample.get("retry_visible") is True
+                            latest_sample.get("retry_visible") is True
                             and latest_sample.get("stop_visible") is False
                         )
                         if ui_recovery_exhausted:
