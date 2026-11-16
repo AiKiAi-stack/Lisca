@@ -35,6 +35,14 @@ normal recognition end event. Sampling gaps over 100 ms are reported as
 optional share-endpoint failures are kept as sanitized diagnostics; page errors,
 WebSocket errors, player/UI failures, and session-start failures remain fatal.
 
+For delayed remote playback, add `--observe-completed-playback` to keep sampling
+after normal recognition completion until video EOF or `--seconds`. This captures
+captions in buffered media that has not played when recognition ends. Reports
+retain the recognition end event, `video_eof_observed`, and
+`live_seconds_cap_reached` separately. A completed recognition session can still
+have capped playback observation; use the actual sampled media range when
+assessing its tail. Errors and cancellation keep their existing stop rules.
+
 The artifact explicitly leaves acoustic synchronization and whether a human
 heard the source unassessed. Accuracy is marked tested only when a completed
 recording was scored against the supplied reference. Checkpoints use cached

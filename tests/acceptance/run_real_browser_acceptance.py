@@ -5,6 +5,8 @@ Local files run to both video EOF and the normal recognition end event. HTTP(S)
 sources stop at ``--seconds`` and are recorded as cancelled by that cap.
 ``--observe-recovery`` is remote-only; it samples through retryable UI recovery
 within the same cap, while retaining every error and a failed run status.
+``--observe-completed-playback`` keeps remote playback observation after normal
+recognition completion until media EOF or the same observation cap.
 """
 import argparse
 from datetime import datetime, timezone
@@ -420,6 +422,7 @@ def collect(args):
     recording_path, report_path, score_path = _result_paths(output_dir, args.label)
     remote = args.media.startswith(("http://", "https://"))
     observe_recovery = bool(getattr(args, "observe_recovery", False))
+    observe_completed_playback = bool(getattr(args, "observe_completed_playback", False))
     media_path = safe_remote_source(args.media) if remote else str(Path(args.media).resolve())
     started_at = None
     started = None
@@ -813,7 +816,9 @@ def collect(args):
                                 stop_active("observation_cap")
                                 break
                             if end:
-                                if not (observe_recovery
+                                drain_completed = (observe_completed_playback
+                                                   and end.get("reason") == "completed" and not video_eof)
+                                if not drain_completed and not (observe_recovery
                                         and end.get("reason") in ("error", "failed")
                                         and has_retryable_error(connection_generation["latest"])):
                                     break
@@ -889,6 +894,7 @@ def collect(args):
                 "sample_interval_ms": 50, "sampling_tolerance_seconds": 0.1,
                 "session_post_start_count": posts["count"], "video_eof_observed": video_eof,
                 "live_seconds_cap_reached": live_cap,
+                "observe_completed_playback": observe_completed_playback,
                 "operator_stop": stop_state.copy()}
     if observe_recovery:
         metadata["observe_recovery"] = True
@@ -932,6 +938,7 @@ def collect(args):
         "session_delete_statuses": delete_responses.copy(),
         "session_post_starts_during_completed_seek": checkpoint_post_delta,
         "video_eof_observed": video_eof, "live_seconds_cap_reached": live_cap,
+        "observe_completed_playback": observe_completed_playback,
         "sampling": {"requested_interval_ms": 50, "tolerance_ms": 100,
                      "sample_count": len(samples), "max_observed_gap_ms": round(max_gap, 1),
                      "status": "measurement_invalid" if measurement_invalid else "valid"},
@@ -985,6 +992,8 @@ def parse_args(argv=None):
                         help="Maximum observation seconds for HTTP(S) sources")
     parser.add_argument("--observe-recovery", action="store_true",
                         help="Keep sampling retryable live recognition recovery; errors still fail the run")
+    parser.add_argument("--observe-completed-playback", action="store_true",
+                        help="Keep remote playback sampling after recognition completes, until media EOF or --seconds")
     parser.add_argument("--timeout", type=float, default=420,
                         help="Maximum wall seconds for local-file recognition and playback")
     parser.add_argument("--reference", type=Path, help="Optional fixed reference manifest")
@@ -1003,6 +1012,8 @@ def parse_args(argv=None):
         parser.error("--stop-file already exists; no observation was started")
     if args.observe_recovery and not args.media.startswith(("http://", "https://")):
         parser.error("--observe-recovery is supported only for HTTP(S) sources")
+    if args.observe_completed_playback and not args.media.startswith(("http://", "https://")):
+        parser.error("--observe-completed-playback is supported only for HTTP(S) sources")
     if not args.media.startswith(("http://", "https://")):
         windows_drive_path = re.match(r"^[A-Za-z]:[\\/]", args.media)
         if (args.capture_playback_evidence and not windows_drive_path

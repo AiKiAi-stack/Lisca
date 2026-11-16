@@ -222,7 +222,7 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                                    playback_evidence=False, browser_clock_samples=None,
                                    monotonic_ns_samples=None, captured_audio=None, installation=None, pixel_failure=False, runtime_audio_failure=False, runtime_clock_failure=False,
                                    acoustic_sync=False, save_failure=False, status_sequence=None,
-                                   stop_file=None):
+                                   stop_file=None, observe_completed_playback=False):
     clock = {"now": 100.0}
 
     class Request:
@@ -446,6 +446,8 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             "--label", label, "--output", str(tmp_path), "--seconds", str(seconds)]
     if observe_recovery:
         argv.append("--observe-recovery")
+    if observe_completed_playback:
+        argv.append("--observe-completed-playback")
     if playback_evidence:
         argv.append("--capture-playback-evidence")
     if acoustic_sync:
@@ -1022,3 +1024,28 @@ def test_audio_capture_reports_recorder_failure_after_clock_failure():
             assert page.evaluate("() => window.__acousticCapture.status()") == "recorder_error"
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize("video_ends", [False, True])
+def test_completed_remote_observation_includes_buffered_tail_until_eof_or_cap(
+        tmp_path, monkeypatch, video_ends):
+    def on_start(page):
+        socket = page.open_session()
+        def recognition_finished():
+            page.active = False
+            socket.send({"type": "end", "reason": "completed"})
+        page.schedule(0.2, recognition_finished)
+        page.schedule(1.0, lambda: setattr(page, "caption", "Buffered final sentence."))
+        if video_ends:
+            page.schedule(1.4, lambda: setattr(page, "ended", True))
+
+    result, report, _recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="completed-tail", seconds=2, on_start=on_start,
+        observe_recovery=False, observe_completed_playback=True)
+    assert result["recording_status"] == "completed"
+    assert any(s["visible_text"] == "Buffered final sentence." for s in report["timeline_samples"])
+    assert report["video_eof_observed"] is video_ends
+    assert report["live_seconds_cap_reached"] is not video_ends
+    assert report["session_post_start_count"] == 1
+    assert report["session_delete_statuses"] == []
+    assert 1.4 <= clock["now"] - 100 < 2.5
