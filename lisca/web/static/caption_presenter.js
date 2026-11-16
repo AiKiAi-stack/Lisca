@@ -92,6 +92,7 @@
   function extendReadBoundary(sourceText, words, readText, time) {
     if (!Array.isArray(words) || typeof readText !== 'string' || !Number.isFinite(time)) return time;
     const normalize = text => text.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+    const source = normalize(sourceText);
     let offset = 0;
     const timed = words.filter(word => Array.isArray(word) && Number.isFinite(word[0])
       && Number.isFinite(word[1]) && typeof word[2] === 'string').map(word => {
@@ -99,8 +100,8 @@
       offset += normalize(word[2]).length;
       return {beg:word[0], end:word[1], start, through:offset};
     }).filter(word => word.through > word.start);
-    if (offset !== normalize(sourceText).length
-        || normalize(words.map(word => word?.[2] || '').join('')) !== normalize(sourceText)) return time;
+    if (offset !== source.length
+        || normalize(words.map(word => word?.[2] || '').join('')) !== source) return time;
     const current = timed.find(word => word.beg <= time && time < word.end);
     if (!current) return time;
     const read = normalize(readText);
@@ -109,6 +110,12 @@
       const unit = normalize(token), start = offset;
       offset += unit.length;
       if (!unit || start > current.start || current.through > offset || !read.endsWith(unit)) continue;
+      // Unchanged context must locate this occurrence; a repeated word alone is ambiguous.
+      let anchorLength = unit.length;
+      while (anchorLength < read.length && anchorLength < offset
+          && read[read.length - anchorLength - 1] === source[offset - anchorLength - 1]) anchorLength++;
+      const anchor = read.slice(-anchorLength), anchorStart = offset - anchorLength;
+      if (source.indexOf(anchor) !== anchorStart || source.indexOf(anchor, anchorStart + 1) !== -1) continue;
       const last = timed.find(word => word.through === offset);
       if (last && last.end > time && timed.some(word => word.start === start)) return last.end;
     }

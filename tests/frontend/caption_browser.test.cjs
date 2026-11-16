@@ -1050,6 +1050,23 @@ test('recorded live final handoff follows the read 警方 boundary after timing 
  assert.ok(c.currentEl.textContent.includes('四天'),'replaying the final accepts the corrected numeral');
 });
 
+test('a final handoff does not consume a later occurrence of the preview word',()=>{
+ const {context:c}=preparingMessageBrowser();
+ c.receiveMessage({type:'preview',sentence_id:'repeat',commit_id:1,revision:1,
+  source_text:'Go go on.',source_start:0,source_end:2,text:'Go',beg:0,end:1,words:[[0,1,'Go']]});
+ c.receiveMessage({type:'buffer',play_at:1});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+ c.player.currentTime=.5;c.syncSubtitle();assert.equal(c.currentEl.textContent,'Go');
+ c.receiveMessage({type:'subtitle',sentence_id:'repeat',revision:2,beg:0,end:2.4,
+  text:'Go go on.',is_final:true,words:[[0,.8,'Go'],[.8,1.6,'go'],[1.6,2.4,'on']]});
+ assert.equal(c.currentEl.textContent,'Go','the current preview page stays stable');
+ c.player.currentTime=1.01;c.syncSubtitle();
+ assert.equal(c.currentEl.textContent,'go on.','the second go remains on the next page');
+ c.player.currentTime=.1;c.syncSubtitle();const first=c.currentEl.textContent;
+ c.player.currentTime=1.7;c.syncSubtitle();
+ assert.equal(`${first} ${c.currentEl.textContent}`,'Go go on.','replaying retains the complete final');
+});
+
 test('ready holds a retained half-word until a complete preview arrives',()=>{
  const {context:c}=preparingMessageBrowser();
  const source='发展趋势。',words=Array.from(source,(char,i)=>[i*.2,(i+1)*.2,char]);
@@ -1236,4 +1253,24 @@ test('verified leading silence contributes to the live caption reserve',()=>{
  c.receiveMessage({type:'buffer',play_at:12,local_silence_from:0,local_silence_through:12});
  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,silent:true,prepare_ahead_sec:10});
  c.syncPlaybackToBuffer();assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);
+});
+
+test('verified silence clears an empty first preview from the live preparation reserve',()=>{
+ for(const coverage of ['silence','future caption']){
+  const {context:c}=preparingMessageBrowser({live:true});
+  c.receiveMessage({type:'preview',sentence_id:'first',commit_id:1,revision:1,
+   source_text:'发展',source_start:0,source_end:1,text:'发',beg:0,end:.2,words:[[0,.2,'发']]});
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,prepare_ahead_sec:10});
+  assert.equal(c.playStarted,false,coverage);
+  c.now=14999;
+  if(coverage==='future caption')c.receiveMessage({type:'subtitle',sentence_id:'future',revision:1,
+   beg:2,end:12,text:'A complete future sentence.',is_final:true});
+  c.receiveMessage({type:'buffer',play_at:12,local_silence_from:0,
+   local_silence_through:coverage==='silence'?12:2});
+  c.syncPlaybackToBuffer();
+  assert.equal(c.playStarted,true,coverage);
+  assert.equal(c.player.paused,false,coverage);
+  assert.equal(c.playbackGuard.degraded,false,coverage);
+  assert.equal(c.failure,undefined,coverage);
+ }
 });
