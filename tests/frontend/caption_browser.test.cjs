@@ -455,6 +455,26 @@ test('a final arriving after a preview page ended continues past the consumed wo
   words:[[0,1,'We'],[1,1.5,'are'],[1.5,2.5,'already'],[2.5,3,'ready.'],[3,3.5,'Next'],[3.5,5,'words.']]});
  assert.equal(b.current.textContent,'Next words.');
 });
+for(const capture of require('./fixtures/en-long-continuity-captured.json').cases)
+test(`captured English live sentence ${capture.sentence_id} presents every passage once as previews grow`,t=>{
+ const normalize=text=>text.replace(/\s+/gu,' ').trim();
+  const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
+  const visible=[];let eventIndex=0,previous='';
+  for(const [afterMs,mediaTime] of capture.samples){
+   while(eventIndex<capture.events.length&&capture.events[eventIndex].observed_after_ms<=afterMs){
+    const message=capture.events[eventIndex++];
+    if(message.type==='preview')b.preview(message);
+    else b.push({...message,translated:false});
+   }
+   c.player.currentTime=mediaTime;b.tick(afterMs);
+   const text=normalize(b.current.textContent);
+   if(text&&text!==previous&&afterMs>=8251)visible.push(text);
+   previous=text;
+  }
+  const text=visible.join(' ');
+  t.diagnostic(`sentence ${capture.sentence_id}: ${text}`);
+  assert.equal(text,normalize(capture.events.find(message=>message.is_final).text));
+});
 test('real final handoffs keep only table and 阶段 after their held previews',()=>{
  const fixtures=[{
   offset:10.010023611111137,cut:171.57,end:171.97,

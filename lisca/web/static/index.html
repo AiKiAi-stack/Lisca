@@ -1136,6 +1136,11 @@
       cue.source_start = safe.start;
       cue.source_end = safe.end;
       cue.unpreparedFrom = !cue.text.trim() ? cue.beg : safe.end < rangeEnd ? cue.end : null;
+      if (displayed?.source === cue) {
+        const readEnd = CaptionLayout.extendReadBoundary(cue.text, cue.words, displayed.text, displayed.end);
+        cue.previewBreaks = [...new Set([...(cue.previewBreaks || []).filter(cut => cut !== displayed.end), readEnd])];
+        displayed.end = readEnd;
+      }
       if (displayed?.source === cue && (!cue.text || cue.end < displayed.end)) currentEl.originalPage = null;
       captionSegmentCache.delete(cue);
     } else {

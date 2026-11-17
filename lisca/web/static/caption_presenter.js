@@ -102,14 +102,12 @@
     }).filter(word => word.through > word.start);
     if (offset !== source.length
         || normalize(words.map(word => word?.[2] || '').join('')) !== source) return time;
-    const current = timed.find(word => word.beg <= time && time < word.end);
-    if (!current) return time;
     const read = normalize(readText);
     offset = 0;
     for (const token of captionTokens(sourceText)) {
       const unit = normalize(token), start = offset;
       offset += unit.length;
-      if (!unit || start > current.start || current.through > offset || !read.endsWith(unit)) continue;
+      if (!unit || !read.endsWith(unit)) continue;
       // Unchanged context must locate this occurrence; a repeated word alone is ambiguous.
       let anchorLength = unit.length;
       while (anchorLength < read.length && anchorLength < offset
@@ -117,7 +115,7 @@
       const anchor = read.slice(-anchorLength), anchorStart = offset - anchorLength;
       if (source.indexOf(anchor) !== anchorStart || source.indexOf(anchor, anchorStart + 1) !== -1) continue;
       const last = timed.find(word => word.through === offset);
-      if (last && last.end > time && timed.some(word => word.start === start)) return last.end;
+      if (last && timed.some(word => word.start === start)) return last.end;
     }
     return time;
   }
