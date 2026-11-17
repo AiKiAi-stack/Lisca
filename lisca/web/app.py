@@ -1332,14 +1332,17 @@ async def ws_endpoint(ws: WebSocket):
                     # Pace by the actual PCM duration (including a short tail).
                     chunk_sec = len(chunk) / (16000 * 2)
                     if not batch_mode:
-                        # Keep local files at most two seconds ahead so playback
-                        # can start before EOF. Bound buffered HLS too: an unpaced
-                        # segment burst can overflow the ASR input queue at startup.
+                        # Give initial local preparation the live headroom, then
+                        # return to two seconds before feeding the next chunk.
+                        # Bound HLS too: an unpaced segment burst can overflow
+                        # the ASR input queue at startup.
                         # One cumulative deadline lets delayed reads catch up without
                         # turning source or recognizer time into permanent feed lag.
                         # Stable live phrases need headroom while staying below
                         # the existing ten-second recognizer input queue.
-                        lead_sec = 6.0 if original_mode and is_live_hls else 2.0 if prefetch_local else 0.0
+                        lead_sec = (6.0 if original_mode and
+                                    (is_live_hls or (prefetch_local and not ready_sent))
+                                    else 2.0 if prefetch_local else 0.0)
                         wait = fed_sec + chunk_sec - lead_sec - (active_session_time() - feed_clock)
                         if wait > 0:
                             if original_mode:
