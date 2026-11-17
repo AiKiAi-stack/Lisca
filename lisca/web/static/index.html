@@ -613,6 +613,20 @@
     return segments;
   }
 
+  function estimatedCaptionWords(sourceText, beg, end, layout) {
+    const totalWidth = Math.max(1, layout.measureText(sourceText));
+    let rawOffset = 0;
+    let elapsed = beg;
+    return Array.from(sourceText, char => {
+      const rawStart = rawOffset;
+      rawOffset += char.length;
+      const start = elapsed;
+      elapsed = rawOffset === sourceText.length ? end
+        : Math.min(end, elapsed + (end - beg) * layout.measureText(char) / totalWidth);
+      return {beg:start, end:elapsed, rawStart, rawEnd:rawOffset};
+    });
+  }
+
   function captionSegments(s) {
     const layout = captionLayoutOptions();
     const cacheKey = `${layout.key}|${(s.previewBreaks || []).join(',')}`;
@@ -696,19 +710,10 @@
     const end = Number.isFinite(s.end) && s.end > beg ? s.end : null;
     if (Number.isFinite(beg) && Number.isFinite(end) && sourceText.trim()) {
       // Missing word times retain the existing estimated timing fallback.
-      const totalWidth = Math.max(1, layout.measureText(sourceText));
-      let rawOffset = 0;
-      let elapsed = beg;
-      const estimatedWords = Array.from(sourceText, char => {
-        const rawStart = rawOffset;
-        rawOffset += char.length;
-        const start = elapsed;
-        elapsed = rawOffset === sourceText.length ? end
-          : Math.min(end, elapsed + (end - beg) * layout.measureText(char) / totalWidth);
-        return {beg:start, end:elapsed, rawStart, rawEnd:rawOffset};
-      });
+      const estimatedWords = estimatedCaptionWords(sourceText, beg, end, layout);
       return rememberCaptionSegments(s, cacheKey,
-        CaptionLayout.paginateTimedWords(sourceText, estimatedWords, layout)
+        CaptionLayout.paginateTimedWords(sourceText, estimatedWords,
+          {...layout, breakTimes:s.previewBreaks || []})
           .map(page => ({...page, timing:'estimated'})));
     }
     const rawParts = (s.text.match(/[^.!?。！？]+[.!?。！？]?/g) || [s.text])
@@ -1136,10 +1141,17 @@
       cue.source_start = safe.start;
       cue.source_end = safe.end;
       cue.unpreparedFrom = !cue.text.trim() ? cue.beg : safe.end < rangeEnd ? cue.end : null;
-      if (displayed?.source === cue) {
-        const readEnd = CaptionLayout.extendReadBoundary(cue.text, cue.words, displayed.text, displayed.end);
-        cue.previewBreaks = [...new Set([...(cue.previewBreaks || []).filter(cut => cut !== displayed.end), readEnd])];
-        displayed.end = readEnd;
+      const activePage = displayed?.source === cue;
+      const readText = activePage ? displayed.text : cue.visibleText;
+      const previousEnd = activePage ? displayed.end : cue.visibleThrough;
+      if (readText && Number.isFinite(previousEnd)) {
+        const readWords = normalize(cue.words.map(word => word[2]).join('')) === normalize(cue.text)
+          ? cue.words : estimatedCaptionWords(cue.text, cue.beg, cue.end, captionLayoutOptions())
+            .map(word => [word.beg, word.end, cue.text.slice(word.rawStart, word.rawEnd)]);
+        const readEnd = CaptionLayout.extendReadBoundary(cue.text, readWords, readText, previousEnd);
+        cue.previewBreaks = [...new Set([...(cue.previewBreaks || []).filter(cut => cut !== previousEnd), readEnd])];
+        cue.visibleThrough = readEnd;
+        if (activePage) displayed.end = readEnd;
       }
       if (displayed?.source === cue && (!cue.text || cue.end < displayed.end)) currentEl.originalPage = null;
       captionSegmentCache.delete(cue);

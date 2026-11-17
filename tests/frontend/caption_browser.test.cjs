@@ -474,6 +474,7 @@ test(`captured English live sentence ${capture.sentence_id} presents every passa
   const text=visible.join(' ');
   t.diagnostic(`sentence ${capture.sentence_id}: ${text}`);
   assert.equal(text,normalize(capture.events.find(message=>message.is_final).text));
+  if(capture.sentence_id===97)assert.equal(text.split('Thank you for having us.').length-1,2);
 });
 test('real final handoffs keep only table and 阶段 after their held previews',()=>{
  const fixtures=[{

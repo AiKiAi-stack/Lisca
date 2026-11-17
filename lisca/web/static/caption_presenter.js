@@ -99,7 +99,7 @@
       const start = offset;
       offset += normalize(word[2]).length;
       return {beg:word[0], end:word[1], start, through:offset};
-    }).filter(word => word.through > word.start);
+    });
     if (offset !== source.length
         || normalize(words.map(word => word?.[2] || '').join('')) !== source) return time;
     const read = normalize(readText);
@@ -114,7 +114,8 @@
           && read[read.length - anchorLength - 1] === source[offset - anchorLength - 1]) anchorLength++;
       const anchor = read.slice(-anchorLength), anchorStart = offset - anchorLength;
       if (source.indexOf(anchor) !== anchorStart || source.indexOf(anchor, anchorStart + 1) !== -1) continue;
-      const last = timed.find(word => word.through === offset);
+      // Character timing includes punctuation and spaces after the read word.
+      const last = timed.filter(word => word.through === offset).at(-1);
       if (last && timed.some(word => word.start === start)) return last.end;
     }
     return time;
