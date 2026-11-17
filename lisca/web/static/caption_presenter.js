@@ -89,7 +89,7 @@
     }
     return {start:safeStart, end:Math.max(safeStart, safeEnd)};
   }
-  function extendReadBoundary(sourceText, words, readText, time) {
+  function remapReadBoundary(sourceText, words, readText, time) {
     if (!Array.isArray(words) || typeof readText !== 'string' || !Number.isFinite(time)) return time;
     const normalize = text => text.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
     const source = normalize(sourceText);
@@ -99,25 +99,24 @@
       const start = offset;
       offset += normalize(word[2]).length;
       return {beg:word[0], end:word[1], start, through:offset};
-    }).filter(word => word.through > word.start);
+    });
     if (offset !== source.length
         || normalize(words.map(word => word?.[2] || '').join('')) !== source) return time;
-    const current = timed.find(word => word.beg <= time && time < word.end);
-    if (!current) return time;
     const read = normalize(readText);
     offset = 0;
     for (const token of captionTokens(sourceText)) {
       const unit = normalize(token), start = offset;
       offset += unit.length;
-      if (!unit || start > current.start || current.through > offset || !read.endsWith(unit)) continue;
+      if (!unit || !read.endsWith(unit)) continue;
       // Unchanged context must locate this occurrence; a repeated word alone is ambiguous.
       let anchorLength = unit.length;
       while (anchorLength < read.length && anchorLength < offset
           && read[read.length - anchorLength - 1] === source[offset - anchorLength - 1]) anchorLength++;
       const anchor = read.slice(-anchorLength), anchorStart = offset - anchorLength;
       if (source.indexOf(anchor) !== anchorStart || source.indexOf(anchor, anchorStart + 1) !== -1) continue;
-      const last = timed.find(word => word.through === offset);
-      if (last && last.end > time && timed.some(word => word.start === start)) return last.end;
+      // Character timing includes punctuation and spaces after the read word.
+      const last = timed.filter(word => word.through === offset).at(-1);
+      if (last && timed.some(word => word.start === start)) return last.end;
     }
     return time;
   }
@@ -388,7 +387,7 @@
     textMeasurers.set(key, measure);
     return measure;
   }
-  const CaptionLayout = {paginateText, paginateTimedWords, completeRange, extendReadBoundary, createTextMeasurer};
+  const CaptionLayout = {paginateText, paginateTimedWords, completeRange, remapReadBoundary, createTextMeasurer};
   class CaptionPresenter {
     constructor() { this.columns=42; this.live=true; this.reset(); }
     setColumns(columns) {
