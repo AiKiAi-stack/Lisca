@@ -89,7 +89,7 @@
     }
     return {start:safeStart, end:Math.max(safeStart, safeEnd)};
   }
-  function extendReadBoundary(sourceText, words, readText, time) {
+  function remapReadBoundary(sourceText, words, readText, time) {
     if (!Array.isArray(words) || typeof readText !== 'string' || !Number.isFinite(time)) return time;
     const normalize = text => text.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
     const source = normalize(sourceText);
@@ -387,7 +387,7 @@
     textMeasurers.set(key, measure);
     return measure;
   }
-  const CaptionLayout = {paginateText, paginateTimedWords, completeRange, extendReadBoundary, createTextMeasurer};
+  const CaptionLayout = {paginateText, paginateTimedWords, completeRange, remapReadBoundary, createTextMeasurer};
   class CaptionPresenter {
     constructor() { this.columns=42; this.live=true; this.reset(); }
     setColumns(columns) {

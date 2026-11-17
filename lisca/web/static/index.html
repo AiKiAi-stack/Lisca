@@ -1061,7 +1061,7 @@
           : !(s.end < msg.beg || (Number.isFinite(msg.end) && s.beg > msg.end));
         if (!replaced) return true;
         const activePage = displayed?.source === s;
-        const readEnd = CaptionLayout.extendReadBoundary(msg.text, msg.words,
+        const readEnd = CaptionLayout.remapReadBoundary(msg.text, msg.words,
           activePage ? displayed.text : s.visibleText, activePage ? displayed.end : s.visibleThrough);
         if (Number.isFinite(readEnd) && readEnd <= player.currentTime) previewBreaks.push(readEnd);
         if (displayed?.source === s) {
@@ -1148,7 +1148,7 @@
         const readWords = normalize(cue.words.map(word => word[2]).join('')) === normalize(cue.text)
           ? cue.words : estimatedCaptionWords(cue.text, cue.beg, cue.end, captionLayoutOptions())
             .map(word => [word.beg, word.end, cue.text.slice(word.rawStart, word.rawEnd)]);
-        const readEnd = CaptionLayout.extendReadBoundary(cue.text, readWords, readText, previousEnd);
+        const readEnd = CaptionLayout.remapReadBoundary(cue.text, readWords, readText, previousEnd);
         cue.previewBreaks = [...new Set([...(cue.previewBreaks || []).filter(cut => cut !== previousEnd), readEnd])];
         cue.visibleThrough = readEnd;
         if (activePage) displayed.end = readEnd;
