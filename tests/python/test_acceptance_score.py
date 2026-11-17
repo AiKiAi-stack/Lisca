@@ -408,23 +408,43 @@ def test_recording_and_scoring_clis_preserve_remote_sample_identity_without_hash
     assert report["accuracy_gate_passed"] is False
 
 
-@pytest.mark.parametrize("withhold_close", [False, True], ids=["cooperative", "withheld-close"])
-def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(tmp_path, withhold_close):
+@pytest.mark.parametrize(("withhold_close", "hold_handshake"), [
+    (False, False), (True, False), (True, True),
+], ids=["cooperative", "withheld-close", "opening-cancel"])
+def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(
+        tmp_path, withhold_close, hold_handshake):
     input_path = tmp_path / "sample.wav"
     write_wav(input_path)
     recording_path = tmp_path / "recording.json"
     service = WithheldCloseService() if withhold_close else FakeRecognitionService([], hold_events=True)
     with service:
-        process = subprocess.Popen([
+        command = [
             sys.executable, str(Path(__file__).parents[1] / "acceptance" / "run_original_acceptance.py"),
             str(input_path), "--server-url", service.url, "--output", str(recording_path),
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        ]
+        if hold_handshake:
+            # Keep the real connection opening until SIGINT arrives after Pong readiness.
+            command[1:1] = ["-c", """
+import asyncio
+import runpy
+import sys
+from websockets.asyncio.client import ClientConnection
+
+original_handshake = ClientConnection.handshake
+async def hold_handshake(self, *args, **kwargs):
+    await original_handshake(self, *args, **kwargs)
+    await asyncio.Event().wait()
+ClientConnection.handshake = hold_handshake
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             assert service.connected.wait(5), "recorder did not become active at the WebSocket peer"
             process.send_signal(signal.SIGINT)
             stdout, stderr = process.communicate(timeout=10)
         except subprocess.TimeoutExpired:
-            if withhold_close:
+            if withhold_close and not hold_handshake:
                 assert service.close_received.is_set()
             pytest.fail("recorder exceeded the 10-second cancellation deadline")
         finally:
@@ -432,7 +452,7 @@ def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(tmp_pat
                 process.kill()
             process.communicate(timeout=5)
         if withhold_close:
-            assert service.close_received.is_set()
+            assert service.close_received.is_set() == (not hold_handshake)
             assert service.tcp_closed.is_set()
             assert service.deleted.is_set()
 

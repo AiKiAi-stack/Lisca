@@ -250,9 +250,11 @@ async def run(path, label, output_path, server_url):
     finally:
         if ticket and ticket.get("session"):
             try:
-                with urlopen(Request(server_url + "/api/cloud/sessions/" + ticket["session"],
-                                     method="DELETE"), timeout=20):
-                    pass
+                # Let pending WebSocket transport-close callbacks run during HTTP cleanup.
+                response = await asyncio.to_thread(
+                    urlopen, Request(server_url + "/api/cloud/sessions/" + ticket["session"],
+                                     method="DELETE"), timeout=20)
+                response.close()
             except Exception as exc:
                 errors.append({"type": "cleanup_error", "message": str(exc)})
                 status = "failed"
