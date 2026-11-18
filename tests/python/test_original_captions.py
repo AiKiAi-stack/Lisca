@@ -185,7 +185,7 @@ def test_deleting_local_session_interrupts_realtime_feed_pacing(tmp_path, monkey
                 if event['type'] == 'end':
                     break
 
-    assert len(sent) == stopped_at < 100
+    assert len(sent) == stopped_at == 20
     assert events[-1] == {'type': 'end', 'reason': 'cancelled'}
 
 
@@ -730,7 +730,7 @@ def test_thirty_minute_local_silence_prepares_incrementally_with_bounded_feed_an
 
     assert generated[0] == len(sent) == 30 * 60
     assert peak_unprocessed_chunks[0] <= 1
-    assert max_audio_lead['initial'] <= 6.0 + 1e-6
+    assert max_audio_lead['initial'] <= 2.0 + 1e-6
     assert max_audio_lead['steady'] <= 2.0 + 1e-6
     assert ready_before_eof
     assert any(event['type'] == 'ready' and event.get('silent') for event in events)

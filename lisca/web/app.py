@@ -1309,6 +1309,17 @@ async def ws_endpoint(ws: WebSocket):
                     streaming_chunks = polled_chunks()
                 else:
                     streaming_chunks = chain((first_chunk,), decoded_chunks())
+
+                def feed_wait(chunk_sec):
+                    next_sec = fed_sec + chunk_sec
+                    if prefetch_local and not ready_sent:
+                        # A small burst, then 2x feeding with bounded programme headroom.
+                        due = max((next_sec - 2.0) / 2.0, next_sec - 10.0)
+                    else:
+                        lead_sec = 6.0 if original_mode and is_live_hls else 2.0 if prefetch_local else 0.0
+                        due = next_sec - lead_sec
+                    return due - (active_session_time() - feed_clock)
+
                 for chunk in streaming_chunks:
                     phase = "recognition"
                     if stop.is_set():
@@ -1332,18 +1343,9 @@ async def ws_endpoint(ws: WebSocket):
                     # Pace by the actual PCM duration (including a short tail).
                     chunk_sec = len(chunk) / (16000 * 2)
                     if not batch_mode:
-                        # Give initial local preparation the live headroom, then
-                        # return to two seconds before feeding the next chunk.
-                        # Bound HLS too: an unpaced segment burst can overflow
-                        # the ASR input queue at startup.
-                        # One cumulative deadline lets delayed reads catch up without
-                        # turning source or recognizer time into permanent feed lag.
-                        # Stable live phrases need headroom while staying below
-                        # the existing ten-second recognizer input queue.
-                        lead_sec = (6.0 if original_mode and
-                                    (is_live_hls or (prefetch_local and not ready_sent))
-                                    else 2.0 if prefetch_local else 0.0)
-                        wait = fed_sec + chunk_sec - lead_sec - (active_session_time() - feed_clock)
+                        # Cumulative deadlines let delayed reads catch up; the
+                        # recognizer retains its separate bounded input queue.
+                        wait = feed_wait(chunk_sec)
                         if wait > 0:
                             if original_mode:
                                 while wait > 1e-6 and not stop.is_set():
@@ -1353,15 +1355,18 @@ async def ws_endpoint(ws: WebSocket):
                                     interval = min(wait, 0.05)
                                     if _session_wait(stop, interval):
                                         break
-                                    wait -= interval
                                     if pending_sentences:
                                         result = call_provider(engine.poll)
+                                        updated = False
                                         while result[0] is not None and not stop.is_set():
                                             emit(result)
+                                            updated = True
                                             result = call_provider(engine.poll)
-                                        if check_caption_deadlines():
+                                        if updated or check_caption_deadlines():
                                             publish_buffer()
                                     check_no_progress()
+                                    # ready may arrive while this very chunk is waiting.
+                                    wait = feed_wait(chunk_sec)
                                 if stop.is_set():
                                     break
                             elif cloud and _session_wait(stop, wait):
