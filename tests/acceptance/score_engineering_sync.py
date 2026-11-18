@@ -680,10 +680,12 @@ def score(report_path, language, *, reference_path=None, source_path=None, spans
         result["unknown_reasons"].append("pixel_ocr_incomplete")
     if capture.get("pixel_capture", {}).get("status", "captured") != "captured":
         result["unknown_reasons"].append("pixel_capture_incomplete")
-    sampling = report.get("sampling", {})
-    if not fixture and (sampling.get("status") != "valid"
-                        or not _finite(sampling.get("max_observed_gap_ms"))
-                        or sampling["max_observed_gap_ms"] > 100):
+    sampling = report.get("sampling")
+    if (not isinstance(sampling, dict) or sampling.get("status") != "valid"
+            or not _integer(sampling.get("requested_interval_ms"), 1)
+            or sampling["requested_interval_ms"] != 50
+            or not _finite(sampling.get("max_observed_gap_ms"))
+            or sampling["max_observed_gap_ms"] > 100):
         result["unknown_reasons"].append("original_dom_sampling_invalid_or_missing")
     within = (len(measured) >= 50 and not result["unknown_reasons"]
               and all(stats["p95_upper_bound"] <= 0.5 and stats["max_absolute_upper_bound"] <= 1

@@ -76,6 +76,8 @@ def _capture(tmp_path, samples):
     report = tmp_path / "capture.report.json"
     report.write_text(json.dumps({
         "candidate_revision": "d" * 40, "candidate_worktree_dirty": False,
+        "sampling": {"requested_interval_ms": 50, "tolerance_ms": 100,
+                     "max_observed_gap_ms": 50, "status": "valid"},
         "engineering_sync": {"mode": "browser_audio_worklet_pcm",
                              "measurement_scope": "browser_output_timestamp_estimate",
                              "candidate_revision": "d" * 40,
@@ -217,6 +219,26 @@ def test_frozen_waveform_and_pixel_observations_produce_signed_estimates(tmp_pat
     assert result["end_error_seconds"]["max_absolute_upper_bound"] < 0.12
     assert result["coverage"]["reference_voiced_seconds"] == pytest.approx(1.2)
     assert result["unknown_reasons"] == ["minimum_measured_items_not_met"]
+
+
+@pytest.mark.parametrize("requested_interval", [75, None, True])
+def test_imported_sampling_requires_explicit_original_fifty_millisecond_cadence(tmp_path, requested_interval):
+    report, arguments = _voice_and_pixels(tmp_path)
+    data = json.loads(report.read_text())
+    data["sampling"]["max_observed_gap_ms"] = 75
+    if requested_interval is None:
+        data["sampling"].pop("requested_interval_ms")
+    else:
+        data["sampling"]["requested_interval_ms"] = requested_interval
+    report.write_text(json.dumps(data))
+    code, result = _run(tmp_path, report, *arguments)
+    assert code == 1
+    assert result["status"] == "unknown"
+    assert "original_dom_sampling_invalid_or_missing" in result["unknown_reasons"]
+    assert result["original_dom_sampling"] == data["sampling"]
+    assert result["items"][0]["status"] == "measured"
+    assert result["coverage"]["reference_voiced_seconds"] == pytest.approx(1.2)
+    assert result["formal_gate_passed"] is None
 
 
 def test_voiced_pause_keeps_six_hundred_milliseconds_in_wall_coordinates(tmp_path):

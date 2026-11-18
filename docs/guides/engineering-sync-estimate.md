@@ -67,7 +67,7 @@ PNG 的相对目录关系。原始产物和评分结果存于仓库外。
   相邻观察超过250ms会切断连续性，未知 OCR 和未验证片段没有估计下界信用。
   `coverage.unconditional` 单独保留未观察瞬间造成的无条件覆盖未知。
   250ms仅是新像素工程估计的容许间隔；原DOM采样的50ms周期与最大100ms有效性分别保留，
-  `original_dom_sampling` 无效仍使产品工程结果未知。
+  导入报告须显式提供整数 `requested_interval_ms: 50`；`original_dom_sampling` 无效仍使工程结果未知。
 - `sampled_engineering_thresholds_satisfied` 仅判断本口径的至少50句、起止P95≤0.5秒、
   最大≤1秒和参考有声覆盖估计下界≥95%。任何未完成参考身份仍使整体为 unknown。
   `formal_gate_passed`、`sync_gate_passed` 始终为 null，`release_gate_passed` 始终为 false。
