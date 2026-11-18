@@ -66,6 +66,7 @@ def test_long_local_file_prepares_late_body_within_fifteen_seconds_then_bounds_s
     monkeypatch.setattr(webui, 'StreamSource', Source)
     monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
     ready_at = None
+    sent_before_delete = None
     try:
         with TestClient(webui.app) as client:
             client.put('/api/cloud', json={'api_key': 'fixture-key'})
@@ -172,6 +173,7 @@ def test_saved_opening_drafts_prepare_all_stable_text_before_fifteen_seconds_and
     monkeypatch.setattr(webui, 'StreamSource', Source)
     monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
     ready_at = None
+    sent_before_delete = None
     try:
         with TestClient(webui.app) as client:
             client.put('/api/cloud', json={'api_key': 'fixture-key'})
@@ -279,6 +281,7 @@ def test_ready_during_a_local_feed_wait_applies_two_second_limit_to_the_pending_
     monkeypatch.setattr(webui, '_session_wait', advance_clock)
     monkeypatch.setattr(webui, 'StreamSource', Source)
     monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    sent_before_delete = None
     try:
         with TestClient(webui.app) as client:
             client.put('/api/cloud', json={'api_key': 'fixture-key'})
