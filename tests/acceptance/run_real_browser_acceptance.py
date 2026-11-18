@@ -50,8 +50,12 @@ EVENT_FIELDS = {
     "buffer": ("play_at", "local_silence_from", "local_silence_through"),
     "ready": ("delay", "start_at", "original", "buffered", "silent", "prepared",
               "progressive", "prepare_ahead_sec"),
-    "error": ("failure_category", "retryable"),
+    "error": ("failure_category", "retryable", "sdk_failure_kind", "sdk_failure_source"),
     "end": ("reason",),
+}
+SDK_FAILURE_VALUES = {
+    "sdk_failure_kind": ("timeout", "connection", "protocol"),
+    "sdk_failure_source": ("dashscope_exception_type",),
 }
 URL_PATTERN = re.compile(r"(?i)\b(?:https?|wss?)://[^\s<>\"']+")
 BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/-]+=*")
@@ -141,9 +145,15 @@ def sanitize_ws_event(event, observed_after_ms):
     safe = {"type": event_type}
     for name in EVENT_FIELDS[event_type]:
         if name in event:
-            safe[name] = _safe_value(event[name])
+            value = event[name]
+            if name in SDK_FAILURE_VALUES:
+                # pylint: disable=unidiomatic-typecheck
+                if type(value) is str and value in SDK_FAILURE_VALUES[name]:
+                    safe[name] = value
+            else:
+                safe[name] = _safe_value(value)
     if event_type == "error":
-        # Provider error text can echo account data; retain its category and presence only.
+        # Provider text can echo account data; retain only fixed diagnostics and its presence.
         safe["message_present"] = bool(event.get("message")) or event.get("message_present") is True
     safe["observed_after_ms"] = max(0, round(float(observed_after_ms)))
     return safe
@@ -548,6 +558,9 @@ def collect(args):
                 error = {"type": "recognition_error",
                          "failure_category": event.get("failure_category"),
                          "retryable": event.get("retryable")}
+                for name in SDK_FAILURE_VALUES:
+                    if name in event:
+                        error[name] = event[name]
                 if event.get("connection_generation") is not None:
                     error["connection_generation"] = event["connection_generation"]
                 errors.append(error)

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from lisca.web import app as webui  # noqa: E402
 from lisca.cloud_translation import CloudConfigStore  # noqa: E402
-from lisca.asr.recognition_process import RecognitionCapacityError  # noqa: E402
+from lisca.asr.recognition_process import RecognitionCapacityError, RecognitionProviderError  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -256,6 +256,9 @@ def test_cloud_ws_exposes_provider_permission_evidence_without_raw_error(monkeyp
     (RecognitionCapacityError("private memory detail"), "capacity", False, None),
     (StructuredProviderFailure(503, "UnknownServiceCode"), "temporarily_unavailable", True, None),
     (StructuredProviderFailure(400, "UnknownPrivateCode"), "unknown", False, None),
+    (RecognitionProviderError(-1, "Unknown", "timeout"), "unknown", False, None),
+    (RecognitionProviderError(-1, "Unknown", "connection"), "unknown", False, None),
+    (RecognitionProviderError(-1, "Unknown", "protocol"), "unknown", False, None),
 ])
 def test_cloud_ws_classifies_failures_only_from_provider_evidence(
         monkeypatch, failure, category, retryable, code):
@@ -296,6 +299,10 @@ def test_cloud_ws_classifies_failures_only_from_provider_evidence(
     assert error["failure_category"] == category
     assert error["retryable"] is retryable
     assert error.get("provider_code") == code
+    sdk_kind = getattr(failure, "sdk_failure_kind", None)
+    if sdk_kind is not None:
+        assert error["sdk_failure_kind"] == sdk_kind
+        assert error["sdk_failure_source"] == "dashscope_exception_type"
     assert "private" not in str(events)
     assert "TEST_ONLY_KEY" not in str(events)
 
