@@ -31,6 +31,7 @@ WebUI 只使用 `127.0.0.1:8002`。替换为夹具前核对占用进程和活动
 | 工具 | 用途 |
 | --- | --- |
 | `acceptance/run_real_browser_acceptance.py` | 实际播放器、可见字幕和可选声音采集；见[采集指南](../docs/guides/real-browser-collector.md) |
+| `browser/check_engineering_pcm_capture.py` | 8002 安全源上的零 ASR 合成 PCM 流写自检；见同一采集指南 |
 | `acceptance/run_original_acceptance.py` | 原文字幕会话与事件记录 |
 | `acceptance/score_original_acceptance.py` | 固定参考文字准确率评分 |
 | `acceptance/score_acoustic_acceptance.py` | 独立声音与画面字幕同步评分 |

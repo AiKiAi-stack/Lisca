@@ -50,3 +50,82 @@ captions, save paused browser screenshots with the source input masked, and
 report any additional session POST. This collector does not by itself establish
 long-duration live stability, source-intrinsic latency, or human-verified
 accuracy.
+
+## Browser clock engineering capture
+
+Add `--capture-engineering-sync` to stream the actual audible media element's
+Float32 PCM and save periodic caption pixels. It accepts local files
+and direct HTTP(S) HLS. Optional `--reference` / `--language` still select the
+existing fixed-reference recording and text scoring. An explicit `--output`
+directory is required; put long PCM captures on the large evidence disk:
+
+```sh
+python3 tests/acceptance/run_real_browser_acceptance.py \
+  --media /path/to/input.mp4 --label engineering-local --timeout 2400 \
+  --capture-engineering-sync \
+  --output /media/wbb/KEKE/LiscaAcceptance/engineering-local
+```
+
+The new report key is `engineering_sync`, with
+`measurement_scope: browser_output_timestamp_estimate`. It retains the selected
+element (`audioEl` for local playback, `player` for direct HLS), candidate
+revision, installation route, audio integrity metadata and `pixel_capture` metadata.
+The output files are:
+
+- `<label>.playback.f32le`: raw little endian IEEE Float32, all channels
+  interleaved by sample frame. Use the reported sample rate and channel count.
+- `<label>.playback.frames.jsonl`: streamed records distinguished by `kind`.
+  `pcm_batch` records contain sequence, exact `current_frame` / `frame_count`
+  for every processing quantum, byte offset/count and SHA-256. `clock_sample`
+  records contain raw output timestamp pairs and call brackets. `context_state`,
+  `media_state`, `device_change` and `capture_error` retain interruptions.
+  `capture_summary` reconciles the final worklet counters with the disk file.
+- `<label>.pixels/pixel-*.png`: actual fixed caption-region observations,
+  targeted every 100 ms, including blank states. `pixel_observation` entries in
+  the same JSONL contain image hashes, before/after time brackets, viewport and
+  region geometry. `pixel_capture.metadata_path` / `metadata_sha256` identify
+  that ledger; `ledger_kind` selects these records.
+
+At 48 kHz, 30 minutes requires about 330 MiB per channel. The browser retains at
+most four unacknowledged PCM batches; the Python sink writes each batch to disk.
+Gaps, overlap, sequence/format changes, truncated payloads, overflow or a missing
+tail make the capture `unknown`; missing audio is never padded with zeros.
+Existing evidence files are protected from overwrite.
+
+Sample `j` in a quantum has context time `(current_frame + j) / sample_rate_hz`.
+`delivered_after_ms` only audits delivery. Output timestamp performance times
+and screenshot observation times share the sampler's browser performance origin.
+Use raw `usable` clock samples within the same `clock_segment`; context state
+changes and device changes are mapping barriers. Media pauses are recorded
+separately while the audio context can continue rendering silence.
+
+The fixed image region is derived from the player, two-line font geometry,
+padding and caption bottom position, with an 8 CSS pixel shadow margin. Each
+observation checks that the actual caption bounds and margin fit inside it.
+Viewport, player or font geometry changes, clipped content and out-of-region
+captions produce an explicit capture error. PNGs retain the whole region even
+while blank; OCR determines the text actually present. DOM identity is retained
+as a diagnostic, and a change during a screenshot is marked
+`dom_state_stable: false`. Use the saved image brackets and actual cadence when
+bounding visible transitions.
+
+The clock API provides an output-time estimate. Reports retain
+`output_clock_error_bound_ms: null`, `physical_output_latency: unknown` and
+`acceptance_assessed: false`. [ADR-0011](../adr/0011-browser-clock-engineering-sync.md)
+defines this engineering scope. Existing formal acoustic acceptance is assessed
+separately. The two earlier capture flags keep their existing MediaRecorder
+behavior.
+
+For a zero-ASR bridge self-check, this command opens the existing 8002 origin,
+replaces its page with synthetic media and a dummy Start button, and blocks
+recognition requests:
+
+```sh
+python3 tests/browser/check_engineering_pcm_capture.py \
+  --output /media/wbb/KEKE/LiscaAcceptance/pcm-self-check-new
+```
+
+The self-check verifies literal stereo Float32 samples, onset presence, frame
+and byte continuity, hashes, the final partial batch, media/context pause
+records and periodic blank/changed caption PNGs. It does not establish a numerical error
+bound for the browser's output timestamp API.

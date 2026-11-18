@@ -37,6 +37,13 @@ from browser_acoustic_capture import (
     install_audio_capture,
     save_audio_capture,
 )
+from browser_pcm_capture import (
+    EngineeringPcmWriter,
+    MEASUREMENT_SCOPE,
+    install_engineering_capture,
+    save_engineering_capture,
+)
+from browser_pixel_capture import capture_pixel_observation, install_pixel_capture
 
 
 BASE = "http://127.0.0.1:8002"
@@ -457,18 +464,25 @@ def collect(args):
     start_clicked = False
     sync_capture = bool(getattr(args, "capture_acoustic_sync", False))
     playback_evidence = bool(getattr(args, "capture_playback_evidence", False))
-    capture_enabled = sync_capture or playback_evidence
+    engineering_sync = bool(getattr(args, "capture_engineering_sync", False))
+    engineering_writer = None
+    capture_enabled = sync_capture or playback_evidence or engineering_sync
     acoustic_capture = ({"mode": "browser_web_audio_media_element", "audio": None,
                          "screenshots": [], "screenshot_transition_count": 0}
                         if capture_enabled else None)
-    if playback_evidence:
+    if playback_evidence or engineering_sync:
         acoustic_capture.update({
             "purpose": "long_observation", "acceptance_assessed": False,
             "sync_gate_passed": None,
             "media_element_id": "player" if remote else "audioEl",
             "clock_calibration": None,
         })
+    if engineering_sync:
+        acoustic_capture.update(mode="browser_audio_worklet_pcm", purpose="engineering_sync",
+                                measurement_scope=MEASUREMENT_SCOPE)
+        acoustic_capture.pop("clock_calibration")
     screenshot_state = {"value": ("", False), "index": 1}
+    next_pixel_at = 0.0
     candidate_revision, candidate_dirty = (_candidate_identity()
                                            if capture_enabled else (None, None))
     next_progress_at = 0.0
@@ -477,6 +491,26 @@ def collect(args):
     def capture_error(kind):
         if not any(error.get("type") == kind for error in errors):
             errors.append({"type": kind})
+
+    def periodic_pixels(force=False):
+        nonlocal next_pixel_at
+        pixel_capture = (acoustic_capture or {}).get("pixel_capture")
+        now = time.monotonic()
+        if (not engineering_sync or engineering_writer is None or not pixel_capture
+                or pixel_capture.get("status") == "unknown" or (not force and now < next_pixel_at)):
+            return
+        next_pixel_at = now + .1
+        try:
+            record = capture_pixel_observation(
+                page, Path(output_dir).expanduser() / f"{args.label}.pixels",
+                Path(output_dir).expanduser().resolve(), engineering_writer.pixel_count + 1,
+                pixel_capture)
+            record["context_id"] = engineering_writer.context_id
+            if engineering_writer.receive(record).get("status") != "accepted":
+                raise ValueError("pixel_sink_rejected")
+        except Exception:
+            pixel_capture["status"] = "unknown"
+            capture_error("pixel_capture_unavailable")
 
     def write_progress():
         nonlocal next_progress_at
@@ -510,7 +544,8 @@ def collect(args):
             batch = drain_samples(page)
             samples.extend(batch)
             video_eof |= any(sample.get("ended") for sample in batch)
-            if (acoustic_capture is not None and batch
+            periodic_pixels()
+            if (acoustic_capture is not None and not engineering_sync and batch
                     and not any(error.get("type") == "pixel_capture_unavailable" for error in errors)):
                 sample = batch[-1]
                 visible = sample.get("visible") is True
@@ -672,6 +707,7 @@ def collect(args):
             # WebSocket is expected to close before DELETE returns. Drain available public
             # events without treating the absence of an end event as a cleanup failure.
             drain()
+            periodic_pixels(force=True)
             if playback_evidence:
                 acoustic_capture["clock_calibration"] = _calibrate_capture_clock(
                     page, acoustic_capture.get("clock_calibration"), "end")
@@ -682,15 +718,20 @@ def collect(args):
                 drain()
             except Exception:
                 pass
-            if acoustic_capture is not None and start_clicked:
+            if acoustic_capture is not None and (start_clicked or engineering_writer is not None):
                 try:
-                    acoustic_capture["audio"] = save_audio_capture(
-                        page, Path(output_dir).expanduser() / f"{args.label}.playback.webm",
-                        Path(output_dir).expanduser().resolve(),
-                    )
+                    if engineering_sync:
+                        acoustic_capture["audio"] = (
+                            save_engineering_capture(page, engineering_writer) if start_clicked
+                            else engineering_writer.finish({"status": "not_started"}))
+                    else:
+                        acoustic_capture["audio"] = save_audio_capture(
+                            page, Path(output_dir).expanduser() / f"{args.label}.playback.webm",
+                            Path(output_dir).expanduser().resolve(),
+                        )
                     if acoustic_capture["audio"].get("status") != "captured":
                         capture_error("playback_audio_capture_unavailable")
-                    elif playback_evidence:
+                    elif playback_evidence or engineering_sync:
                         audio = acoustic_capture["audio"]
                         volume = audio.get("media_element_volume")
                         volume_valid = (isinstance(volume, (int, float))
@@ -700,6 +741,15 @@ def collect(args):
                                 or audio.get("media_element_muted") is not False
                                 or not volume_valid):
                             capture_error("playback_audio_capture_unavailable")
+                    if engineering_sync and acoustic_capture.get("pixel_capture"):
+                        pixel_capture = acoustic_capture["pixel_capture"]
+                        audio = acoustic_capture["audio"]
+                        pixel_capture.update(
+                            metadata_path=audio.get("metadata_path"),
+                            metadata_sha256=audio.get("metadata_sha256"),
+                            observation_count=engineering_writer.pixel_count)
+                        if pixel_capture["status"] != "unknown":
+                            pixel_capture["status"] = "captured" if engineering_writer.pixel_count else "unknown"
                 except Exception:
                     acoustic_capture["audio"] = {"status": "capture_failed"}
                     capture_error("playback_audio_capture_unavailable")
@@ -734,19 +784,33 @@ def collect(args):
                             capture_error("playback_capture_clock_unknown")
                     if acoustic_capture is not None:
                         target_id = acoustic_capture.get("media_element_id") or "audioEl"
-                        acoustic_capture["installation"] = _safe_value(
-                            install_audio_capture(page, media_element_id=target_id))
+                        if engineering_sync:
+                            engineering_writer = EngineeringPcmWriter(
+                                Path(output_dir).expanduser() / f"{args.label}.playback.f32le",
+                                Path(output_dir).expanduser().resolve())
+                            installation = install_engineering_capture(
+                                page, engineering_writer, media_element_id=target_id,
+                                max_seconds=(args.seconds + 60 if remote else args.timeout + 15))
+                        else:
+                            installation = install_audio_capture(page, media_element_id=target_id)
+                        acoustic_capture["installation"] = _safe_value(installation)
                         installation = acoustic_capture["installation"]
                         if (installation.get("status") == "installed"
                                 and installation.get("output_clock_supported") is not True):
                             capture_error("playback_capture_clock_unknown")
                         if (installation.get("status") != "installed"
-                                or (playback_evidence and (
+                                or ((playback_evidence or engineering_sync) and (
                                     installation.get("media_element_id") != target_id
                                     or not isinstance(installation.get("media_element_volume"),
                                                       (int, float))
                                     or installation["media_element_volume"] <= 0))):
                             capture_error("playback_audio_capture_unavailable")
+                        if engineering_sync and not errors:
+                            try:
+                                acoustic_capture["pixel_capture"] = install_pixel_capture(page)
+                                periodic_pixels(force=True)
+                            except Exception:
+                                capture_error("pixel_capture_unavailable")
                     preflight_ok = not errors
                     if preflight_ok:
                         page.locator("#start").click()
@@ -844,7 +908,7 @@ def collect(args):
                                 and time.monotonic() - posts["started"] >= args.seconds + 15):
                             errors.append({"type": "live_start_timeout"})
                             break
-                        page.wait_for_timeout(50 if acoustic_capture is not None else 200)
+                        page.wait_for_timeout(20 if engineering_sync else (50 if acoustic_capture is not None else 200))
 
                     drain()
                     last_end = latest_end_event()
@@ -972,6 +1036,12 @@ def collect(args):
             report["candidate_worktree_dirty"] = candidate_dirty
             report["acoustic_capture"] = _safe_value(acoustic_capture)
             report["acoustic_capture"]["physical_output_latency"] = "unknown"
+        elif engineering_sync:
+            report["measurement_scope"] = MEASUREMENT_SCOPE
+            report["engineering_sync"] = _safe_value(acoustic_capture)
+            report["engineering_sync"]["physical_output_latency"] = "unknown"
+            report["engineering_sync"]["candidate_revision"] = candidate_revision
+            report["engineering_sync"]["candidate_worktree_dirty"] = candidate_dirty
         else:
             report["playback_evidence"] = _safe_value(acoustic_capture)
             report["playback_evidence"]["physical_output_latency"] = "unknown"
@@ -1015,6 +1085,8 @@ def parse_args(argv=None):
                                help="Capture fixed-reference browser audio and caption pixels")
     capture_group.add_argument("--capture-playback-evidence", action="store_true",
                                help="Capture unscored long-playback audio/pixels; clock requires <=50 ms estimated uncertainty and start/end drift")
+    capture_group.add_argument("--capture-engineering-sync", action="store_true",
+                               help="Stream lossless PCM and caption pixels using browser output timestamp estimates")
     parser.add_argument("--checkpoints", type=parse_checkpoints, default=[],
                         help="Optional comma-separated local seek checkpoints, such as 5.1,23.8")
     parser.add_argument("--stop-file", type=Path,
@@ -1028,9 +1100,9 @@ def parse_args(argv=None):
         parser.error("--observe-completed-playback is supported only for HTTP(S) sources")
     if not args.media.startswith(("http://", "https://")):
         windows_drive_path = re.match(r"^[A-Za-z]:[\\/]", args.media)
-        if (args.capture_playback_evidence and not windows_drive_path
+        if ((args.capture_playback_evidence or args.capture_engineering_sync) and not windows_drive_path
                 and re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", args.media)):
-            parser.error("--capture-playback-evidence accepts local files or direct HTTP(S) HLS only")
+            parser.error("playback capture accepts local files or direct HTTP(S) HLS only")
         args.media = str(Path(args.media).expanduser().resolve())
     if not math.isfinite(args.seconds) or args.seconds <= 0:
         parser.error("--seconds must be a finite positive duration")
@@ -1047,6 +1119,11 @@ def parse_args(argv=None):
             parser.error("--capture-playback-evidence does not accept --reference or --language")
         if args.media.startswith(("http://", "https://")) and not _is_remote_hls_source(args.media):
             parser.error("--capture-playback-evidence accepts remote HTTP(S) .m3u8 sources only")
+    if args.capture_engineering_sync:
+        if args.output is None:
+            parser.error("--capture-engineering-sync requires an explicit --output directory")
+        if args.media.startswith(("http://", "https://")) and not _is_remote_hls_source(args.media):
+            parser.error("--capture-engineering-sync accepts remote HTTP(S) .m3u8 sources only")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", args.label):
         parser.error("--label must contain 1-80 letters, numbers, dots, underscores, or hyphens")
     return args
