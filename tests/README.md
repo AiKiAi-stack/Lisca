@@ -35,6 +35,7 @@ WebUI 只使用 `127.0.0.1:8002`。替换为夹具前核对占用进程和活动
 | `acceptance/run_original_acceptance.py` | 原文字幕会话与事件记录 |
 | `acceptance/score_original_acceptance.py` | 固定参考文字准确率评分 |
 | `acceptance/score_acoustic_acceptance.py` | 独立声音与画面字幕同步评分 |
+| `acceptance/score_engineering_sync.py` | 浏览器输出时间戳、无损 PCM 与实际像素的工程估计；见[口径与用法](../docs/guides/engineering-sync-estimate.md) |
 | `acceptance/fixed_hls_startup_acceptance.py` | 固定原速 HLS 启动采样 |
 | `acceptance/fixed_realtime_startup_acceptance.py` | 固定实时输入准备与启动采样 |
 | `acceptance/run_webui_with_startup_probe.py` | 加入 PCM 时钟探针的 WebUI 入口 |
