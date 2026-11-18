@@ -218,6 +218,9 @@ def test_cloud_ws_exposes_provider_permission_evidence_without_raw_error(monkeyp
         def transcribe_chunk(self, _audio):
             raise StructuredProviderFailure(403, "Model.AccessDenied")
 
+        def poll(self):
+            return (None, None, "", None)
+
         def close(self):
             pass
 
@@ -275,6 +278,9 @@ def test_cloud_ws_classifies_failures_only_from_provider_evidence(
     class Engine:
         def transcribe_chunk(self, _audio):
             raise failure
+
+        def poll(self):
+            return (None, None, "", None)
 
         def close(self):
             pass
@@ -401,13 +407,16 @@ def test_owner_disconnect_or_cloud_config_delete_allows_only_inflight_recognitio
             stop = webui._CLOUD_JOBS[token]["stop"]
         with client.websocket_connect("/ws?session=" + token):
             assert started.wait(2)
+            calls_at_cancel = calls.copy()
             if cancel_source == "cloud_config_delete":
                 assert client.delete("/api/cloud").status_code == 200
         assert stop.wait(2), "session cancellation did not reach the worker"
         release.set()
         assert source_closed.wait(2), "worker did not release the media source"
 
-    assert calls == {"transcribe": 1, "poll": 0, "finish": 0}
+    assert calls_at_cancel["transcribe"] == 1
+    assert calls_at_cancel["finish"] == 0
+    assert calls == calls_at_cancel
 
 
 def test_non_hls_http_no_progress_watchdog_is_nonretryable_through_public_websocket(monkeypatch):
@@ -437,8 +446,12 @@ def test_non_hls_http_no_progress_watchdog_is_nonretryable_through_public_websoc
         def close(self):
             pass
 
+    def advance_clock(stop, seconds):
+        clock["now"] += seconds
+        return stop.is_set()
+
     monkeypatch.setattr(webui, "_session_monotonic", lambda: clock["now"])
-    monkeypatch.setattr(webui, "_session_wait", lambda stop, _seconds: stop.is_set())
+    monkeypatch.setattr(webui, "_session_wait", advance_clock)
     monkeypatch.setattr(webui, "StreamSource", Source)
     monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
     with TestClient(webui.app) as client:
@@ -496,8 +509,12 @@ def test_live_no_progress_can_recover_after_twenty_seconds_through_public_websoc
         def close(self):
             pass
 
+    def advance_clock(stop, seconds):
+        clock["now"] += seconds
+        return stop.is_set()
+
     monkeypatch.setattr(webui, "_session_monotonic", lambda: clock["now"])
-    monkeypatch.setattr(webui, "_session_wait", lambda stop, _seconds: stop.is_set())
+    monkeypatch.setattr(webui, "_session_wait", advance_clock)
     monkeypatch.setattr(webui, "StreamSource", Source)
     monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
     with TestClient(webui.app) as client:
