@@ -185,7 +185,7 @@ def test_deleting_local_session_interrupts_realtime_feed_pacing(tmp_path, monkey
                 if event['type'] == 'end':
                     break
 
-    assert len(sent) == stopped_at < 100
+    assert len(sent) == stopped_at == 20
     assert events[-1] == {'type': 'end', 'reason': 'cancelled'}
 
 
@@ -673,7 +673,8 @@ def test_thirty_minute_local_silence_prepares_incrementally_with_bounded_feed_an
     sent = []
     fed = [0.0]
     peak_unprocessed_chunks = [0]
-    max_audio_lead = [0.0]
+    max_audio_lead = {'initial': 0.0, 'steady': 0.0}
+    ready_received = threading.Event()
     first_pacing_wait = threading.Event()
     allow_pacing = threading.Event()
     audio = b'\x00' * (16000 * 2)  # One second at the 16 kHz mono worker boundary.
@@ -692,7 +693,8 @@ def test_thirty_minute_local_silence_prepares_incrementally_with_bounded_feed_an
                 peak_unprocessed_chunks[0], generated[0] - len(sent))
             fed[0] += len(pcm) / 16000
             sent.append(fed[0])
-            max_audio_lead[0] = max(max_audio_lead[0], fed[0] - clock[0])
+            stage = 'steady' if ready_received.is_set() else 'initial'
+            max_audio_lead[stage] = max(max_audio_lead[stage], fed[0] - clock[0])
             return self.poll()
         def poll(self): return (None, None, '', None)
         def finish(self): return self.poll()
@@ -721,13 +723,15 @@ def test_thirty_minute_local_silence_prepares_incrementally_with_bounded_feed_an
                 events.append(event)
                 if event['type'] == 'ready':
                     ready_before_eof = generated[0] < 30 * 60 and len(sent) < 30 * 60
+                    ready_received.set()
                     allow_pacing.set()
                 if event['type'] == 'end':
                     break
 
     assert generated[0] == len(sent) == 30 * 60
     assert peak_unprocessed_chunks[0] <= 1
-    assert max_audio_lead[0] <= 2.0 + 1e-6
+    assert max_audio_lead['initial'] <= 2.0 + 1e-6
+    assert max_audio_lead['steady'] <= 2.0 + 1e-6
     assert ready_before_eof
     assert any(event['type'] == 'ready' and event.get('silent') for event in events)
     assert not any(event['type'] in ('subtitle', 'preview') for event in events)
