@@ -9,14 +9,13 @@ from lisca.cloud_translation import CloudConfigStore
 from lisca.web import app as webui
 
 
-def _session_events(tmp_path, monkeypatch, callbacks, *, chunk_sizes=None, advance_wait=False):
+def _session_events(tmp_path, monkeypatch, callbacks, *, chunk_sizes=None):
     monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
     monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
     clock = [0.0]
     monkeypatch.setattr(webui, "_session_monotonic", lambda: clock[0])
     def wait(stop, seconds):
-        if advance_wait:
-            clock[0] += seconds
+        clock[0] += seconds
         return stop.is_set()
     monkeypatch.setattr(webui, "_session_wait", wait)
 
@@ -32,7 +31,7 @@ def _session_events(tmp_path, monkeypatch, callbacks, *, chunk_sizes=None, advan
         def transcribe_chunk(self, _audio):
             at, result = next(self.callbacks)
             if at is not None:
-                clock[0] = at
+                clock[0] = max(clock[0], at)
             return result
         def poll(self): return (None, None, "", None)
         def finish(self): return self.poll()
@@ -250,7 +249,7 @@ def test_timeout_is_checked_during_feed_pacing_before_a_later_final_callback(
         (0.0, (0.0, 2.0, text, words, False, 15)),
         (0.1, (0.0, 2.0, text, words, False, 15)),
         (None, (0.0, 2.0, text + "。", words, True, 15)),
-    ], chunk_sizes=[32000, 32000, 320000], advance_wait=True)
+    ], chunk_sizes=[32000, 32000, 320000])
 
     commits = [event for event in events if event.get("commit_reason")]
     assert [(event["type"], event["commit_reason"]) for event in commits] == [
@@ -267,7 +266,7 @@ def test_eof_keeps_the_original_deadline_and_commits_stable_text_as_a_preview(
     events = _session_events(tmp_path, monkeypatch, [
         (0.0, (0.0, 2.0, text, words, False, 16)),
         (0.2, (0.0, 2.0, text, words, False, 16)),
-    ], advance_wait=True)
+    ])
 
     preview, = [event for event in events if event["type"] == "preview"]
     assert preview["text"] == text and preview["commit_reason"] == "timeout"
@@ -289,7 +288,7 @@ def test_eof_does_not_complete_with_an_unconfirmed_correction_to_a_released_sent
         (0.2, (0.0, 2.0, original, _characters(original, 2.0), False, 17)),
         (6.1, (None, None, "", None)),
         (6.2, (0.0, 2.0, corrected, _characters(corrected, 2.0), False, 17)),
-    ], advance_wait=True)
+    ])
 
     assert [event["text"] for event in events if event["type"] == "preview"] == [original]
     error, = [event for event in events if event["type"] == "error"]
