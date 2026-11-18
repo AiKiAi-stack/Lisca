@@ -13,7 +13,7 @@ async function capture({deviceSignals = true} = {}) {
     enumerateDevices() { assert.fail('device enumeration is outside capture scope'); },
     getUserMedia() { assert.fail('microphone access is outside capture scope'); },
   }) : undefined;
-  let context, clockSample;
+  let context, clockSample, workletOptions;
   let stamp = 0;
   class AudioContext extends EventTarget {
     constructor() {
@@ -39,8 +39,9 @@ async function capture({deviceSignals = true} = {}) {
     createMediaElementSource() { return {connect() {}}; }
   }
   class AudioWorkletNode extends EventTarget {
-    constructor() {
+    constructor(_context, _name, options) {
       super();
+      workletOptions = options;
       let listener;
       this.port = {
         set onmessage(value) {
@@ -72,12 +73,16 @@ async function capture({deviceSignals = true} = {}) {
   const installation = await install({});
   assert.equal(installation.status, 'installed');
   start.dispatchEvent(new Event('click'));
-  return {installation, context, mediaDevices, records,
+  return {installation, context, mediaDevices, records, workletOptions,
     sample: () => clockSample(), save: () => window.__engineeringCapture.save()};
 }
 
 test('both observed device signals split clock mapping and stop writing after save', async () => {
   const tap = await capture();
+  assert.equal(tap.workletOptions.channelCount, 2);
+  assert.equal(tap.workletOptions.channelCountMode, 'explicit');
+  assert.equal(tap.workletOptions.channelInterpretation, 'speakers');
+  assert.equal(tap.workletOptions.outputChannelCount[0], 2);
   tap.sample();
   tap.context.dispatchEvent(new Event('sinkchange'));
   tap.sample();

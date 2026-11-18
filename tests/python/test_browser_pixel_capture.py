@@ -54,6 +54,8 @@ def test_periodic_blank_and_visible_pixels_keep_the_same_conservative_roi(tmp_pa
     assert visible["uncertainty_ms"] == 10
     assert visible["shadow_margin_css_px"] == 8
     assert blank["visible"] is False and visible["visible_text"] == "Visible words"
+    assert visible["font_geometry_normalization"] == {
+        "bottom_css_pixel_quantum": 1 / 64, "rule": "round_to_nearest"}
 
 
 def test_caption_outside_roi_is_unknown_before_cropping_any_glyphs(tmp_path):
@@ -73,3 +75,18 @@ def test_pixel_transition_during_screenshot_keeps_the_actual_image_and_bracket(t
     assert image["dom_state_stable"] is False
     assert image["before_after_ms"] == 20 and image["after_after_ms"] == 40
     assert image["caption_bounds_before"] is None and image["caption_bounds_after"] == box
+
+
+@pytest.mark.parametrize("field, changed", [
+    ("viewport", {"width": 801, "height": 600}),
+    ("player_bounds", {"x": 20, "y": 50, "width": 700, "height": 401}),
+    ("font_geometry", {"line_height": 31}),
+])
+def test_real_geometry_changes_remain_unknown(tmp_path, field, changed):
+    altered = snapshot(at=20)
+    altered[field] = changed
+    page = PixelPage([snapshot(), altered])
+    installed = install_pixel_capture(page)
+    with pytest.raises(ValueError, match="pixel_geometry_unknown"):
+        capture_pixel_observation(page, tmp_path, tmp_path, 1, installed)
+    assert page.clips == []

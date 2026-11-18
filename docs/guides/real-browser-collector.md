@@ -78,6 +78,9 @@ The new report key is `engineering_sync`, with
 `measurement_scope: browser_output_timestamp_estimate`. It retains the selected
 element (`audioEl` for local playback, `player` for direct HLS), candidate
 revision, installation route, audio integrity metadata and `pixel_capture` metadata.
+The worklet uses explicit destination channel count and the browser's speaker
+mixing rules. It records every resulting output channel; this is the destination
+mix, whose channel count can differ from the encoded source.
 The output files are:
 
 - `<label>.playback.f32le`: raw little endian IEEE Float32, all channels
@@ -93,6 +96,12 @@ The output files are:
   the same JSONL contain image hashes, before/after time brackets, viewport and
   region geometry. `pixel_capture.metadata_path` / `metadata_sha256` identify
   that ledger; `ledger_kind` selects these records.
+
+Caption bottom geometry is rounded to the nearest 1/64 CSS pixel because computed
+CSS changes its representation when a hidden caption becomes visible. Installation
+and each observation retain the raw CSS value, raw resolved px and
+`font_geometry_normalization` rule. Actual viewport, player or font geometry
+changes and clipped captions still produce `unknown`.
 
 At 48 kHz, 30 minutes requires about 330 MiB per channel. The browser retains at
 most four unacknowledged PCM batches; the Python sink writes each batch to disk.

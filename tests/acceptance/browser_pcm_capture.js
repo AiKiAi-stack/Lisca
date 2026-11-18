@@ -127,7 +127,9 @@ async ({mediaElementId = 'audioEl', maxSeconds = 600}) => {
     finally { URL.revokeObjectURL(moduleUrl); }
     node = new AudioWorkletNode(context, 'engineering-pcm-tap', {
       numberOfInputs: 1, numberOfOutputs: 1,
-      channelCountMode: 'max', channelInterpretation: 'discrete',
+      channelCount: context.destination.channelCount,
+      channelCountMode: 'explicit', channelInterpretation: 'speakers',
+      outputChannelCount: [context.destination.channelCount],
       processorOptions: {contextId, maxFrames: Math.ceil(maxSeconds * context.sampleRate)},
     });
     source = context.createMediaElementSource(media);
@@ -269,6 +271,9 @@ async ({mediaElementId = 'audioEl', maxSeconds = 600}) => {
     sampler_performance_origin_ms: origin, output_clock_supported: true,
     measurement_scope: 'browser_output_timestamp_estimate',
     routing: 'media_element_audio_worklet_destination', transparent_pcm: true,
+    captured_channel_domain: 'audio_context_destination_speaker_mix',
+    channel_count_mode: 'explicit', channel_interpretation: 'speakers',
+    worklet_output_channel_count: context.destination.channelCount,
     destination_channel_count: context.destination.channelCount,
     destination_max_channel_count: context.destination.maxChannelCount,
     device_change_observability: {

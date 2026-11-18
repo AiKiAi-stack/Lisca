@@ -14,7 +14,9 @@ PIXEL_STATE = r"""() => {
   const rect = value => ({x: value.x, y: value.y, width: value.width, height: value.height});
   const bounds = player.getBoundingClientRect();
   const css = getComputedStyle(caption);
-  const bottom = css.bottom.endsWith('%') ? parseFloat(css.bottom) * bounds.height / 100 : parseFloat(css.bottom);
+  const rawBottom = css.bottom.endsWith('%') ? parseFloat(css.bottom) * bounds.height / 100 : parseFloat(css.bottom);
+  // Computed CSS switches from percentages to rounded px when the caption appears.
+  const bottom = Math.round(rawBottom * 64) / 64;
   const font = {line_height: parseFloat(css.lineHeight), padding_top: parseFloat(css.paddingTop),
     padding_bottom: parseFloat(css.paddingBottom), border_top: parseFloat(css.borderTopWidth),
     border_bottom: parseFloat(css.borderBottomWidth), bottom,
@@ -33,6 +35,7 @@ PIXEL_STATE = r"""() => {
   return {observed_after_ms: performance.now() - started,
     viewport: {width: innerWidth, height: innerHeight}, device_scale_factor: devicePixelRatio,
     player_bounds: rect(bounds), font_geometry: font,
+    raw_caption_bottom_css: css.bottom, raw_caption_bottom_css_px: rawBottom,
     candidate_roi: {x, y, width: Math.ceil(bounds.right) - x,
       height: Math.ceil(bounds.bottom - bottom + 8) - y},
     caption_bounds: captionBounds, visible: !!text.trim() && captionBounds !== null,
@@ -75,7 +78,11 @@ def install_pixel_capture(page):
     installation = {key: snapshot[key] for key in (
         "viewport", "device_scale_factor", "player_bounds", "font_geometry")}
     installation.update(fixed_roi=snapshot["candidate_roi"], shadow_margin_css_px=SHADOW_MARGIN_CSS_PX,
-                        target_interval_ms=100, ledger_kind="pixel_observation", status="installed")
+                        target_interval_ms=100, ledger_kind="pixel_observation", status="installed",
+                        raw_caption_bottom_css=snapshot.get("raw_caption_bottom_css"),
+                        raw_caption_bottom_css_px=snapshot.get("raw_caption_bottom_css_px"),
+                        font_geometry_normalization={"bottom_css_pixel_quantum": 1 / 64,
+                                                     "rule": "round_to_nearest"})
     if not _geometry_valid(snapshot, installation):
         raise ValueError("pixel_geometry_unknown")
     return installation
@@ -117,6 +124,11 @@ def capture_pixel_observation(page, output_dir, report_root, index, installation
         "device_scale_factor_before": before["device_scale_factor"],
         "device_scale_factor_after": after["device_scale_factor"],
         "caption_bounds_before": before["caption_bounds"], "caption_bounds_after": after["caption_bounds"],
+        "raw_caption_bottom_css_before": before.get("raw_caption_bottom_css"),
+        "raw_caption_bottom_css_after": after.get("raw_caption_bottom_css"),
+        "raw_caption_bottom_css_px_before": before.get("raw_caption_bottom_css_px"),
+        "raw_caption_bottom_css_px_after": after.get("raw_caption_bottom_css_px"),
+        "font_geometry_normalization": installation["font_geometry_normalization"],
         "roi_bounds": roi, "shadow_margin_css_px": SHADOW_MARGIN_CSS_PX,
         "ocr_crop_bounds": {"x": 0, "y": 0, "width": width, "height": height},
         "ocr_crop_source": "fixed_caption_roi", "screenshot_width_px": width, "screenshot_height_px": height,
