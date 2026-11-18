@@ -1355,15 +1355,15 @@ async def ws_endpoint(ws: WebSocket):
                                     interval = min(wait, 0.05)
                                     if _session_wait(stop, interval):
                                         break
-                                    if pending_sentences:
+                                    # A final can clear pending before the next draft arrives.
+                                    result = call_provider(engine.poll)
+                                    updated = False
+                                    while result[0] is not None and not stop.is_set():
+                                        emit(result)
+                                        updated = True
                                         result = call_provider(engine.poll)
-                                        updated = False
-                                        while result[0] is not None and not stop.is_set():
-                                            emit(result)
-                                            updated = True
-                                            result = call_provider(engine.poll)
-                                        if updated or check_caption_deadlines():
-                                            publish_buffer()
+                                    if updated or check_caption_deadlines():
+                                        publish_buffer()
                                     check_no_progress()
                                     # ready may arrive while this very chunk is waiting.
                                     wait = feed_wait(chunk_sec)

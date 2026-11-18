@@ -311,3 +311,106 @@ def test_ready_during_a_local_feed_wait_applies_two_second_limit_to_the_pending_
     record_property('pending_chunk_after_ready', json.dumps({
         'final_at': final_at[0], 'feeds_after_final': after_final,
     }))
+
+
+def test_ready_recovery_wait_drains_the_next_sentence_before_feeding_more_audio(
+        tmp_path, monkeypatch, record_property):
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    clock = [0.0]
+    feed, delivered = [], []
+    draft_observed = threading.Event()
+    timeout_observed = threading.Event()
+    media = tmp_path / 'next-sentence-during-recovery.mp4'
+    media.touch()
+    audio = b'\x00\x10' * 1600
+    callbacks = [
+        (8.05, (16.9, 17.8, '第一句需要终稿。', [(16.9, 17.8, '第一句需要终稿')], True, 1)),
+        (8.1, (17.8, None, '第二句仍在准备', [(17.8, 18.0, '第二句仍在准备')], False, 2)),
+        (8.2, (17.8, None, '第二句仍在准备', [(17.8, 18.0, '第二句仍在准备')], False, 2)),
+    ]
+
+    class Source:
+        def __init__(self, *_args, **_kwargs): pass
+        def iter_chunks(self):
+            for _ in range(300):
+                yield audio
+        def close(self): pass
+
+    class Engine:
+        def transcribe_chunk(self, _pcm):
+            feed.append((clock[0], (len(feed) + 1) / 10))
+            if len(feed) == 178:
+                return (16.9, None, '第一句需要终稿',
+                        [(16.9, 17.8, '第一句需要终稿')], False, 1)
+            return self.poll()
+        def poll(self):
+            if len(feed) < 180 or len(delivered) == len(callbacks):
+                return (None, None, '', None)
+            due, result = callbacks[len(delivered)]
+            if clock[0] + 1e-6 < due:
+                return (None, None, '', None)
+            delivered.append(clock[0])
+            return result
+        def finish(self): return self.poll()
+        def close(self): pass
+
+    def advance_clock(stop, seconds):
+        if len(delivered) >= 2 and not draft_observed.is_set():
+            assert draft_observed.wait(3), 'the next draft was not observed'
+        if (len(delivered) >= 2 and clock[0] + 1e-6 >= delivered[1] + 6
+                and not timeout_observed.is_set()):
+            assert timeout_observed.wait(3), 'the next sentence missed its original deadline'
+        clock[0] += seconds
+        return stop.is_set()
+
+    monkeypatch.setattr(webui, '_session_monotonic', lambda: clock[0])
+    monkeypatch.setattr(webui, '_session_wait', advance_clock)
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    observed = {}
+    try:
+        with TestClient(webui.app) as client:
+            client.put('/api/cloud', json={'api_key': 'polling-fixture'})
+            session = client.post('/api/cloud/sessions', json={'url': str(media)}).json()['session']
+            with client.websocket_connect('/ws?session=' + session) as socket:
+                events = []
+                try:
+                    while True:
+                        event = socket.receive_json()
+                        events.append(event)
+                        if (event['type'] == 'subtitle' and event.get('sentence_id') == 2
+                                and not draft_observed.is_set()):
+                            observed['draft_at'] = clock[0]
+                            assert clock[0] == pytest.approx(8.1, abs=0.051)
+                            assert len(feed) == 180
+                            assert any(item['type'] == 'ready' for item in events)
+                            draft_observed.set()
+                        if event['type'] == 'preview' and event.get('sentence_id') == 2:
+                            observed['timeout_at'] = clock[0]
+                            assert clock[0] == pytest.approx(14.1, abs=0.051)
+                            assert len(feed) == 180
+                            assert event['text'] == '第二句仍在准备'
+                            assert event['commit_reason'] == 'timeout'
+                            assert event['is_final'] is False
+                            break
+                        if event['type'] == 'end':
+                            pytest.fail('session ended before the next sentence was prepared')
+                finally:
+                    assert client.delete('/api/cloud/sessions/' + session).json() == {'ok': True}
+                    draft_observed.set()
+                    timeout_observed.set()
+                while events[-1]['type'] != 'end':
+                    events.append(socket.receive_json())
+    finally:
+        draft_observed.set()
+        timeout_observed.set()
+
+    assert len(feed) == 180
+    assert feed[-1] == pytest.approx((8.0, 18.0))
+    assert delivered == pytest.approx([8.05, 8.1, 8.2])
+    assert events[-1] == {'type': 'end', 'reason': 'cancelled'}
+    record_property('next_sentence_during_ready_recovery', json.dumps({
+        **observed, 'callback_times': delivered, 'last_feed': feed[-1],
+        'sent_chunks': len(feed),
+    }))
