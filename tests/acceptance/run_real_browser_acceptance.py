@@ -12,6 +12,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -370,6 +371,23 @@ def _result_paths(output_dir, label):
             destination / f"{label}.score.json")
 
 
+def _reserve_engineering_artifacts(output_dir, label):
+    destination = Path(output_dir).expanduser()
+    for suffix in (".playback.f32le", ".playback.frames.jsonl", ".pixels", ".report.json",
+                   ".recording.json", ".score.json", ".engineering-score.json", ".progress.json",
+                   ".engineering-reservation.json", ""):
+        artifact = destination / f"{label}{suffix}"
+        if artifact.exists() or artifact.is_symlink():
+            raise FileExistsError(f"engineering artifact already exists: {artifact.name}")
+    destination.mkdir(parents=True, exist_ok=True)
+    # Keep the exclusive reservation after interruption as well as completion.
+    with (destination / f"{label}.engineering-reservation.json").open("x", encoding="utf-8") as stream:
+        json.dump({"purpose": "engineering_sync_artifact_reservation", "label": label,
+                   "created_at": datetime.now(timezone.utc).isoformat(), "pid": os.getpid()}, stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def _candidate_identity():
     try:
         revision = subprocess.run(
@@ -436,6 +454,19 @@ def _calibrate_capture_clock(page, calibration, edge):
 
 def collect(args):
     output_dir = args.output or ROOT / "logs" / "real-browser-acceptance"
+    if getattr(args, "capture_engineering_sync", False):
+        try:
+            _reserve_engineering_artifacts(output_dir, args.label)
+        except OSError as exc:
+            return {
+                "label": args.label, "admission_status": "rejected", "recording_status": "not_started",
+                "session_post_start_count": 0, "timeline_sample_count": 0,
+                "simulated_recognition": False, "real_accuracy_tested": False,
+                "measurement_status": "not_started", "exit_ok": False,
+                "errors": [{"type": ("engineering_artifact_collision" if isinstance(exc, FileExistsError)
+                                     else "engineering_artifact_admission_unavailable"),
+                            "message": sanitize_text(str(exc))}],
+            }
     recording_path, report_path, score_path = _result_paths(output_dir, args.label)
     remote = args.media.startswith(("http://", "https://"))
     observe_recovery = bool(getattr(args, "observe_recovery", False))

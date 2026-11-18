@@ -227,12 +227,23 @@ async ({mediaElementId = 'audioEl', maxSeconds = 600}) => {
     send(event('capture_error', {reason: 'worklet_processor_error'}));
     fail('worklet_processor_error');
   });
-  context.addEventListener('sinkchange', () => {
+  const mediaDevices = typeof navigator === 'undefined' ? null : navigator.mediaDevices;
+  const sinkChangeSupported = 'onsinkchange' in context;
+  const deviceChangeSupported = !!mediaDevices && 'ondevicechange' in mediaDevices
+    && typeof mediaDevices.addEventListener === 'function'
+    && typeof mediaDevices.removeEventListener === 'function';
+  const deviceChange = source => {
+    if (closing) return;
     segment++;
     lastClock = null;
-    send(event('device_change', {clock_segment: segment, mapping_barrier: true,
+    send(event('device_change', {source, state: context.state,
+      clock_segment: segment, mapping_barrier: true,
       observed_after_ms: performance.now() - origin}));
-  });
+  };
+  const onSinkChange = () => deviceChange('audio_context_sinkchange');
+  const onDeviceChange = () => deviceChange('media_devices_devicechange');
+  if (sinkChangeSupported) context.addEventListener('sinkchange', onSinkChange);
+  if (deviceChangeSupported) mediaDevices.addEventListener('devicechange', onDeviceChange);
   for (const name of ['play', 'playing', 'pause', 'waiting', 'ended', 'volumechange']) {
     media.addEventListener(name, () => {
       if (!closing) send(event('media_state', {event: name, state: context.state,
@@ -260,6 +271,11 @@ async ({mediaElementId = 'audioEl', maxSeconds = 600}) => {
     routing: 'media_element_audio_worklet_destination', transparent_pcm: true,
     destination_channel_count: context.destination.channelCount,
     destination_max_channel_count: context.destination.maxChannelCount,
+    device_change_observability: {
+      audio_context_sinkchange_supported: sinkChangeSupported,
+      media_devices_devicechange_supported: deviceChangeSupported,
+      status: sinkChangeSupported || deviceChangeSupported ? 'best_effort' : 'unknown',
+      system_output_route: 'not_independently_observed'},
     output_clock_error_bound_ms: null, max_queued_batches: maxQueuedBatches,
     batch_target_frames: 4096, base_latency_seconds: context.baseLatency ?? null,
     output_latency_seconds: context.outputLatency ?? null};
@@ -268,6 +284,9 @@ async ({mediaElementId = 'audioEl', maxSeconds = 600}) => {
     save: async () => {
       closing = true;
       clearInterval(clockTimer);
+      context.removeEventListener('statechange', contextState);
+      if (sinkChangeSupported) context.removeEventListener('sinkchange', onSinkChange);
+      if (deviceChangeSupported) mediaDevices.removeEventListener('devicechange', onDeviceChange);
       sampleClock();
       if (context.state === 'running') {
         await new Promise(resolve => {

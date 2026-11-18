@@ -1,4 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 import json
+from threading import Event
 import time
 
 import pytest
@@ -557,6 +560,103 @@ def test_engineering_capture_preflight_failure_precedes_any_paid_session(tmp_pat
     assert page.start_clicks == page.save_calls == report["session_post_start_count"] == 0
     assert result["exit_ok"] is False
     assert report["engineering_sync"]["audio"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize("suffix", [
+    ".playback.f32le", ".playback.frames.jsonl", ".pixels", ".report.json",
+    ".recording.json", ".score.json", ".engineering-score.json", ".progress.json",
+    ".engineering-reservation.json", "",
+    pytest.param((".report.json", ".playback.f32le", ".playback.frames.jsonl",
+                  ".progress.json"), id="original-report-pcm-ledger-progress"),
+])
+def test_engineering_cli_rejects_owned_artifacts_without_touching_evidence(
+        tmp_path, monkeypatch, capsys, suffix):
+    label = "existing-evidence"
+    for name in suffix if isinstance(suffix, tuple) else (suffix,):
+        artifact = tmp_path / f"{label}{name}"
+        if name in (".pixels", ""):
+            artifact.mkdir()
+            artifact = artifact / "sentinel.png"
+        artifact.write_bytes(b"original evidence must survive byte for byte\n")
+    before = {path.relative_to(tmp_path): path.read_bytes()
+              for path in tmp_path.rglob("*") if path.is_file()}
+    launches = []
+    monkeypatch.setattr(acceptance, "sync_playwright", nullcontext)
+
+    def fail_browser_launch(_playwright):
+        launches.append(True)
+        raise RuntimeError("fake browser boundary; no network")
+
+    monkeypatch.setattr(acceptance, "launch_browser", fail_browser_launch)
+    exit_code = acceptance.main([
+        "--media", "https://media.test/live.m3u8", "--label", label,
+        "--output", str(tmp_path), "--capture-engineering-sync", "--seconds", ".2",
+    ])
+    result = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert {path.relative_to(tmp_path): path.read_bytes()
+            for path in tmp_path.rglob("*") if path.is_file()} == before
+    assert result["admission_status"] == "rejected"
+    assert result["session_post_start_count"] == 0
+    assert launches == []
+
+
+def test_engineering_capture_allows_runner_manifest_and_logs(tmp_path, monkeypatch):
+    label = "runner-files"
+    sentinels = {tmp_path / f"{label}{suffix}": b"external runner evidence\n"
+                 for suffix in (".manifest.json", ".collector.log", ".monitor.log")}
+    for path, value in sentinels.items():
+        path.write_bytes(value)
+
+    result, _report, _recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label=label, seconds=.2,
+        on_start=lambda page: page.open_session(), engineering_sync=True)
+
+    assert result["exit_ok"] is True
+    assert all(path.read_bytes() == value for path, value in sentinels.items())
+
+
+def test_engineering_admission_exclusively_reserves_label_before_browser_start(
+        tmp_path, monkeypatch):
+    args = acceptance.parse_args([
+        "--media", "https://media.test/live.m3u8", "--label", "concurrent",
+        "--output", str(tmp_path), "--capture-engineering-sync",
+    ])
+    entered, release = Event(), Event()
+    launches = []
+    monkeypatch.setattr(acceptance, "sync_playwright", nullcontext)
+
+    def blocked_browser_launch(_playwright):
+        launches.append(True)
+        entered.set()
+        if not release.wait(5):
+            raise RuntimeError("fake browser release timed out")
+        raise RuntimeError("fake browser stopped before Start; no network")
+
+    monkeypatch.setattr(acceptance, "launch_browser", blocked_browser_launch)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(acceptance.collect, args)
+        try:
+            assert entered.wait(5)
+            second = executor.submit(acceptance.collect, args).result(timeout=2)
+            assert second["admission_status"] == "rejected"
+            assert second["session_post_start_count"] == 0
+            assert not (tmp_path / "concurrent.report.json").exists()
+            reservation_path = tmp_path / "concurrent.engineering-reservation.json"
+            reserved = reservation_path.read_bytes()
+        finally:
+            release.set()
+        first_result = first.result(timeout=5)
+
+    assert launches == [True]
+    assert first_result["session_post_start_count"] == 0
+    assert reservation_path.read_bytes() == reserved
+    reservation = json.loads(reserved)
+    assert reservation["label"] == "concurrent"
+    assert reservation["created_at"]
+    assert isinstance(reservation["pid"], int)
+    assert "media.test" not in reserved.decode()
 
 
 @pytest.mark.parametrize("observe_recovery", [False, True])

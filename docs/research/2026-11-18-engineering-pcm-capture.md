@@ -35,3 +35,12 @@ JSONL SHA-256：`7a3c6630672eb10918bed3715a355083aec93beb10d9796cabf688022078b37
 - 产品：API 时间戳精度没有新的数值保证；保存的图像仍需独立 OCR。未执行付费识别、旧校准或真实长测，本记录不授予同步、覆盖率或正式发布通过。
 
 [W3C Worklet 输入契约](https://www.w3.org/TR/webaudio-1.1/#dom-audioworkletprocessor-process)规定无活动来源时输入数组为空，采集会等待活动输入后建立首帧。该契约说明启动等待的处理方式；自检范围仍按实际执行的合成路径报告。
+
+## 静态审查 P2 修复
+
+两项发现分别留证于外部 `engineering-pcm-capture-20261118/review-p2-*`：
+
+- 产物覆盖：原 collector 在已有 PCM 引发失败后仍重写录制、报告与进度。工程入口现于浏览器启动前检查明确的自有产物清单，并独占创建持久标签预留；同标签并发、旧 PCM/ledger/图像/报告/录制/评分/进度及检查点均拒绝。运行器预建 manifest 与外部日志仍可使用。CLI 红灯保留旧证据被改写的现场；修复后逐字节不变且零会话请求。
+- 设备信号：保留 AudioContext sinkchange，加入可用的 mediaDevices devicechange；两者各自递增时钟段并记录屏障，保存时解绑。安装及尾批元数据记录信号支持和 best_effort/unknown，系统输出路由保持 `not_independently_observed`。不读取设备身份或请求权限；无事件不能证明设备未变。
+
+本轮仅执行 fake-browser/CLI 与 Node EventTarget 边界测试：90 项 Python 回归、2 项 Node 测试通过。新增测试先在原候选上得到预期失败，原始失败日志和产物另存；未增加第四次 Chrome 采集。PCM worklet 处理、流写格式及区域截图实现保持原有字节，前述浏览器证据只支持其原有范围；新增设备观察由 Node 测试支持，待真实采集继续记录。

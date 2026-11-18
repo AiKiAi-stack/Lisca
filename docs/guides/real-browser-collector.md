@@ -66,6 +66,14 @@ python3 tests/acceptance/run_real_browser_acceptance.py \
   --output /media/wbb/KEKE/LiscaAcceptance/engineering-local
 ```
 
+Engineering runs reject an occupied label before opening the browser or writing
+progress and reports. The owned PCM, ledger, pixel directory, recording, report,
+text/engineering scores, progress and checkpoint directory must be absent. A
+persistent `<label>.engineering-reservation.json` is created exclusively, with
+creation time and process ID, so concurrent or interrupted runs cannot reuse the
+label. Choose a fresh label for another attempt. The runner's precreated
+`<label>.manifest.json`, `<label>.collector.log` and `<label>.monitor.log` are allowed.
+
 The new report key is `engineering_sync`, with
 `measurement_scope: browser_output_timestamp_estimate`. It retains the selected
 element (`audioEl` for local playback, `player` for direct HLS), candidate
@@ -90,6 +98,14 @@ At 48 kHz, 30 minutes requires about 330 MiB per channel. The browser retains at
 most four unacknowledged PCM batches; the Python sink writes each batch to disk.
 Gaps, overlap, sequence/format changes, truncated payloads, overflow or a missing
 tail make the capture `unknown`; missing audio is never padded with zeros.
+
+Available AudioContext `sinkchange` and mediaDevices `devicechange` signals each
+start a new clock segment and record a `device_change` mapping barrier with its
+`source`. They do not request microphone permission or read device names/IDs.
+Installation and capture summaries retain `device_change_observability`: support
+for both signals, `status: best_effort` (or `unknown` when unavailable), and
+`system_output_route: not_independently_observed`. An absent event does not prove
+the system route remained unchanged. Saving removes both device listeners.
 Existing evidence files are protected from overwrite.
 
 Sample `j` in a quantum has context time `(current_frame + j) / sample_rate_hz`.
