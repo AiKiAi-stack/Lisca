@@ -78,7 +78,7 @@ def classify_provider_failure(error):
     if category is None:
         category = "unknown"
 
-    return {
+    details = {
         "failure_category": category,
         "retryable": category in ("rate_limited", "network", "temporarily_unavailable"),
         "provider_status": status,
@@ -86,3 +86,10 @@ def classify_provider_failure(error):
         "provider_code": code if code in _CODE_CATEGORIES else None,
         "message": _MESSAGES[category],
     }
+    sdk_kind = getattr(error, "sdk_failure_kind", None)
+    sdk_status = getattr(error, "status_code", None)
+    # pylint: disable=unidiomatic-typecheck
+    if (type(sdk_status) is int and sdk_status == -1 and code == "Unknown" and
+            type(sdk_kind) is str and sdk_kind in ("timeout", "connection", "protocol")):
+        details.update(sdk_failure_kind=sdk_kind, sdk_failure_source="dashscope_exception_type")
+    return details

@@ -820,6 +820,44 @@ def test_opt_in_observation_stops_on_nonretryable_or_missing_retryability(
     assert clock["now"] - 100.0 < 0.3
 
 
+@pytest.mark.parametrize(("sdk_kind", "sdk_source", "expected"), [
+    (kind, "dashscope_exception_type", {
+        "sdk_failure_kind": kind, "sdk_failure_source": "dashscope_exception_type",
+    }) for kind in ("timeout", "connection", "protocol")
+] + [
+    ("private-key-and-transcript", "private-exception-class", {}),
+    ({"message": "private-key-and-transcript"}, ["private-exception-class"], {}),
+])
+def test_collector_preserves_only_allowlisted_sdk_diagnostics_in_recording_and_report(
+        tmp_path, monkeypatch, sdk_kind, sdk_source, expected):
+    def on_start(page):
+        page.open_session().send({
+            "type": "error", "failure_category": "unknown", "retryable": False,
+            "sdk_failure_kind": sdk_kind, "sdk_failure_source": sdk_source,
+            "message": "private-key-and-transcript",
+            "provider_code": "private-provider-code", "exception": "private-exception-class",
+        })
+
+    result, report, recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="sdk-diagnostic", seconds=10, on_start=on_start)
+
+    assert result["recording_status"] == "failed"
+    assert result["exit_ok"] is False
+    assert report["session_post_start_count"] == 1
+    saved_event = next(event for event in recording["events"] if event["type"] == "error")
+    assert saved_event["message_present"] is True
+    for item in (saved_event, next(error for error in recording["errors"]
+                                  if error["type"] == "recognition_error"),
+                 next(error for error in report["errors"]
+                      if error["type"] == "recognition_error")):
+        assert item["failure_category"] == "unknown"
+        assert item["retryable"] is False
+        assert {name: item[name] for name in ("sdk_failure_kind", "sdk_failure_source")
+                if name in item} == expected
+    for suffix in ("recording", "report"):
+        assert "private" not in (tmp_path / f"sdk-diagnostic.{suffix}.json").read_text()
+
+
 def test_opt_in_observation_stops_when_manual_retry_ui_persists_after_recovery_budget(
         tmp_path, monkeypatch):
     def on_start(page):

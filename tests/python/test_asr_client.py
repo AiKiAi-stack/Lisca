@@ -8,38 +8,48 @@ from lisca.asr.asr_config import ASRSettings
 
 
 class TestASRClient:
+    @pytest.mark.parametrize(("status", "code", "sdk_kind"), [
+        (403, "Model.AccessDenied", None), (-1, "Unknown", "protocol"),
+    ])
     @patch("lisca.asr.asr_client.Recognition")
-    def test_provider_send_failure_is_not_reported_as_transport_failure(self, mock_rec):
+    def test_provider_send_failure_is_not_reported_as_transport_failure(
+            self, mock_rec, status, code, sdk_kind):
         from lisca.asr.asr_client import RecognitionFailure
         from lisca.asr.recognition_process import RecognitionProviderError
 
         mock_rec.return_value.send_audio_frame.side_effect = RecognitionProviderError(
-            403, "Model.AccessDenied")
+            status, code, sdk_kind)
         client = ASRClient(ASRSettings(api_key="fake-test-key"))
         client.start()
         client.feed_audio(b"\x01\x00" * 1600)
         with pytest.raises(RecognitionFailure) as caught:
             client.stop()
-        assert caught.value.status_code == 403
-        assert caught.value.code == "Model.AccessDenied"
+        assert caught.value.status_code == status
+        assert caught.value.code == code
+        assert caught.value.sdk_failure_kind == sdk_kind
 
+    @pytest.mark.parametrize(("status", "code", "sdk_kind"), [
+        (403, "Model.AccessDenied", None), (-1, "Unknown", "protocol"),
+    ])
     @patch("lisca.asr.asr_client.Recognition")
-    def test_eof_provider_error_keeps_structured_cause_after_shutdown(self, mock_rec):
+    def test_eof_provider_error_keeps_structured_cause_after_shutdown(
+            self, mock_rec, status, code, sdk_kind):
         from lisca.asr.asr_client import RecognitionFailure
 
         client = ASRClient(ASRSettings(api_key="fake-test-key"))
         callback = mock_rec.call_args.kwargs["callback"]
 
         def fail_at_eof(**_kwargs):
-            callback.on_error(Mock(status_code=403, code="Model.AccessDenied"))
+            callback.on_error(Mock(status_code=status, code=code, sdk_failure_kind=sdk_kind))
             raise ConnectionError("Recognition worker failed before completion")
 
         mock_rec.return_value.stop.side_effect = fail_at_eof
         client.start()
         with pytest.raises(RecognitionFailure) as caught:
             client.stop()
-        assert caught.value.status_code == 403
-        assert caught.value.code == "Model.AccessDenied"
+        assert caught.value.status_code == status
+        assert caught.value.code == code
+        assert caught.value.sdk_failure_kind == sdk_kind
         mock_rec.return_value.cancel.assert_called_once()
 
     @patch("lisca.asr.asr_client.Recognition")
