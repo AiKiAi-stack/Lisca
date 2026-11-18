@@ -968,12 +968,20 @@ def test_audio_capture_reports_recorder_failure_after_clock_failure():
             page.evaluate('''() => {
               window.__realAcceptanceSampler = {started: performance.now()};
               window.AudioContext = class {
-                constructor() { this.state = 'running'; this.sampleRate = 16000; this.currentTime = 0; }
+                constructor() {
+                  this.state = 'running'; this.sampleRate = 16000; this.currentTime = 0;
+                  this.audioWorklet = {addModule: async () => {}};
+                }
                 createMediaElementSource() { return {connect() {}}; }
                 createMediaStreamDestination() { return {stream: {}}; }
                 createAnalyser() { return {fftSize: 1024, connect() {}, getFloatTimeDomainData() {}}; }
+                createGain() { return {gain: {value: 1}, connect() {}}; }
                 getOutputTimestamp() { throw Error('clock failure'); }
                 resume() { return Promise.resolve(); }
+              };
+              window.AudioWorkletNode = class {
+                constructor() { this.port = {}; }
+                connect() {}
               };
               window.MediaRecorder = class extends EventTarget {
                 static isTypeSupported() { return true; }
@@ -988,3 +996,133 @@ def test_audio_capture_reports_recorder_failure_after_clock_failure():
             assert page.evaluate("() => window.__acousticCapture.status()") == "recorder_error"
         finally:
             browser.close()
+
+
+@pytest.fixture
+def causal_fixture_page(tmp_path):
+    """Exercise the real calibration page through its public capture adapters."""
+    import functools
+    import threading
+    import wave
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+    import numpy as np
+    from playwright.sync_api import sync_playwright
+    from acoustic_calibration_fixture import PAGE
+    from e2e_original_release import launch_browser
+
+    rate = 48000
+    samples = (8000 * np.sin(np.arange(round(1.2 * rate)) * (2 * np.pi * 440 / rate))).astype('<i2')
+    with wave.Wave_write(str(tmp_path / 'source.wav')) as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(rate)
+        output.writeframes(samples.tobytes())
+    (tmp_path / 'index.html').write_text(PAGE.replace('<script>',
+        '<script>const CONFIG={lag:0,delta:0};', 1), encoding='utf-8')
+    server = ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(
+        SimpleHTTPRequestHandler, directory=str(tmp_path)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with sync_playwright() as playwright:
+            browser = launch_browser(playwright)
+            try:
+                page = browser.new_page(viewport={'width': 800, 'height': 400},
+                                        device_scale_factor=1, accept_downloads=True)
+                yield page, f'http://127.0.0.1:{server.server_port}/index.html'
+            finally:
+                browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_actual_causal_fixture_saves_complete_raster_and_graph_nonces(tmp_path, causal_fixture_page):
+    import av
+    import numpy as np
+    from browser_acoustic_capture import (
+        capture_visible_screenshot, install_audio_capture, save_audio_capture,
+    )
+
+    page, origin = causal_fixture_page
+    page.goto(origin)
+    assert install_audio_capture(page)['status'] == 'installed'
+    page.click('#start')
+    page.wait_for_function("window.__immutableCaptionFixture.text === 'sentence 01'")
+    screen = capture_visible_screenshot(page, tmp_path / 'screens', tmp_path, 0)
+    assert screen is not None
+    immutable = screen['immutable_caption']
+    bounds = immutable['raster_bounds']
+    assert 0 <= bounds['x'] < bounds['x'] + bounds['width'] <= screen['screenshot_width_px']
+    assert 0 <= bounds['y'] < bounds['y'] + bounds['height'] <= screen['screenshot_height_px']
+    with av.open(str(tmp_path / screen['path']), format='png_pipe') as image:
+        pixels = next(image.decode(video=0)).to_ndarray(format='rgb24')
+    with av.open(str(tmp_path / immutable['raster_path']), format='png_pipe') as image:
+        raster = next(image.decode(video=0)).to_ndarray(format='rgb24')
+    x, y = round(bounds['x']), round(bounds['y'])
+    assert np.array_equal(pixels[y:y + 128, x:x + 640], raster)
+    assert page.evaluate('() => __immutableCaptionFixture.held') is False
+    page.wait_for_function('fixture.done')
+    audio = save_audio_capture(page, tmp_path / 'playback.webm', tmp_path)
+    assert audio['status'] == 'captured'
+    pcm = audio['pcm_capture']
+    witnesses = pcm['causal_graph']['witnesses']
+    assert witnesses
+    assert len({row['nonce'] for row in witnesses}) == len(witnesses)
+    for row in witnesses:
+        block = pcm['blocks'][row['sequence']]
+        assert row['nonce'] in block['witness_nonces']
+        assert row['start_frame'] == block['start_frame']
+        assert row['send_after_ms'] <= row['receive_after_ms']
+    (tmp_path / 'capability.json').write_text(json.dumps({'screen': screen, 'audio': audio}), encoding='utf-8')
+
+
+@pytest.mark.parametrize(('missing_message', 'reason'), [
+    ('observe', 'causal_graph_reply_timeout'), ('stop', 'pcm_stop_reply_timeout'),
+])
+def test_public_causal_save_bounds_missing_graph_reply_and_releases_hold(
+        tmp_path, causal_fixture_page, missing_message, reason):
+    from browser_acoustic_capture import install_audio_capture
+
+    page, origin = causal_fixture_page
+    page.add_init_script('''(() => {
+      const Original = window.AudioWorkletNode;
+      window.AudioWorkletNode = class extends Original {
+        constructor(...args) {
+          super(...args);
+          const send = this.port.postMessage.bind(this.port);
+          this.port.postMessage = (message, ...rest) => {
+            if ((message?.kind || message) !== 'DROP_KIND') send(message, ...rest);
+          };
+        }
+      };
+    })();'''.replace('DROP_KIND', missing_message))
+    page.goto(origin)
+    assert install_audio_capture(page)['status'] == 'installed'
+    page.click('#start')
+    page.wait_for_function("window.__immutableCaptionFixture.text === 'sentence 01'")
+    downloads = []
+    page.on('download', lambda download: downloads.append(download))
+    result = page.evaluate('''async () => {
+      __immutableCaptionFixture.hold();
+      const start = performance.now();
+      return await Promise.race([
+        __acousticCapture.save().then(value => ({outcome:'resolved',value}))
+          .catch(error => ({outcome:'rejected',error:error.message,
+            held:__immutableCaptionFixture.held,elapsed:performance.now()-start})),
+        new Promise(resolve => setTimeout(() => resolve({outcome:'harness_deadline',
+          held:__immutableCaptionFixture.held}),1800))
+      ]);
+    }''')
+    (tmp_path / 'fault-result.json').write_text(json.dumps(result), encoding='utf-8')
+    assert result['outcome'] == 'rejected', result
+    assert result['error'] == reason
+    assert result['held'] is False
+    assert result['elapsed'] < 1800
+    assert not downloads
+    future = page.evaluate('''async () => {
+      try { await __acousticCapture.observe(); return 'resolved'; }
+      catch(error) { return error.message; }
+    }''')
+    assert future == reason

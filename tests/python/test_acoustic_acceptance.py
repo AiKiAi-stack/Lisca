@@ -345,6 +345,190 @@ def test_public_cli_reports_synthetic_pass_as_calibration_only(tmp_path):
     assert result["physical_output_latency"] == "unknown"
 
 
+def _declare_zero_asr(paths):
+    spans = json.loads(paths[2].read_text(encoding="utf-8"))
+    spans["source_condition"] = "synthetic_tone_fixture"
+    paths[2].write_text(json.dumps(spans), encoding="utf-8")
+    for path in paths[3:]:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document.update({"recognition_mode": "none", "simulated_recognition": True,
+                         "session_post_start_count": 0,
+                         "completion_signal": "media_ended",
+                         "events": [{"type": "media_ended", "reason": "completed"}]})
+        path.write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_public_cli_accepts_honest_zero_asr_only_as_calibration(tmp_path):
+    paths = _write_evidence(tmp_path)
+    _declare_zero_asr(paths)
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 0, completed.stdout
+    assert result["sync_status"] == "calibration_only"
+    assert result["sync_gate_passed"] is None
+    assert result["release_gate_passed"] is False
+    assert result["acceptance_status"] == "not_assessed"
+
+
+def _declare_pcm_pause(paths):
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    audio = report["acoustic_capture"]["audio"]
+    count = round(50.6 * RATE)
+    audio["pcm_capture"] = {
+        "schema_version": 1, "path": audio["path"], "sha256": audio["sha256"],
+        "sample_rate_hz": RATE, "channels": 1,
+        "blocks": [{"sequence": index, "start_frame": RATE + start,
+                    "frame_count": min(128, count - start),
+                    "context_time_seconds": (RATE + start) / RATE}
+                   for index, start in enumerate(range(0, count, 128))],
+        "actions": [{"kind": kind,
+                     "before": {"frame": round((1 + time) * RATE),
+                                "performance_after_ms": time * 1000},
+                     "after": {"frame": round((1 + time) * RATE),
+                               "performance_after_ms": time * 1000}}
+                    for kind, time in (("pause", 25.5), ("resume", 26.1))],
+    }
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+
+def test_public_cli_qualifies_a_voiced_pause_with_frame_evidence(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "RATE", 48000)
+    paths = _write_evidence(tmp_path, pause_at=25.5, sampling_step_ms=10)
+    _declare_zero_asr(paths)
+    _declare_pcm_pause(paths)
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 0, completed.stdout
+    assert result["measured_item_count"] == 50
+    certificate = result["audio_alignment"]["pause_certificates"][0]
+    low, high = certificate["source_gap_interval_seconds"]
+    assert low <= 0 <= high
+    assert high - low < 0.05
+    assert result["acceptance_status"] == "not_assessed"
+
+
+def test_public_cli_uses_pcm_render_clock_for_media_progression(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "RATE", 48000)
+    paths = _write_evidence(tmp_path, pause_at=25.5, sampling_step_ms=10)
+    _declare_zero_asr(paths)
+    _declare_pcm_pause(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    audio = report["acoustic_capture"]["audio"]
+    for row in report["timeline_samples"] + report["acoustic_capture"]["screenshots"]:
+        row["observed_after_ms"] /= 1.001
+    for row in audio["output_clock_samples"]:
+        row["performance_time_after_ms"] /= 1.001
+    for action in audio["pcm_capture"]["actions"]:
+        for row in (action["before"], action["after"]):
+            row["performance_after_ms"] /= 1.001
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 0, completed.stdout
+    assert result["measured_item_count"] == 50
+    assert result["audio_alignment"]["progression_clock"] == "pcm_render_context"
+
+
+@pytest.mark.parametrize("pcm", [False, True])
+def test_public_cli_keeps_112ms_unmarked_jump_unknown_with_or_without_pcm(tmp_path, pcm):
+    paths = _write_evidence(tmp_path, pause_at=25.5)
+    if pcm:
+        _declare_zero_asr(paths)
+        _declare_pcm_pause(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    for row in report["timeline_samples"]:
+        if row["observed_after_ms"] >= 10000:
+            row["media_time"] += 0.112
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 1
+    assert result["audio_alignment"]["reason"] == "unmarked_playback_time_forward_jump"
+    assert result["unknown_item_count"] == result["samples"] == 50
+
+
+def test_browser_fixture_preserves_the_last_lag_caption_boundary(tmp_path):
+    directory = tmp_path / "prepared"
+    fixture = Path(__file__).resolve().parents[1] / "acceptance" / "acoustic_calibration_fixture.py"
+    completed = subprocess.run([sys.executable, str(fixture), "--prepare-only",
+                                "--output-root", str(directory)], capture_output=True, text=True)
+
+    assert completed.returncode == 0, completed.stderr
+    with wave.open(str(directory / "source.wav"), "rb") as source:
+        assert source.getnframes() / source.getframerate() > 50.63
+    reference = json.loads((directory / "reference.json").read_text(encoding="utf-8"))
+    assert len(reference["items"]) == 50
+
+
+@pytest.mark.parametrize(("measured", "p95", "signed_lag", "expected"), [
+    (50, 0.74, True, True), (0, 0.74, True, False),
+    (50, 0.2, True, False), (50, 0.74, False, False)])
+def test_browser_fixture_qualifies_only_a_measurable_known_lag(measured, p95, signed_lag, expected):
+    from acoustic_calibration_fixture import qualify_control  # pylint: disable=import-outside-toplevel
+    oracle = {"status": "qualified", "actual_gap_interval_seconds": [-0.016, 0.016]}
+    result = {"sync_status": "calibration_only", "acceptance_status": "not_assessed",
+        "sync_gate_passed": None, "release_gate_passed": False,
+        "calibration_thresholds_satisfied": False,
+        "samples": 50, "measured_item_count": measured, "unknown_item_count": 50 - measured,
+        "missing_item_count": 0, "visual_evidence": {
+            "transition_count": 100, "verified_transition_count": 100 if measured else 0},
+        "start_error_seconds": {"p95_upper_bound": p95},
+        "end_error_seconds": {"p95_upper_bound": p95 + 0.16},
+        "audio_alignment": {"pause_certificates": [{
+            "source_gap_interval_seconds": [-0.022, 0.022]}]},
+        "items": [{"status": "measured", "start_lag_interval_seconds": [0.62, 0.72]
+                   if signed_lag else [0.1, 0.2],
+                   "end_lag_interval_seconds": [0.78, 0.88]} for _ in range(measured)]}
+
+    qualification = qualify_control("lag", oracle, result, 1)
+
+    assert qualification["capture_calibration_qualified"] is expected
+    assert qualification["caption_measurement_complete"] is (measured == 50)
+
+
+@pytest.mark.parametrize("corruption", ["missing", "duplicate", "reordered", "truncated"])
+def test_public_cli_rejects_corrupted_pcm_frame_bridge(tmp_path, corruption):
+    paths = _write_evidence(tmp_path, pause_at=25.5)
+    _declare_zero_asr(paths)
+    _declare_pcm_pause(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    blocks = report["acoustic_capture"]["audio"]["pcm_capture"]["blocks"]
+    if corruption == "missing":
+        blocks.pop(2)
+    elif corruption == "duplicate":
+        blocks.insert(2, blocks[1])
+    elif corruption == "reordered":
+        blocks[1], blocks[2] = blocks[2], blocks[1]
+    else:
+        blocks[-1]["frame_count"] -= 1
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 2
+    assert result["invalid_reason"] == ("pcm_frame_length_mismatch" if corruption == "truncated"
+                                        else "pcm_frames_missing_duplicate_or_reordered")
+    assert result["release_gate_passed"] is False
+
+
+@pytest.mark.parametrize("claim", ["simulated_recognition", "session_post_start_count"])
+def test_public_cli_rejects_zero_asr_with_a_contradictory_session_claim(tmp_path, claim):
+    paths = _write_evidence(tmp_path)
+    _declare_zero_asr(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    report[claim] = False if claim == "simulated_recognition" else 1
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 2
+    assert result["invalid_reason"] == "zero_asr_calibration_identity_invalid"
+
+
 def test_calibration_labels_current_dirty_checkout_without_claiming_acceptance(tmp_path):
     paths = list(_write_evidence(tmp_path))
     report = json.loads(paths[4].read_text(encoding="utf-8"))
@@ -957,3 +1141,123 @@ def test_public_cli_rejects_forward_jump_after_playback_slowdown(tmp_path):
     assert result["audio_alignment"]["status"] == "discontinuous_or_frozen"
     assert result["audio_alignment"]["reason"] == "unmarked_playback_time_forward_jump"
     assert result["calibration_thresholds_satisfied"] is False
+
+
+def _declare_causal_calibration(paths):
+    """Retain synthetic public capture artifacts, with literal graph/frame truth."""
+    import av  # pylint: disable=import-outside-toplevel
+    _declare_zero_asr(paths)
+    _declare_pcm_pause(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    audio = report["acoustic_capture"]["audio"]
+    pcm = audio["pcm_capture"]
+    for block in pcm["blocks"]:
+        block["witness_nonces"] = []
+    witnesses = []
+    for index, perf in enumerate(range(0, 50601, 10)):
+        frame = RATE + round(perf * RATE / 1000)
+        block_index = min(len(pcm["blocks"]) - 1, max(0, (frame - RATE) // 128))
+        block = pcm["blocks"][block_index]
+        nonce = f"w{index}"
+        block.setdefault("witness_nonces", []).append(nonce)
+        witnesses.append({"nonce": nonce, "send_after_ms": perf - 1,
+                          "receive_after_ms": perf + 1, "sequence": block_index,
+                          "start_frame": block["start_frame"],
+                          "frame_count": block["frame_count"],
+                          "sample_rate_hz": RATE, "channels": 1})
+    pcm["causal_graph"] = {"schema_version": 1,
+        "sample_contract": "pcm16_source_quantization_lsb1", "witnesses": witnesses}
+    raster_dir = paths[4].parent / "rasters"
+    raster_dir.mkdir()
+    for version, screen in enumerate(report["acoustic_capture"]["screenshots"], 1):
+        path = paths[4].parent / screen["path"]
+        with av.open(str(path), format="png_pipe") as image:
+            pixels = next(image.decode(video=0)).to_ndarray(format="rgb24")
+        for bit in range(16):
+            pixels[:8, bit, :] = 255 if version & (1 << bit) else 0
+        raw = b"".join(b"\0" + row.tobytes() for row in pixels)
+        image_bytes = (b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", struct.pack(
+            ">IIBBBBB", SCREEN_WIDTH, SCREEN_HEIGHT, 8, 2, 0, 0, 0))
+            + _png_chunk(b"IDAT", zlib.compress(raw)) + _png_chunk(b"IEND", b""))
+        path.write_bytes(image_bytes)
+        raster = raster_dir / f"{version}.png"
+        raster.write_bytes(image_bytes)
+        screen["sha256"] = hashlib.sha256(image_bytes).hexdigest()
+        observed = screen["observed_after_ms"]
+        screen["immutable_caption"] = {"schema_version": 1, "version": version,
+            "held_version": version,
+            "raster_path": str(raster.relative_to(paths[4].parent)),
+            "raster_sha256": hashlib.sha256(image_bytes).hexdigest(),
+            "raster_bounds": {"x": 0, "y": 0, "width": SCREEN_WIDTH, "height": SCREEN_HEIGHT},
+            "marker_bounds": {"x": 0, "y": 0, "width": 16, "height": 8},
+            "create_before_ms": observed - 5, "screenshot_return_ms": observed + 5,
+            "create_after_ms": observed - 4, "install_before_ms": observed - 3,
+            "install_after_ms": observed - 2,
+            "hold_release_ms": observed + 6}
+    # This diagnostic clock deliberately has no valid quantitative graph association.
+    for sample in audio["output_clock_samples"]:
+        sample["context_time_seconds"] = 1 + sample["performance_time_after_ms"] / 1100
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+
+def test_public_cli_uses_causal_pixels_and_full_pcm_trace_across_a_pause(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "RATE", 48000)
+    paths = _write_evidence(tmp_path, pause_at=25.5, sampling_step_ms=10)
+    _declare_causal_calibration(paths)
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 0, result.get("audio_alignment", {}).get("reason")
+    assert result["audio_alignment"]["progression_clock"] == "causal_graph_frames"
+    assert result["measured_item_count"] == result["samples"] == 50
+    assert result["items"][25]["status"] == "measured"
+    assert result["physical_output_latency"] == "unknown"
+    assert result["acceptance_status"] == "not_assessed"
+
+
+def test_public_cli_rejects_causal_112ms_source_jump(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "RATE", 48000)
+    paths = _write_evidence(tmp_path, pause_at=25.5, sampling_step_ms=10)
+    _declare_causal_calibration(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    audio = report["acoustic_capture"]["audio"]
+    capture_path = paths[4].parent / audio["path"]
+    samples = np.frombuffer(capture_path.read_bytes()[44:], dtype="<i2").copy()
+    begin, delta = 10 * RATE, round(.112 * RATE)
+    samples[begin:-delta] = samples[begin + delta:]
+    samples[-delta:] = 0
+    _write_wave_samples(capture_path, samples)
+    audio["sha256"] = audio["pcm_capture"]["sha256"] = hashlib.sha256(capture_path.read_bytes()).hexdigest()
+    for row in report["timeline_samples"]:
+        if row["observed_after_ms"] >= 10000:
+            row["media_time"] += .112
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 1
+    assert result["audio_alignment"]["reason"] == "causal_source_discontinuity"
+    low, high = result["audio_alignment"]["source_gap_interval_seconds"]
+    assert 0 < low <= .112 <= high
+    assert result["unknown_item_count"] == result["samples"] == 50
+
+
+def test_public_cli_keeps_an_interior_pcm_trace_corruption_unknown(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "RATE", 48000)
+    paths = _write_evidence(tmp_path, pause_at=25.5, sampling_step_ms=10)
+    _declare_causal_calibration(paths)
+    report = json.loads(paths[4].read_text(encoding="utf-8"))
+    audio = report["acoustic_capture"]["audio"]
+    capture_path = paths[4].parent / audio["path"]
+    samples = np.frombuffer(capture_path.read_bytes()[44:], dtype="<i2").copy()
+    # This sample is between fixed .16s anchor windows, inside the first voiced span.
+    samples[round(.7 * RATE)] += 128
+    _write_wave_samples(capture_path, samples)
+    audio["sha256"] = audio["pcm_capture"]["sha256"] = hashlib.sha256(capture_path.read_bytes()).hexdigest()
+    paths[4].write_text(json.dumps(report), encoding="utf-8")
+
+    completed, result = _run_cli(tmp_path, paths)
+
+    assert completed.returncode == 1
+    assert result["audio_alignment"]["reason"] == "causal_complete_trace_unverified"
+    assert result["unknown_item_count"] == result["samples"] == 50
