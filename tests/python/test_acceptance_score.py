@@ -23,9 +23,12 @@ from score_original_acceptance import edit_distance, score, tokens
 
 
 class FakeRecognitionService:
-    def __init__(self, events, hold_events=False, close_reason=None):
+    def __init__(self, events, hold_events=False, close_reason=None, hold_cleanup=False):
         self.connected = threading.Event()
         self.release_events = threading.Event()
+        self.cleanup_started = threading.Event()
+        self.cleanup_completed = threading.Event()
+        self.release_cleanup = threading.Event()
         self.close_reason = close_reason
         self.media_path = None
         if not hold_events:
@@ -38,6 +41,10 @@ class FakeRecognitionService:
 
         @self.app.delete("/api/cloud/sessions/test-session")
         async def close_session():
+            self.cleanup_started.set()
+            if hold_cleanup:
+                await asyncio.to_thread(self.release_cleanup.wait, 5)
+            self.cleanup_completed.set()
             return Response(status_code=204)
 
         @self.app.get("/sample.wav")
@@ -81,6 +88,7 @@ class FakeRecognitionService:
 
     def __exit__(self, *_):
         self.release_events.set()
+        self.release_cleanup.set()
         self.server.should_exit = True
         self.thread.join(timeout=5)
 
@@ -408,23 +416,43 @@ def test_recording_and_scoring_clis_preserve_remote_sample_identity_without_hash
     assert report["accuracy_gate_passed"] is False
 
 
-@pytest.mark.parametrize("withhold_close", [False, True], ids=["cooperative", "withheld-close"])
-def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(tmp_path, withhold_close):
+@pytest.mark.parametrize(("withhold_close", "hold_handshake"), [
+    (False, False), (True, False), (True, True),
+], ids=["cooperative", "withheld-close", "opening-cancel"])
+def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(
+        tmp_path, withhold_close, hold_handshake):
     input_path = tmp_path / "sample.wav"
     write_wav(input_path)
     recording_path = tmp_path / "recording.json"
     service = WithheldCloseService() if withhold_close else FakeRecognitionService([], hold_events=True)
     with service:
-        process = subprocess.Popen([
+        command = [
             sys.executable, str(Path(__file__).parents[1] / "acceptance" / "run_original_acceptance.py"),
             str(input_path), "--server-url", service.url, "--output", str(recording_path),
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        ]
+        if hold_handshake:
+            # Keep the real connection opening until SIGINT arrives after Pong readiness.
+            command[1:1] = ["-c", """
+import asyncio
+import runpy
+import sys
+from websockets.asyncio.client import ClientConnection
+
+original_handshake = ClientConnection.handshake
+async def hold_handshake(self, *args, **kwargs):
+    await original_handshake(self, *args, **kwargs)
+    await asyncio.Event().wait()
+ClientConnection.handshake = hold_handshake
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             assert service.connected.wait(5), "recorder did not become active at the WebSocket peer"
             process.send_signal(signal.SIGINT)
             stdout, stderr = process.communicate(timeout=10)
         except subprocess.TimeoutExpired:
-            if withhold_close:
+            if withhold_close and not hold_handshake:
                 assert service.close_received.is_set()
             pytest.fail("recorder exceeded the 10-second cancellation deadline")
         finally:
@@ -432,7 +460,7 @@ def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(tmp_pat
                 process.kill()
             process.communicate(timeout=5)
         if withhold_close:
-            assert service.close_received.is_set()
+            assert service.close_received.is_set() == (not hold_handshake)
             assert service.tcp_closed.is_set()
             assert service.deleted.is_set()
 
@@ -447,6 +475,56 @@ def test_recording_and_scoring_clis_mark_user_cancellation_as_incomplete(tmp_pat
     assert recording["recording_status"] == "cancelled"
     assert recording["completion_signal"] == "cancelled"
     assert recording["completion_reason"] == "cancelled"
+    assert recording["input_unchanged"] is True
+    assert report["session_without_errors"] is False
+    assert report["transcription_accuracy_passed"] is False
+
+
+def test_recording_cli_preserves_cancellation_during_session_cleanup(tmp_path):
+    input_path = tmp_path / "sample.wav"
+    write_wav(input_path)
+    input_hash = hashlib.sha256(input_path.read_bytes()).hexdigest()
+    recording_path = tmp_path / "recording.json"
+    events = [
+        {"type": "subtitle", "sentence_id": 1, "beg": 0,
+         "is_final": True, "text": "Keep these words"},
+        {"type": "end", "reason": "completed"},
+    ]
+    with FakeRecognitionService(events, hold_cleanup=True) as service:
+        process = subprocess.Popen([
+            sys.executable, str(Path(__file__).parents[1] / "acceptance" / "run_original_acceptance.py"),
+            str(input_path), "--server-url", service.url, "--output", str(recording_path),
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        release = None
+        try:
+            assert service.cleanup_started.wait(5), "recorder did not send DELETE"
+            process.send_signal(signal.SIGINT)
+            # Keep the real HTTP request pending while the signal is delivered.
+            release = threading.Timer(0.2, service.release_cleanup.set)
+            release.start()
+            stdout, stderr = process.communicate(timeout=10)
+        finally:
+            service.release_cleanup.set()
+            if release is not None:
+                release.join(timeout=1)
+                assert not release.is_alive()
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
+        assert service.cleanup_completed.is_set()
+    assert not service.thread.is_alive()
+    assert process.returncode != 0, stdout + stderr
+    assert recording_path.exists(), "cleanup cancellation lost the recording"
+    recording = json.loads(recording_path.read_text(encoding="utf-8"))
+    manifest = {"dataset": "fixed", "config": "en", "sha256": input_hash, "seconds": 1,
+                "items": [{"reference": "Keep these words"}]}
+    report = run_score_cli(tmp_path, manifest, recording)
+
+    assert recording["recording_status"] == "cancelled"
+    assert recording["completion_signal"] == "cancelled"
+    assert recording["completion_reason"] == "cancelled"
+    assert recording["input_sha256"] == input_hash
+    assert recording["input_sha256_after"] == input_hash
     assert recording["input_unchanged"] is True
     assert report["session_without_errors"] is False
     assert report["transcription_accuracy_passed"] is False
