@@ -287,6 +287,8 @@ def _rewrite_ledger(report, change):
 
 @pytest.mark.parametrize(("kind", "field", "value", "reason"), [
     ("pcm_batch", "sequence", 7, "capture_batch_sequence_or_format_invalid"),
+    ("pcm_batch", "channel_count", True, "capture_batch_sequence_or_format_invalid"),
+    ("pcm_batch", "byte_offset", False, "capture_batch_sequence_or_format_invalid"),
     ("pcm_batch", "byte_count", 999, "capture_batch_byte_count_invalid"),
     ("pcm_batch", "sha256", "0" * 64, "capture_batch_hash_or_length_mismatch"),
     ("capture_summary", "frame_count", 123, "capture_final_counter_mismatch"),

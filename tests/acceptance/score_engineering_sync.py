@@ -119,6 +119,9 @@ def _capture(report_path, report):
                 if summary is not None:
                     raise EvidenceError("capture_pcm_after_summary")
                 if (row.get("sequence") != sequence or not _integer(row.get("sequence"))
+                        or not _integer(row.get("sample_rate_hz"), 1)
+                        or not _integer(row.get("channel_count"), 1)
+                        or not _integer(row.get("byte_offset"))
                         or row.get("sample_rate_hz") != rate
                         or row.get("channel_count") != channels
                         or row.get("byte_offset") != offset):
@@ -269,13 +272,15 @@ def _pixels(report_path, capture, raw_pixels, language, ocr_executable, tessdata
     if (descriptor.get("metadata_path") != audio["metadata_path"]
             or descriptor.get("metadata_sha256") != audio["metadata_sha256"]
             or descriptor.get("ledger_kind") != "pixel_observation"
+            or not _integer(descriptor.get("observation_count"))
             or descriptor.get("observation_count") != len(raw_pixels)):
         raise EvidenceError("pixel_ledger_identity_mismatch")
     executable, data = _resolve_ocr(ocr_executable, tessdata_dir)
     cache, verified = {}, []
     previous_after = -math.inf
     for index, row in enumerate(raw_pixels, 1):
-        if (row.get("observation_index") != index or row.get("context_id") != audio["context_id"]):
+        if (not _integer(row.get("observation_index"), 1) or row["observation_index"] != index
+                or row.get("context_id") != audio["context_id"]):
             raise EvidenceError("pixel_observation_identity_invalid")
         viewport, after_viewport = row.get("viewport_before"), row.get("viewport_after")
         if (not isinstance(viewport, dict) or viewport != after_viewport
