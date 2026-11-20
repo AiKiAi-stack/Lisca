@@ -241,6 +241,7 @@
   "输入没有可解码的音频内容，未启动识别": "The source has no decodable audio; recognition was not started.",
   "媒体拉流或音频解码失败，已停止后续识别": "Media loading or audio decoding failed; further recognition stopped.",
   "识别连续 15 秒没有字幕或静音处理进展，已停止新音频处理；可重试、仅播放或停止": "Recognition made no caption or silence-processing progress for 15 seconds. New audio processing stopped; retry, play without captions or stop.",
+  "媒体已读完，识别未生成可用字幕；可重试、仅播放或停止": "The file ended without usable captions. Retry, play without captions or stop.",
   "识别达到安全容量上限，结果不完整；已停止识别，请重新开始": "Recognition reached its safe capacity and stopped with incomplete results. Start again.",
   "字幕记录达到安全容量上限，结果不完整；已停止识别，请停止或重新开始": "Caption history reached its safe capacity. Recognition stopped with incomplete results; stop or start again.",
   "语音识别服务异常：请检查 Key、模型权限和网络后重试": "Recognition service error. Check your key, model permissions and network, then retry.",

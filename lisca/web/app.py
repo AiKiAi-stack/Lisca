@@ -1458,6 +1458,9 @@ async def ws_endpoint(ws: WebSocket):
                         return
                 if translation:
                     translation.finish()
+                if prefetch_local and not ready_sent and not caption_seen and silence_run < fed_sec:
+                    phase = "caption_preparation_empty"
+                    raise ValueError("recognition ended with non-silent audio but no prepared captions")
                 normal_completion = True
                 # Batch engines finish the whole file before the player starts.
                 # Send ready only after subtitles have reached the browser.
@@ -1520,6 +1523,8 @@ async def ws_endpoint(ws: WebSocket):
                 message = "识别连续 15 秒没有字幕或静音处理进展，已停止新音频处理；可重试、仅播放或停止"
             elif phase == "caption_preparation":
                 message = "语音结束后仍有未稳定或缺少语音时间的字幕，结果不完整；可重试、仅播放或停止"
+            elif phase == "caption_preparation_empty":
+                message = "媒体已读完，识别未生成可用字幕；可重试、仅播放或停止"
             elif phase == "capacity":
                 message = ("识别达到安全容量上限，结果不完整；已停止识别，请重新开始"
                            if local_capacity_error else
@@ -1542,7 +1547,7 @@ async def ws_endpoint(ws: WebSocket):
                 error_event.update(failure_category="media_timeline", retryable=False)
             elif phase == "no_progress":
                 error_event.update(failure_category="no_progress", retryable=False)
-            elif phase == "caption_preparation":
+            elif phase in ("caption_preparation", "caption_preparation_empty"):
                 error_event.update(failure_category="caption_preparation", retryable=False)
             elif phase == "capacity":
                 error_event.update(failure_category="capacity", retryable=False)
