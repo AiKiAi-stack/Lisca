@@ -1,9 +1,13 @@
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 import json
+from threading import Event
 import time
 
 import pytest
 
 import run_real_browser_acceptance as acceptance
+from browser_pixel_capture import PIXEL_STATE
 
 
 def test_recording_preserves_sentence_commit_context_for_independent_replay(tmp_path):
@@ -194,6 +198,25 @@ def test_playback_evidence_cli_accepts_only_unscored_local_or_hls_inputs(tmp_pat
         ])
 
 
+def test_engineering_capture_cli_is_explicit_and_preserves_fixed_reference_support(tmp_path):
+    common = ["--label", "engineering", "--capture-engineering-sync", "--output", str(tmp_path)]
+    local = acceptance.parse_args(["--media", str(tmp_path / "fixed.wav"), *common,
+                                  "--reference", str(tmp_path / "reference.json"), "--language", "en"])
+    live = acceptance.parse_args(["--media", "https://media.test/live.m3u8", *common])
+
+    assert local.capture_engineering_sync is live.capture_engineering_sync is True
+    assert local.language == "en"
+    for extra in (["--capture-acoustic-sync"], ["--capture-playback-evidence"]):
+        with pytest.raises(SystemExit):
+            acceptance.parse_args(["--media", "https://media.test/live.m3u8", *common, *extra])
+    for media in ("rtsp://media.test/live.m3u8", "https://media.test/video.mp4"):
+        with pytest.raises(SystemExit):
+            acceptance.parse_args(["--media", media, *common])
+    with pytest.raises(SystemExit):
+        acceptance.parse_args(["--media", str(tmp_path / "fixed.wav"), "--label", "no-output",
+                               "--capture-engineering-sync"])
+
+
 @pytest.mark.parametrize("media", [r"C:\media\long.mp4", "C:/media/long.mp4"])
 def test_playback_evidence_cli_treats_absolute_windows_paths_as_local(media):
     args = acceptance.parse_args([
@@ -222,7 +245,8 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                                    playback_evidence=False, browser_clock_samples=None,
                                    monotonic_ns_samples=None, captured_audio=None, installation=None, pixel_failure=False, runtime_audio_failure=False, runtime_clock_failure=False,
                                    acoustic_sync=False, save_failure=False, status_sequence=None,
-                                   stop_file=None, observe_completed_playback=False):
+                                   stop_file=None, observe_completed_playback=False,
+                                   engineering_sync=False):
     clock = {"now": 100.0}
 
     class Request:
@@ -280,6 +304,10 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             self.retry_visible = False
             self.caption = ""
             self.ended = False
+            self.bindings = {}
+
+        def expose_binding(self, name, callback):
+            self.bindings[name] = callback
 
         def on(self, name, callback):
             self.handlers.setdefault(name, []).append(callback)
@@ -297,6 +325,36 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             return Locator(self, selector)
 
         def evaluate(self, script, *_args):
+            if script == PIXEL_STATE:
+                return {"observed_after_ms": (clock["now"] - self.sampler_started_at) * 1000,
+                        "viewport": {"width": 1280, "height": 800}, "device_scale_factor": 1,
+                        "player_bounds": {"x": 20, "y": 50, "width": 700, "height": 400},
+                        "font_geometry": {"line_height": 30, "bottom": 40},
+                        "candidate_roi": {"x": 20, "y": 334, "width": 700, "height": 84},
+                        "caption_bounds": ({"x": 100, "y": 370, "width": 400, "height": 32}
+                                           if self.caption else None),
+                        "visible_text": self.caption, "visible": bool(self.caption),
+                        "content_clipped": False}
+            if script.startswith("async ({mediaElementId"):
+                import base64
+                self.capture_target = _args[0]["mediaElementId"]
+                self.bindings["__engineeringPcmWrite"]({}, {
+                    "kind": "pcm_batch", "context_id": "fake-browser-context", "sequence": 0,
+                    "sample_rate_hz": 48000, "channel_count": 1,
+                    "quanta": [{"current_frame": 128, "frame_count": 2}],
+                    "pcm_base64": base64.b64encode(b"\x00\x00\x80\x3e\x00\x00\x00\xbf").decode(),
+                })
+                return {"status": "installed", "media_element_id": self.capture_target,
+                        "media_element_volume": 1, "output_clock_supported": True,
+                        **(installation or {})}
+            if "__engineeringCapture?.save()" in script:
+                self.save_calls += 1
+                return {"status": "captured", "media_element_id": self.capture_target,
+                        "context_id": "fake-browser-context", "sample_rate_hz": 48000,
+                        "channel_count": 1, "batch_count": 1, "frame_count": 2,
+                        "first_frame": 128, "end_frame": 130,
+                        "signal_observed": True, "media_element_muted": False,
+                        "media_element_volume": 1, **(captured_audio or {})}
             if script == acceptance.SAMPLER_START:
                 self.sampler_started_at = clock["now"]
                 self.next_sample_at = clock["now"]
@@ -316,6 +374,12 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                 self._sample()
                 return None
             raise AssertionError(f"Unexpected collector page evaluation: {script}")
+
+        def screenshot(self, *, path, clip, scale):
+            import struct
+            from pathlib import Path
+            Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 8
+                                   + struct.pack(">II", clip["width"], clip["height"]))
 
         def _sample(self, observed_at=None):
             observed_at = clock["now"] if observed_at is None else observed_at
@@ -450,6 +514,8 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
         argv.append("--observe-completed-playback")
     if playback_evidence:
         argv.append("--capture-playback-evidence")
+    if engineering_sync:
+        argv.append("--capture-engineering-sync")
     if acoustic_sync:
         argv.extend(["--capture-acoustic-sync", "--reference", str(tmp_path / "ref.json"),
                      "--language", "en"])
@@ -460,6 +526,137 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
     report = json.loads((tmp_path / f"{label}.report.json").read_text(encoding="utf-8"))
     recording = json.loads((tmp_path / f"{label}.recording.json").read_text(encoding="utf-8"))
     return result, report, recording, page, clock
+
+
+def test_engineering_capture_report_uses_pcm_and_keeps_formal_acceptance_unassessed(tmp_path, monkeypatch):
+    result, report, _recording, page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="engineering-pcm", seconds=.2,
+        on_start=lambda page: page.open_session(), engineering_sync=True)
+
+    capture = report["engineering_sync"]
+    assert capture["media_element_id"] == page.capture_target == "player"
+    assert capture["mode"] == "browser_audio_worklet_pcm"
+    assert capture["measurement_scope"] == report["measurement_scope"] == "browser_output_timestamp_estimate"
+    assert capture["audio"]["format"] == "f32le"
+    assert capture["audio"]["byte_count"] == 8
+    assert capture["audio"]["output_clock_error_bound_ms"] is None
+    assert capture["pixel_capture"]["observation_count"] >= 2
+    assert capture["pixel_capture"]["metadata_path"] == capture["audio"]["metadata_path"]
+    assert capture["pixel_capture"]["ledger_kind"] == "pixel_observation"
+    assert capture["physical_output_latency"] == "unknown"
+    assert capture["acceptance_assessed"] is False
+    assert capture["sync_gate_passed"] is None
+    assert report["acoustic_sync_assessed"] is False
+    assert "acoustic_capture" not in report and "playback_evidence" not in report
+    assert result["exit_ok"] is True
+
+
+def test_engineering_capture_preflight_failure_precedes_any_paid_session(tmp_path, monkeypatch):
+    result, report, _recording, page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="engineering-preflight", seconds=.2,
+        on_start=lambda page: page.open_session(), engineering_sync=True,
+        installation={"status": "audio_graph_unavailable"})
+
+    assert page.start_clicks == page.save_calls == report["session_post_start_count"] == 0
+    assert result["exit_ok"] is False
+    assert report["engineering_sync"]["audio"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize("suffix", [
+    ".playback.f32le", ".playback.frames.jsonl", ".pixels", ".report.json",
+    ".recording.json", ".score.json", ".engineering-score.json", ".progress.json",
+    ".engineering-reservation.json", "",
+    pytest.param((".report.json", ".playback.f32le", ".playback.frames.jsonl",
+                  ".progress.json"), id="original-report-pcm-ledger-progress"),
+])
+def test_engineering_cli_rejects_owned_artifacts_without_touching_evidence(
+        tmp_path, monkeypatch, capsys, suffix):
+    label = "existing-evidence"
+    for name in suffix if isinstance(suffix, tuple) else (suffix,):
+        artifact = tmp_path / f"{label}{name}"
+        if name in (".pixels", ""):
+            artifact.mkdir()
+            artifact = artifact / "sentinel.png"
+        artifact.write_bytes(b"original evidence must survive byte for byte\n")
+    before = {path.relative_to(tmp_path): path.read_bytes()
+              for path in tmp_path.rglob("*") if path.is_file()}
+    launches = []
+    monkeypatch.setattr(acceptance, "sync_playwright", nullcontext)
+
+    def fail_browser_launch(_playwright):
+        launches.append(True)
+        raise RuntimeError("fake browser boundary; no network")
+
+    monkeypatch.setattr(acceptance, "launch_browser", fail_browser_launch)
+    exit_code = acceptance.main([
+        "--media", "https://media.test/live.m3u8", "--label", label,
+        "--output", str(tmp_path), "--capture-engineering-sync", "--seconds", ".2",
+    ])
+    result = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert {path.relative_to(tmp_path): path.read_bytes()
+            for path in tmp_path.rglob("*") if path.is_file()} == before
+    assert result["admission_status"] == "rejected"
+    assert result["session_post_start_count"] == 0
+    assert launches == []
+
+
+def test_engineering_capture_allows_runner_manifest_and_logs(tmp_path, monkeypatch):
+    label = "runner-files"
+    sentinels = {tmp_path / f"{label}{suffix}": b"external runner evidence\n"
+                 for suffix in (".manifest.json", ".collector.log", ".monitor.log")}
+    for path, value in sentinels.items():
+        path.write_bytes(value)
+
+    result, _report, _recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label=label, seconds=.2,
+        on_start=lambda page: page.open_session(), engineering_sync=True)
+
+    assert result["exit_ok"] is True
+    assert all(path.read_bytes() == value for path, value in sentinels.items())
+
+
+def test_engineering_admission_exclusively_reserves_label_before_browser_start(
+        tmp_path, monkeypatch):
+    args = acceptance.parse_args([
+        "--media", "https://media.test/live.m3u8", "--label", "concurrent",
+        "--output", str(tmp_path), "--capture-engineering-sync",
+    ])
+    entered, release = Event(), Event()
+    launches = []
+    monkeypatch.setattr(acceptance, "sync_playwright", nullcontext)
+
+    def blocked_browser_launch(_playwright):
+        launches.append(True)
+        entered.set()
+        if not release.wait(5):
+            raise RuntimeError("fake browser release timed out")
+        raise RuntimeError("fake browser stopped before Start; no network")
+
+    monkeypatch.setattr(acceptance, "launch_browser", blocked_browser_launch)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(acceptance.collect, args)
+        try:
+            assert entered.wait(5)
+            second = executor.submit(acceptance.collect, args).result(timeout=2)
+            assert second["admission_status"] == "rejected"
+            assert second["session_post_start_count"] == 0
+            assert not (tmp_path / "concurrent.report.json").exists()
+            reservation_path = tmp_path / "concurrent.engineering-reservation.json"
+            reserved = reservation_path.read_bytes()
+        finally:
+            release.set()
+        first_result = first.result(timeout=5)
+
+    assert launches == [True]
+    assert first_result["session_post_start_count"] == 0
+    assert reservation_path.read_bytes() == reserved
+    reservation = json.loads(reserved)
+    assert reservation["label"] == "concurrent"
+    assert reservation["created_at"]
+    assert isinstance(reservation["pid"], int)
+    assert "media.test" not in reserved.decode()
 
 
 @pytest.mark.parametrize("observe_recovery", [False, True])
