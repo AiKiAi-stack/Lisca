@@ -1,0 +1,83 @@
+{
+  "date": "2026-11-14",
+  "application_candidate": "79504994e477a842e9509f4941dc9d2f2c46348b",
+  "new_asr_sessions": 2,
+  "scope": "current-application real HLS baseline, one successful case per language; not P95 or acoustic acceptance",
+  "cases": [
+    {
+      "language": "zh",
+      "label": "zh-complete-baseline-01",
+      "recording_sha256": "07ab11f5faf9f69ddffe771d7812b8db561329edc96c07b7629380ec181c6ee8",
+      "report_sha256": "82893bd559ed5150931fc7b47a245c9bbe577ce7881efeb3ce9b60b566f4922a",
+      "recording_status": "completed",
+      "completion_reason": "completed",
+      "session_post_start_count": 1,
+      "sampling": {
+        "requested_interval_ms": 50,
+        "tolerance_ms": 100,
+        "sample_count": 543,
+        "max_observed_gap_ms": 58,
+        "status": "valid"
+      },
+      "preparation": {
+        "first_ready_after_ms": 5677,
+        "first_playing_after_ms": 2901
+      },
+      "first_visible_caption_after_ms": 5701,
+      "first_provider_final_after_ms": 10911,
+      "subtitle_event_count": 22,
+      "final_event_count": 3,
+      "error_count": 0,
+      "evidence_directory": "/home/wbb/.local/share/stream-with-asr/notes/caption-experience-20261114/real-baseline",
+      "hls_provenance_sha256": "a9750a577d4f29a6e5c1cea18221e0a0af6245875ae942e92a23eba533d06bcd",
+      "input_provenance": {
+        "source_wav_sha256": "d40bb3a49d88cf35f52574650d593573048f89f95aba09b704b2fdbe25811317",
+        "fixed_wav_clip_sha256": "982e27e38c8e13847d8dd6aea33fb385bcd81b0f32a8aac41f08e7f72d3f5e07",
+        "decoded_pcm_sha256": "e8185371f3f7893ac650dc4ac70abafb8a8b7c036173bacfead529a9e99fb582",
+        "decoded_pcm_duration_seconds": 16.256
+      }
+    },
+    {
+      "language": "en",
+      "label": "en-complete-baseline-02",
+      "recording_sha256": "3327d6fd69c703bf5ab7c70e5cd49c91b5d1dc73947cf4467013903e1c752b73",
+      "report_sha256": "c48ccfc1f1563fa6905f0473a3ed2d6afd9d0cb1917d47ed7148328757999f9c",
+      "recording_status": "completed",
+      "completion_reason": "completed",
+      "session_post_start_count": 1,
+      "sampling": {
+        "requested_interval_ms": 50,
+        "tolerance_ms": 100,
+        "sample_count": 564,
+        "max_observed_gap_ms": 54,
+        "status": "valid"
+      },
+      "preparation": {
+        "first_ready_after_ms": 5037,
+        "first_playing_after_ms": 2901
+      },
+      "first_visible_caption_after_ms": 5051,
+      "first_provider_final_after_ms": 6645,
+      "subtitle_event_count": 29,
+      "final_event_count": 4,
+      "error_count": 0,
+      "evidence_directory": "/home/wbb/.local/share/stream-with-asr/notes/caption-experience-20261114/real-baseline",
+      "hls_provenance_sha256": "2d460adefa045a1cf1b70cb89c0d09af11f93c6a38508158010586f16b25707a",
+      "input_provenance": {
+        "source_wav_sha256": "4b7d55148fed309e1d71d941d75e89a64b1068a1473163f5f6a9ac4ab6fd7523",
+        "fixed_wav_clip_sha256": "bec9313949843b3d4ecd6978929febd9c6a04a7ec7551d8acc23db0bfd097684",
+        "decoded_pcm_sha256": "1ff34e20320ec7806cf0ee58fdd151f927a3dad8d3538517d895934c430f6d5e",
+        "decoded_pcm_duration_seconds": 16.64
+      }
+    }
+  ],
+  "setup_failures": [
+    {
+      "label": "en-complete-baseline-01",
+      "reason": "service connection refused before collection",
+      "session_post_start_count": 0,
+      "status": "measurement_invalid",
+      "preserved": true
+    }
+  ]
+}

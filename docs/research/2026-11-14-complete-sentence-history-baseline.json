@@ -1,0 +1,513 @@
+{
+  "analysis_date": "2026-11-14",
+  "evidence_date": "2026-11-04",
+  "candidate": "027b3254cc56cc7ea58b1e2066958e86481cc6a0",
+  "kind": "historical_event_signal_audit",
+  "new_asr_calls": 0,
+  "time_origin": "collector observed_after_ms; not source arrival or actual pixel visibility",
+  "punctuation_rule": "[。！？.!?] followed by closing quotes/brackets or end of text",
+  "limitations": [
+    "Punctuation does not establish semantic completeness or stability.",
+    "Provider final does not necessarily identify one natural sentence.",
+    "An absent event is unobserved within the recorded interval, not evidence of indefinite waiting.",
+    "Historical event audit does not validate a new buffering policy, current main, or acoustic synchronization."
+  ],
+  "languages": {
+    "zh": {
+      "n": 20,
+      "recordings_with_final": 0,
+      "recordings_with_sentence_end_punctuation": 0,
+      "first_final_observed_after_ms": null,
+      "first_sentence_end_punctuation_observed_after_ms": null,
+      "last_event_observed_after_ms": {
+        "n": 20,
+        "min": 5929,
+        "p50_nearest_rank": 5955,
+        "p95_nearest_rank": 6039,
+        "max": 6039
+      },
+      "input": {
+        "source_sha256": "d40bb3a49d88cf35f52574650d593573048f89f95aba09b704b2fdbe25811317",
+        "clip_sha256": "982e27e38c8e13847d8dd6aea33fb385bcd81b0f32a8aac41f08e7f72d3f5e07",
+        "clip_duration_seconds": 16.18925,
+        "reference_manifest_sha256": "fd511cd47f6221787f7325d6a935bd7bcf9bface55006822238a89388c8668b1"
+      },
+      "cases": [
+        {
+          "label": "zh-startup-01",
+          "recording_sha256": "1fc9ebd3ba43c17bcc89436b701900055612e7bf6b8749b198a8e43bfb86f2a0",
+          "first_preview_observed_after_ms": 5446,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5966,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-02",
+          "recording_sha256": "1e6c7fa7d0c394bd9a8116a89f86c7a3115dd2ae277f330c155e442537a4b0e0",
+          "first_preview_observed_after_ms": 5427,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5947,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-03",
+          "recording_sha256": "c11fa18a952fcaf7d575c09e47b6cdaf2f89869f254e19884ba5b820a27a2c62",
+          "first_preview_observed_after_ms": 5432,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5952,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-04",
+          "recording_sha256": "e280e414afcc14717cba295292e45d70dfeda34c694f671a3d8367c3ad21df73",
+          "first_preview_observed_after_ms": 5437,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5957,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-05",
+          "recording_sha256": "47a059ddc8c13fd7cb0a34711edbbad5c7bfdffd88090fc1a645a48e6e9cc878",
+          "first_preview_observed_after_ms": 5431,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5951,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-06",
+          "recording_sha256": "580c39071f8b76deb57053bdea245fa0595d0838e47f412569427a64fd64c394",
+          "first_preview_observed_after_ms": 5447,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5947,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-07",
+          "recording_sha256": "21ae8f2342cd50c03270634ebde228ed172ea91c0a18662cdc3eff47cab56ac4",
+          "first_preview_observed_after_ms": 5442,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5962,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-08",
+          "recording_sha256": "56867d07b73e02c5e94cb707241767e1b626efedd142ed531047c1c13775aba2",
+          "first_preview_observed_after_ms": 5435,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5955,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-09",
+          "recording_sha256": "28f0fb0acddea961f492ac39a66d9804a781bd8f32305a066b4baf3ca37c62ad",
+          "first_preview_observed_after_ms": 5438,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5958,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-10",
+          "recording_sha256": "d8161176c93e4072c72e379a9fc1e6d777d8ba28733972bc91216f91e93d049e",
+          "first_preview_observed_after_ms": 5436,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5956,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-11",
+          "recording_sha256": "9fd44cba754698df6c571c37ab24646cd141369fff847d7ff7615f8b406b4261",
+          "first_preview_observed_after_ms": 5430,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5951,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-12",
+          "recording_sha256": "9f448c71bee1dc9521095b1dca3ea65af5744a2389550e9e8ed9a0af3f1619db",
+          "first_preview_observed_after_ms": 5427,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5948,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-13",
+          "recording_sha256": "1bde41873c162b76c18aed2eeab8590bdcc1ab76b8b381b35a6821030d3f4baf",
+          "first_preview_observed_after_ms": 5408,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5929,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-14",
+          "recording_sha256": "e82b39a7c3bf3516d103ff9e9dba0f040b84226ae92f5ce7f8f55c8b6470f510",
+          "first_preview_observed_after_ms": 5444,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5965,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-15",
+          "recording_sha256": "d0b8cdfe85b6a022c29d3c11e393cabce8bb99ff816fd24cc1ebe032f22994ae",
+          "first_preview_observed_after_ms": 5519,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 6039,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-16",
+          "recording_sha256": "49f5e0f445bc89ec0e0dafddafc2abfd228777854429a5762f5eac7f88f2d447",
+          "first_preview_observed_after_ms": 5442,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5962,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-17",
+          "recording_sha256": "2df5ecc104fc1acd81ad7c79f03b6258962b882b68c7e8399ff0e5f742383c71",
+          "first_preview_observed_after_ms": 5518,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 6039,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-18",
+          "recording_sha256": "939a484df829f8a55dc7b69617fd3315313c8ca4b6f3123d9cd2a28322c28469",
+          "first_preview_observed_after_ms": 5428,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5948,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-19",
+          "recording_sha256": "309ca0a3e461f52dbf53594420b507acee56296a813782a35b43d67e573f73e5",
+          "first_preview_observed_after_ms": 5445,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5965,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "zh-startup-20",
+          "recording_sha256": "367e82dd265772c15d742fcfa220e1233585aff0c764d7093859b59a58b6c204",
+          "first_preview_observed_after_ms": 5429,
+          "first_final_observed_after_ms": null,
+          "first_sentence_end_punctuation_observed_after_ms": null,
+          "last_event_observed_after_ms": 5951,
+          "subtitle_events": 5,
+          "final_events": 0,
+          "collection_completion_reason": "cancelled"
+        }
+      ]
+    },
+    "en": {
+      "n": 20,
+      "recordings_with_final": 20,
+      "recordings_with_sentence_end_punctuation": 20,
+      "first_final_observed_after_ms": {
+        "n": 20,
+        "min": 6497,
+        "p50_nearest_rank": 6527,
+        "p95_nearest_rank": 6610,
+        "max": 6612
+      },
+      "first_sentence_end_punctuation_observed_after_ms": {
+        "n": 20,
+        "min": 6497,
+        "p50_nearest_rank": 6527,
+        "p95_nearest_rank": 6610,
+        "max": 6612
+      },
+      "last_event_observed_after_ms": {
+        "n": 20,
+        "min": 14386,
+        "p50_nearest_rank": 14421,
+        "p95_nearest_rank": 14443,
+        "max": 14489
+      },
+      "input": {
+        "source_sha256": "4b7d55148fed309e1d71d941d75e89a64b1068a1473163f5f6a9ac4ab6fd7523",
+        "clip_sha256": "bec9313949843b3d4ecd6978929febd9c6a04a7ec7551d8acc23db0bfd097684",
+        "clip_duration_seconds": 16.55,
+        "reference_manifest_sha256": "d422460296e400bbc86a0910a90afd4e727cfc62ba19f7f66324fe58211489c6"
+      },
+      "cases": [
+        {
+          "label": "en-startup-01",
+          "recording_sha256": "6026d19570ed3203ffe42d9da2d3da05aad46f5d8bc7390b09dc7bd570ec8de7",
+          "first_preview_observed_after_ms": 4924,
+          "first_final_observed_after_ms": 6533,
+          "first_sentence_end_punctuation_observed_after_ms": 6533,
+          "last_event_observed_after_ms": 14427,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-02",
+          "recording_sha256": "02d3acd438b789f730cc278da97e00b54a5847afa9f80b01eeb7a0c713649dbc",
+          "first_preview_observed_after_ms": 4917,
+          "first_final_observed_after_ms": 6526,
+          "first_sentence_end_punctuation_observed_after_ms": 6526,
+          "last_event_observed_after_ms": 14419,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-03",
+          "recording_sha256": "04b7d76c9888c46ad9df3fb241cf789ea860ccae26d6a7786e782ddc9c12d491",
+          "first_preview_observed_after_ms": 4921,
+          "first_final_observed_after_ms": 6530,
+          "first_sentence_end_punctuation_observed_after_ms": 6530,
+          "last_event_observed_after_ms": 14424,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-04",
+          "recording_sha256": "e96d5ab0022e4f854af20e4174f0d6da89dc5654b25909a9750c0e0d0c30bf42",
+          "first_preview_observed_after_ms": 4887,
+          "first_final_observed_after_ms": 6497,
+          "first_sentence_end_punctuation_observed_after_ms": 6497,
+          "last_event_observed_after_ms": 14430,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-05",
+          "recording_sha256": "b16a69e54cf12fd7fff7b438e0e1d2b155e83b500eaca79161ad3d707da20af3",
+          "first_preview_observed_after_ms": 4938,
+          "first_final_observed_after_ms": 6547,
+          "first_sentence_end_punctuation_observed_after_ms": 6547,
+          "last_event_observed_after_ms": 14441,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-06",
+          "recording_sha256": "c8ca8dfd0f3f2e338f9801bd10e2451aeae503d01bf7faac4683b4b81d334fd4",
+          "first_preview_observed_after_ms": 5000,
+          "first_final_observed_after_ms": 6610,
+          "first_sentence_end_punctuation_observed_after_ms": 6610,
+          "last_event_observed_after_ms": 14443,
+          "subtitle_events": 21,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-07",
+          "recording_sha256": "8696c3af68deeb264fc0f233761682ce9ee9e2a8c31551b3c784f2c1ad4cf322",
+          "first_preview_observed_after_ms": 4920,
+          "first_final_observed_after_ms": 6612,
+          "first_sentence_end_punctuation_observed_after_ms": 6612,
+          "last_event_observed_after_ms": 14489,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-08",
+          "recording_sha256": "5110882798b036246bfac2c4ac027774c412676413f0a04078165a063c5f9d03",
+          "first_preview_observed_after_ms": 4909,
+          "first_final_observed_after_ms": 6518,
+          "first_sentence_end_punctuation_observed_after_ms": 6518,
+          "last_event_observed_after_ms": 14409,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-09",
+          "recording_sha256": "ad150b11a65c97135a5c07c37d57b3c1d118528c5b8484d1aaffbd8c3808defd",
+          "first_preview_observed_after_ms": 4919,
+          "first_final_observed_after_ms": 6527,
+          "first_sentence_end_punctuation_observed_after_ms": 6527,
+          "last_event_observed_after_ms": 14421,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-10",
+          "recording_sha256": "e6d4bd9173cbd1e6654fabbbc5b11b17fd436d5e5a258ba029d52cfb73fae47a",
+          "first_preview_observed_after_ms": 4915,
+          "first_final_observed_after_ms": 6524,
+          "first_sentence_end_punctuation_observed_after_ms": 6524,
+          "last_event_observed_after_ms": 14418,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-11",
+          "recording_sha256": "318b8fc08b292aacad112caead06c8645fe7abbf9dacb7168b3f2e91a04336c1",
+          "first_preview_observed_after_ms": 4919,
+          "first_final_observed_after_ms": 6529,
+          "first_sentence_end_punctuation_observed_after_ms": 6529,
+          "last_event_observed_after_ms": 14420,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-12",
+          "recording_sha256": "d1a1360690866b792f74a6f4bd4697930a3e9e0e546bfe9cab57d73f6aa3aaa3",
+          "first_preview_observed_after_ms": 4990,
+          "first_final_observed_after_ms": 6599,
+          "first_sentence_end_punctuation_observed_after_ms": 6599,
+          "last_event_observed_after_ms": 14430,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-13",
+          "recording_sha256": "cd3544600b50ec4eeb377df908c260742f0f208720853289634e1beac57d427b",
+          "first_preview_observed_after_ms": 4923,
+          "first_final_observed_after_ms": 6532,
+          "first_sentence_end_punctuation_observed_after_ms": 6532,
+          "last_event_observed_after_ms": 14423,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-14",
+          "recording_sha256": "397143a8fd92012612641c08c9e8ada9d2155c65f57b55c520bfed41d641e3c5",
+          "first_preview_observed_after_ms": 4905,
+          "first_final_observed_after_ms": 6514,
+          "first_sentence_end_punctuation_observed_after_ms": 6514,
+          "last_event_observed_after_ms": 14386,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-15",
+          "recording_sha256": "e0639713d89afcdc1c7a98f146b5514c2de1a79f5cc6def0f3753781a9d071a1",
+          "first_preview_observed_after_ms": 4992,
+          "first_final_observed_after_ms": 6600,
+          "first_sentence_end_punctuation_observed_after_ms": 6600,
+          "last_event_observed_after_ms": 14430,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-16",
+          "recording_sha256": "2a4c36f6806b2102631262c6cf7857d1740615d282faf48184ce5ebcba406bf3",
+          "first_preview_observed_after_ms": 4911,
+          "first_final_observed_after_ms": 6520,
+          "first_sentence_end_punctuation_observed_after_ms": 6520,
+          "last_event_observed_after_ms": 14392,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-17",
+          "recording_sha256": "e5646a1370323d5dde4b2ddda79c1992704198ee8919cddc54f03730a0349772",
+          "first_preview_observed_after_ms": 4911,
+          "first_final_observed_after_ms": 6520,
+          "first_sentence_end_punctuation_observed_after_ms": 6520,
+          "last_event_observed_after_ms": 14412,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-18",
+          "recording_sha256": "df47cdf47651a4b0b23cf310c6bb51bc79634a64db964f5e2d51d59ae55704b4",
+          "first_preview_observed_after_ms": 4920,
+          "first_final_observed_after_ms": 6530,
+          "first_sentence_end_punctuation_observed_after_ms": 6530,
+          "last_event_observed_after_ms": 14422,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-19",
+          "recording_sha256": "2b38751f6618631924ad35d5945da194733348ec858accd010fece7636f80f8e",
+          "first_preview_observed_after_ms": 4906,
+          "first_final_observed_after_ms": 6515,
+          "first_sentence_end_punctuation_observed_after_ms": 6515,
+          "last_event_observed_after_ms": 14404,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        },
+        {
+          "label": "en-startup-20",
+          "recording_sha256": "17730600adac6e54e6b9ed5cffd25ac857b5f22c3c6034016062a0cb75400dde",
+          "first_preview_observed_after_ms": 4914,
+          "first_final_observed_after_ms": 6522,
+          "first_sentence_end_punctuation_observed_after_ms": 6522,
+          "last_event_observed_after_ms": 14415,
+          "subtitle_events": 23,
+          "final_events": 3,
+          "collection_completion_reason": "cancelled"
+        }
+      ]
+    }
+  }
+}

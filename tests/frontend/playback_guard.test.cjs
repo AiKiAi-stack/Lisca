@@ -2,6 +2,54 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {CaptionPlaybackGuard} = require('../../lisca/web/static/playback_guard.js');
 
+test('whole-sentence preparation holds before playback without spending the live fault budget',()=>{
+  const guard=new CaptionPlaybackGuard();
+  guard.reset({now:0,live:true});
+  guard.prepare({now:0,maxWaitMs:15000});
+  assert.equal(guard.tick({now:0,time:0,limit:0,ready:false,userPaused:false}),'hold');
+  assert.equal(guard.tick({now:6000,time:0,limit:0,ready:false,userPaused:false}),'none');
+  assert.equal(guard.degraded,false);
+  guard.captionProgress('first',0,4,6000);
+  assert.equal(guard.tick({now:6100,time:0,limit:4,ready:true,userPaused:false}),'resume');
+  assert.equal(guard.heldForSessionMs,0);
+  assert.equal(guard.tick({now:7000,time:4,limit:4,ready:true,userPaused:false}),'hold');
+  assert.equal(guard.tick({now:9000,time:4,limit:4,ready:true,userPaused:false}),'degrade');
+});
+
+test('draft progress cannot renew the absolute preparation deadline',()=>{
+  const guard=new CaptionPlaybackGuard();
+  guard.reset({now:0,live:true});
+  guard.prepare({now:0,maxWaitMs:15000});
+  guard.progress(20,14999);
+  assert.equal(guard.tick({now:15000,time:0,limit:20,ready:false,userPaused:false}),'preparation_timeout');
+  assert.equal(guard.tick({now:16000,time:0,limit:20,ready:false,userPaused:false}),'none');
+});
+
+test('preparation cannot resume beyond a finite playback ceiling at the current position',()=>{
+ for(const limit of [0,-.1]){
+  const guard=new CaptionPlaybackGuard();
+  guard.reset({now:0,live:true});guard.prepare({now:0,maxWaitMs:15000});
+  guard.captionProgress('future',5,7,0);
+  assert.equal(guard.tick({now:0,time:0,limit,ready:true,userPaused:false}),'hold');
+  assert.equal(guard.tick({now:2100,time:0,limit,ready:true,userPaused:false}),'none');
+  assert.equal(guard.tick({now:14999,time:0,limit,ready:true,userPaused:false}),'none');
+  assert.equal(guard.tick({now:15000,time:0,limit,ready:true,userPaused:false}),'preparation_timeout');
+ }
+ const unbuffered=new CaptionPlaybackGuard();
+ unbuffered.prepare({now:0,maxWaitMs:15000});unbuffered.captionProgress('first',.76,2,0);
+ assert.equal(unbuffered.tick({now:100,time:0,limit:null,ready:true,userPaused:false}),'resume');
+});
+
+test('a user pause suspends preparation and resetting the source discards its deadline',()=>{
+  const guard=new CaptionPlaybackGuard();
+  guard.reset({now:0,live:true});
+  guard.prepare({now:0,maxWaitMs:15000});
+  guard.tick({now:1000,time:0,limit:0,ready:false,userPaused:true});
+  assert.equal(guard.tick({now:21000,time:0,limit:0,ready:false,userPaused:false}),'hold');
+  guard.reset({now:22000,live:true});
+  assert.equal(guard.tick({now:23000,time:10,limit:20,ready:true,userPaused:false}),'none');
+});
+
 test('an audio feed watermark alone does not end a degraded live caption fault', () => {
   const guard = new CaptionPlaybackGuard();
   guard.reset({now:0, live:true});

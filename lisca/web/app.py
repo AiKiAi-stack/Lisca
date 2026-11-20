@@ -26,7 +26,7 @@ import threading
 import time
 import warnings
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait as wait_futures
 from collections import deque
 from itertools import chain
 from urllib.error import HTTPError, URLError
@@ -154,6 +154,22 @@ async def create_cloud_session(request: Request):
         if not isinstance(data, dict):
             raise CloudError("会话格式无效")
         mode = data.get("mode", "transcribe")
+        # This is an experiment parameter; product waiting budgets are measured separately.
+        sentence_wait_sec = None
+        live_prepare_ahead_sec = 0.0
+        if mode == "transcribe":
+            try:
+                sentence_wait_sec = float(os.environ.get("LISCA_SENTENCE_WAIT_SEC", "6"))
+            except ValueError:
+                raise CloudError("LISCA_SENTENCE_WAIT_SEC 必须是大于 0 且不超过 30 的有限秒数") from None
+            if not math.isfinite(sentence_wait_sec) or not 0 < sentence_wait_sec <= 30:
+                raise CloudError("LISCA_SENTENCE_WAIT_SEC 必须是大于 0 且不超过 30 的有限秒数")
+            try:
+                live_prepare_ahead_sec = float(os.environ.get("LISCA_LIVE_PREPARE_AHEAD_SEC", "10"))
+            except ValueError:
+                raise CloudError("LISCA_LIVE_PREPARE_AHEAD_SEC 必须是 0 到 30 之间的有限秒数") from None
+            if not math.isfinite(live_prepare_ahead_sec) or not 0 <= live_prepare_ahead_sec <= 30:
+                raise CloudError("LISCA_LIVE_PREPARE_AHEAD_SEC 必须是 0 到 30 之间的有限秒数")
         source, target = data.get("source", "auto"), data.get("target")
         if mode == "translate":
             validate_pair(source, target)
@@ -181,6 +197,8 @@ async def create_cloud_session(request: Request):
             token = secrets.token_urlsafe(32)
             _CLOUD_JOBS[token] = {"url": url.strip(), "config": config,
                 "source": source, "target": target, "mode": mode, "start_at": position,
+                "sentence_wait_sec": sentence_wait_sec,
+                "live_prepare_ahead_sec": live_prepare_ahead_sec,
                 "stop": RequestStop(), "expires": now + 60, "active": False}
         return {"session": token, "mode": mode}
     except (ValueError, TypeError) as exc:
@@ -940,9 +958,67 @@ async def ws_endpoint(ws: WebSocket):
                 final_texts.add(fingerprint)
             retain_caption_variant(revision_key, fingerprint)
 
+        def publish_previews(item, results) -> bool:
+            nonlocal caption_seen
+            emitted = False
+            for index, (clause_beg, clause_end, clause_text) in enumerate(results):
+                if stop.is_set():
+                    break
+                sentence_id = item["id"]
+                clause_normalized = " ".join(str(clause_text or "").split())
+                clause_fingerprint = (hashlib.sha256(clause_normalized.encode("utf-8")).digest()
+                                      if clause_normalized else None)
+                if original_mode and sentence_id is not None and clause_fingerprint:
+                    revision_key = str(sentence_id)
+                    if clause_fingerprint in withdrawn_caption_texts.get(revision_key, set()):
+                        continue
+                    retain_caption_variant(revision_key, item["fingerprint"])
+                    retain_caption_variant(revision_key, clause_fingerprint)
+                preview_message = {"type": "preview", "beg": clause_beg + timeline_offset,
+                    "end": clause_end + timeline_offset, "text": clause_text,
+                    "words": [(word_beg + timeline_offset, word_end + timeline_offset, token)
+                              for word_beg, word_end, token in item["words"] or []
+                              if isinstance(word_beg, (int, float))
+                              and isinstance(word_end, (int, float))
+                              and word_beg >= clause_beg and word_end <= clause_end],
+                    "sentence_id": sentence_id}
+                if original_mode:
+                    preview_message.update(item["preview"].commits[index],
+                                           is_final=False, revision=item["revision"])
+                put(preview_message)
+                caption_seen = emitted = True
+            return emitted
+
+        def check_caption_deadlines() -> bool:
+            if not original_mode or stop.is_set() or paused.is_set():
+                return False
+            emitted = False
+            now = active_session_time()
+            for item in pending_sentences:
+                if now >= item["deadline"]:
+                    preview = item["preview"]
+                    if (preview.emitted_chars >= len(preview.previous_text)
+                            and not preview.pending_corrections):
+                        continue
+                    had_stable = preview.stable_chars > preview.emitted_chars
+                    emitted = publish_previews(item, preview.commit_stable()) or emitted
+                    if not item.get("deadline_reported"):
+                        state = ("no_stable_text" if not had_stable else
+                                 "missing_timing" if preview.stable_chars > preview.emitted_chars else None)
+                        if state:
+                            message = ("等待上限已到，尚无稳定字幕；可重试、仅播放或停止"
+                                       if state == "no_stable_text" else
+                                       "稳定字幕缺少可用语音时间；可重试、仅播放或停止")
+                            put({"type": "status", "caption_state": state,
+                                 "sentence_id": item["id"], "message": message})
+                        item["deadline_reported"] = True
+            return emitted
+
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
             nonlocal caption_seen
+            if stop.is_set():
+                return
             beg, end, text, words = o[:4]
             is_final = bool(o[4]) if len(o) > 4 else True
             sentence_id = o[5] if len(o) > 5 else None
@@ -1025,37 +1101,18 @@ async def ws_endpoint(ws: WebSocket):
                 elif match is None:
                     if len(pending_sentences) >= _MAX_PENDING_CAPTIONS:
                         fail_capacity()
-                    preview = StableCaptionPreview(beg)
+                    preview = StableCaptionPreview(beg, sentence_first=original_mode)
                     preview.observe(text, words)
                     pending_sentences.append({"id": sentence_id, "beg": beg,
-                                              "preview": preview})
+                        "preview": preview, "words": words, "fingerprint": fingerprint,
+                        "revision": revision,
+                        "deadline": active_session_time() + cloud["sentence_wait_sec"]
+                        if original_mode else float("inf")})
                 else:
                     item = pending_sentences[match]
                     item["beg"] = min(item["beg"], beg)
-                    for clause_beg, clause_end, clause_text in item["preview"].observe(text, words):
-                        clause_normalized = " ".join(str(clause_text or "").split())
-                        clause_fingerprint = (
-                            hashlib.sha256(clause_normalized.encode("utf-8")).digest()
-                            if clause_normalized else None)
-                        if (original_mode and sentence_id is not None
-                                and clause_fingerprint):
-                            revision_key = str(sentence_id)
-                            if clause_fingerprint in withdrawn_caption_texts.get(
-                                    revision_key, set()):
-                                continue
-                            # Retain the source body and displayed clause for the
-                            # session-wide withdrawal budget, independent of drafts.
-                            retain_caption_variant(revision_key, fingerprint)
-                            retain_caption_variant(revision_key, clause_fingerprint)
-                        caption_seen = True
-                        put({"type": "preview", "beg": clause_beg + timeline_offset,
-                             "end": clause_end + timeline_offset, "text": clause_text,
-                             "words": [(word_beg + timeline_offset, word_end + timeline_offset, token)
-                                       for word_beg, word_end, token in words or []
-                                       if isinstance(word_beg, (int, float))
-                                       and isinstance(word_end, (int, float))
-                                       and word_beg >= clause_beg and word_end <= clause_end],
-                             "sentence_id": sentence_id})
+                    item.update(words=words, fingerprint=fingerprint, revision=revision)
+                    publish_previews(item, item["preview"].observe(text, words))
                 shifted_words = None
                 if words:
                     shifted_words = [
@@ -1070,6 +1127,8 @@ async def ws_endpoint(ws: WebSocket):
                      "sentence_id": sentence_id}
                 if revision is not None:
                     message["revision"] = revision
+                if original_mode and is_final:
+                    message["commit_reason"] = "final"
                 put(message)
                 if original_mode and str(text or "").strip():
                     progress_end = end
@@ -1135,6 +1194,8 @@ async def ws_endpoint(ws: WebSocket):
                 is_hls = parsed_real_url.path.lower().endswith(".m3u8")
                 is_live_hls = (parsed_real_url.scheme.lower() in {"http", "https"}
                                and is_hls)
+                # The client checks this against displayable captions and verified silence.
+                prepare_ahead_sec = cloud["live_prepare_ahead_sec"] if original_mode and is_live_hls else 0.0
                 if hasattr(src, "container"):
                     video_streams = src.container.streams.video
                     if is_hls and not video_streams:
@@ -1183,6 +1244,7 @@ async def ws_endpoint(ws: WebSocket):
 
                 def publish_buffer():
                     nonlocal playback_ceiling, ready_sent
+                    check_caption_deadlines()
                     if not batch_mode and (not cloud or original_mode):
                         # Keep the configured live delay as a floor. If ASR has an
                         # unfinished sentence, hold before it; when final arrives,
@@ -1203,7 +1265,8 @@ async def ws_endpoint(ws: WebSocket):
                                 and playback_ceiling >= timeline_offset + 0.25:
                             put({"type": "ready", "delay": delay_sec,
                                  "start_at": timeline_offset, "original": original_mode,
-                                 "buffered": True, "silent": not caption_seen})
+                                 "buffered": True, "silent": not caption_seen,
+                                 "prepare_ahead_sec": prepare_ahead_sec})
                             ready_sent = True
 
                 def decoded_chunks():
@@ -1229,8 +1292,10 @@ async def ws_endpoint(ws: WebSocket):
                             if result[0] is not None:
                                 emit(result)
                                 publish_buffer()
+                            elif check_caption_deadlines():
+                                publish_buffer()
                             check_no_progress()
-                            stop.wait(0.02)
+                            wait_futures((pending,), timeout=0.02)
                         if stop.is_set():
                             return
                         phase = "media_decode"
@@ -1239,11 +1304,22 @@ async def ws_endpoint(ws: WebSocket):
                             return
                         yield chunk
 
-                if original_mode and is_live_hls:
+                if original_mode:
                     source_reader = ThreadPoolExecutor(max_workers=1, thread_name_prefix="audio-source")
                     streaming_chunks = polled_chunks()
                 else:
                     streaming_chunks = chain((first_chunk,), decoded_chunks())
+
+                def feed_wait(chunk_sec):
+                    next_sec = fed_sec + chunk_sec
+                    if prefetch_local and not ready_sent:
+                        # A small burst, then 2x feeding with bounded programme headroom.
+                        due = max((next_sec - 2.0) / 2.0, next_sec - 10.0)
+                    else:
+                        lead_sec = 6.0 if original_mode and is_live_hls else 2.0 if prefetch_local else 0.0
+                        due = next_sec - lead_sec
+                    return due - (active_session_time() - feed_clock)
+
                 for chunk in streaming_chunks:
                     phase = "recognition"
                     if stop.is_set():
@@ -1267,19 +1343,35 @@ async def ws_endpoint(ws: WebSocket):
                     # Pace by the actual PCM duration (including a short tail).
                     chunk_sec = len(chunk) / (16000 * 2)
                     if not batch_mode:
-                        # Keep local files at most two seconds ahead so playback
-                        # can start before EOF. Bound buffered HLS too: an unpaced
-                        # segment burst can overflow the ASR input queue at startup.
-                        # One cumulative deadline lets delayed reads catch up without
-                        # turning source or recognizer time into permanent feed lag.
-                        # Stable live phrases need headroom while staying below
-                        # the existing ten-second recognizer input queue.
-                        lead_sec = 6.0 if original_mode and is_live_hls else 2.0 if prefetch_local else 0.0
-                        wait = fed_sec + chunk_sec - lead_sec - (active_session_time() - feed_clock)
+                        # Cumulative deadlines let delayed reads catch up; the
+                        # recognizer retains its separate bounded input queue.
+                        wait = feed_wait(chunk_sec)
                         if wait > 0:
-                            if cloud and _session_wait(stop, wait):
+                            if original_mode:
+                                while wait > 1e-6 and not stop.is_set():
+                                    if paused.is_set():
+                                        _session_wait(stop, 0.2)
+                                        continue
+                                    interval = min(wait, 0.05)
+                                    if _session_wait(stop, interval):
+                                        break
+                                    # A final can clear pending before the next draft arrives.
+                                    result = call_provider(engine.poll)
+                                    updated = False
+                                    while result[0] is not None and not stop.is_set():
+                                        emit(result)
+                                        updated = True
+                                        result = call_provider(engine.poll)
+                                    if updated or check_caption_deadlines():
+                                        publish_buffer()
+                                    check_no_progress()
+                                    # ready may arrive while this very chunk is waiting.
+                                    wait = feed_wait(chunk_sec)
+                                if stop.is_set():
+                                    break
+                            elif cloud and _session_wait(stop, wait):
                                 break
-                            if not cloud:
+                            elif not cloud:
                                 time.sleep(wait)
                     check_no_progress()
                     audio = s16_to_f32(chunk)
@@ -1313,6 +1405,8 @@ async def ws_endpoint(ws: WebSocket):
                                 emit(result)
                                 publish_buffer()
                             else:
+                                if check_caption_deadlines():
+                                    publish_buffer()
                                 _session_wait(stop, 0.02)
                         completion.result()
                 if stop.is_set():
@@ -1330,15 +1424,50 @@ async def ws_endpoint(ws: WebSocket):
                         break
                     emit(o2)
                     publish_buffer()
+                if original_mode:
+                    # EOF stops audio input, not the already running preparation deadline.
+                    while not stop.is_set():
+                        unfinished = [item for item in pending_sentences
+                                      if item["preview"].pending_corrections
+                                      or item["preview"].emitted_chars
+                                      < len(item["preview"].previous_text)]
+                        if not unfinished:
+                            break
+                        if paused.is_set():
+                            _session_wait(stop, 0.2)
+                            continue
+                        result = call_provider(engine.poll)
+                        if result[0] is not None:
+                            emit(result)
+                            publish_buffer()
+                            continue
+                        if check_caption_deadlines():
+                            publish_buffer()
+                        unfinished = [item for item in pending_sentences
+                                      if item["preview"].pending_corrections
+                                      or item["preview"].emitted_chars
+                                      < len(item["preview"].previous_text)]
+                        if not unfinished:
+                            break
+                        remaining = min(item["deadline"] for item in unfinished) - active_session_time()
+                        if remaining <= 0:
+                            phase = "caption_preparation"
+                            raise TimeoutError("speech ended with unprepared caption text")
+                        _session_wait(stop, min(0.02, remaining))
+                    if stop.is_set():
+                        return
                 if translation:
                     translation.finish()
+                if prefetch_local and not ready_sent and not caption_seen and silence_run < fed_sec:
+                    phase = "caption_preparation_empty"
+                    raise ValueError("recognition ended with non-silent audio but no prepared captions")
                 normal_completion = True
                 # Batch engines finish the whole file before the player starts.
                 # Send ready only after subtitles have reached the browser.
                 if not ready_sent:
                     put({"type": "ready", "delay": delay_sec, "start_at": timeline_offset,
                          "original": original_mode, "buffered": not bool(translation),
-                         "prepared": prefetch_local})
+                         "prepared": prefetch_local, "prepare_ahead_sec": prepare_ahead_sec})
                     ready_sent = True
             finally:
                 if source_reader is None:
@@ -1392,6 +1521,10 @@ async def ws_endpoint(ws: WebSocket):
                 message = "媒体拉流或音频解码失败，已停止后续识别"
             elif phase == "no_progress":
                 message = "识别连续 15 秒没有字幕或静音处理进展，已停止新音频处理；可重试、仅播放或停止"
+            elif phase == "caption_preparation":
+                message = "语音结束后仍有未稳定或缺少语音时间的字幕，结果不完整；可重试、仅播放或停止"
+            elif phase == "caption_preparation_empty":
+                message = "媒体已读完，识别未生成可用字幕；可重试、仅播放或停止"
             elif phase == "capacity":
                 message = ("识别达到安全容量上限，结果不完整；已停止识别，请重新开始"
                            if local_capacity_error else
@@ -1414,6 +1547,8 @@ async def ws_endpoint(ws: WebSocket):
                 error_event.update(failure_category="media_timeline", retryable=False)
             elif phase == "no_progress":
                 error_event.update(failure_category="no_progress", retryable=False)
+            elif phase in ("caption_preparation", "caption_preparation_empty"):
+                error_event.update(failure_category="caption_preparation", retryable=False)
             elif phase == "capacity":
                 error_event.update(failure_category="capacity", retryable=False)
             elif phase in ("media_open", "media_preflight", "media_decode"):

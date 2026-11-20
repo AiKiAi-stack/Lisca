@@ -8,38 +8,48 @@ from lisca.asr.asr_config import ASRSettings
 
 
 class TestASRClient:
+    @pytest.mark.parametrize(("status", "code", "sdk_kind"), [
+        (403, "Model.AccessDenied", None), (-1, "Unknown", "protocol"),
+    ])
     @patch("lisca.asr.asr_client.Recognition")
-    def test_provider_send_failure_is_not_reported_as_transport_failure(self, mock_rec):
+    def test_provider_send_failure_is_not_reported_as_transport_failure(
+            self, mock_rec, status, code, sdk_kind):
         from lisca.asr.asr_client import RecognitionFailure
         from lisca.asr.recognition_process import RecognitionProviderError
 
         mock_rec.return_value.send_audio_frame.side_effect = RecognitionProviderError(
-            403, "Model.AccessDenied")
+            status, code, sdk_kind)
         client = ASRClient(ASRSettings(api_key="fake-test-key"))
         client.start()
         client.feed_audio(b"\x01\x00" * 1600)
         with pytest.raises(RecognitionFailure) as caught:
             client.stop()
-        assert caught.value.status_code == 403
-        assert caught.value.code == "Model.AccessDenied"
+        assert caught.value.status_code == status
+        assert caught.value.code == code
+        assert caught.value.sdk_failure_kind == sdk_kind
 
+    @pytest.mark.parametrize(("status", "code", "sdk_kind"), [
+        (403, "Model.AccessDenied", None), (-1, "Unknown", "protocol"),
+    ])
     @patch("lisca.asr.asr_client.Recognition")
-    def test_eof_provider_error_keeps_structured_cause_after_shutdown(self, mock_rec):
+    def test_eof_provider_error_keeps_structured_cause_after_shutdown(
+            self, mock_rec, status, code, sdk_kind):
         from lisca.asr.asr_client import RecognitionFailure
 
         client = ASRClient(ASRSettings(api_key="fake-test-key"))
         callback = mock_rec.call_args.kwargs["callback"]
 
         def fail_at_eof(**_kwargs):
-            callback.on_error(Mock(status_code=403, code="Model.AccessDenied"))
+            callback.on_error(Mock(status_code=status, code=code, sdk_failure_kind=sdk_kind))
             raise ConnectionError("Recognition worker failed before completion")
 
         mock_rec.return_value.stop.side_effect = fail_at_eof
         client.start()
         with pytest.raises(RecognitionFailure) as caught:
             client.stop()
-        assert caught.value.status_code == 403
-        assert caught.value.code == "Model.AccessDenied"
+        assert caught.value.status_code == status
+        assert caught.value.code == code
+        assert caught.value.sdk_failure_kind == sdk_kind
         mock_rec.return_value.cancel.assert_called_once()
 
     @patch("lisca.asr.asr_client.Recognition")
@@ -352,3 +362,48 @@ def test_full_local_audio_queue_is_a_capacity_failure_not_an_unknown_provider_er
     client._input_queue.put.side_effect = queue.Full()
     with pytest.raises(RecognitionCapacityError):
         client.feed_audio(b'\x01\x00' * 1600)
+
+
+def test_blocked_recognition_keeps_the_hundred_frame_queue_and_cancel_discards_it(monkeypatch):
+    from lisca.asr import asr_client
+    from lisca.asr.recognition_process import RecognitionCapacityError
+
+    entered, release = threading.Event(), threading.Event()
+    delivered = []
+
+    class Recognition:
+        def __init__(self, **_kwargs): pass
+        def start(self): pass
+        def send_audio_frame(self, frame):
+            delivered.append(frame)
+            entered.set()
+            assert release.wait(3), 'cancel did not release the blocked consumer'
+        def cancel(self, **_kwargs): release.set()
+        def stop(self, **_kwargs): pass
+
+    monkeypatch.setattr(asr_client, 'Recognition', Recognition)
+    client = ASRClient(ASRSettings(api_key='fixture-key'))
+    frame = b'\x00\x10' * 1600
+    try:
+        client.start()
+        client.feed_audio(frame)
+        assert entered.wait(1)
+        for _ in range(100):
+            client.feed_audio(frame)
+        with pytest.raises(RecognitionCapacityError):
+            client.feed_audio(frame)
+        began = time.monotonic()
+        client.cancel()
+        assert time.monotonic() - began < 1
+        assert client.state == ASRState.STOPPED
+        assert delivered == [frame]
+        with pytest.raises(RuntimeError, match='stopped'):
+            client.feed_audio(frame)
+        client.start()
+        fresh_frame = b'\x00\x20' * 1600
+        client.feed_audio(fresh_frame)
+        client.stop()
+        assert delivered == [frame, fresh_frame]
+    finally:
+        release.set()
+        client.cancel()
