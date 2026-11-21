@@ -1,7 +1,7 @@
 (function (root) {
   'use strict';
   const COVERAGE_GAP_TOLERANCE = 0.15;
-  const MAX_LIVE_HOLD_MS = 2000; // Bound application-induced live lag across recovered faults.
+  const MAX_SESSION_HOLD_MS = 2000;
   class CaptionPlaybackGuard {
     constructor() { this.reset({now: 0, live: false}); }
     reset({now, live}) {
@@ -80,7 +80,7 @@
       }
       if (this.externalPauseAt != null) {
         const excludedMs = now - this.externalPauseAt;
-        this.lastProgress += excludedMs;
+        this.lastProgress = Math.min(now, this.lastProgress + excludedMs);
         if (this.holdAt != null) this.holdAt += excludedMs;
         if (this.preparationStartedAt != null) this.preparationStartedAt += excludedMs;
         this.recoveryCandidate = null;
@@ -140,7 +140,7 @@
           this.faultActive = true;
           this.heldForFaultMs = 0;
         }
-        if (this.liveWaitBudgetSpent()) {
+        if (this.waitBudgetSpent()) {
           this.degraded = true;
           this.recoveryCandidate = null;
           return 'degrade';
@@ -151,7 +151,7 @@
       }
       if (this.holdAt != null) {
         const currentHoldMs = Math.max(0, now - this.holdAt);
-        if (this.live && this.heldForSessionMs + this.heldForFaultMs + currentHoldMs >= MAX_LIVE_HOLD_MS) {
+        if (this.heldForSessionMs + this.heldForFaultMs + currentHoldMs >= MAX_SESSION_HOLD_MS) {
           this.heldForFaultMs += currentHoldMs;
           this.commitFaultWait();
           this.holdAt = null;
@@ -180,7 +180,7 @@
           this.faultActive = true;
           this.heldForFaultMs = 0;
         }
-        if (this.liveWaitBudgetSpent()) {
+        if (this.waitBudgetSpent()) {
           this.degraded = true;
           this.recoveryCandidate = null;
           return 'degrade';
@@ -283,8 +283,8 @@
       this.watchingCoverage = this.live;
       this.uncoveredSince = null;
     }
-    liveWaitBudgetSpent() {
-      return this.heldForSessionMs + this.heldForFaultMs >= MAX_LIVE_HOLD_MS;
+    waitBudgetSpent() {
+      return this.heldForSessionMs + this.heldForFaultMs >= MAX_SESSION_HOLD_MS;
     }
     commitFaultWait() {
       this.heldForSessionMs += this.heldForFaultMs;

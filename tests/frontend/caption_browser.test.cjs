@@ -6,7 +6,8 @@ function browser({playerWidth=260,fontSize=30,cssMaxWidth='90%'}={}){
  const element=()=>({textContent:'',hidden:true,dataset:{},classList:{contains:()=>false},style:{},remove(){}});
  const current=element(), late=element();
  current.style.fontSize=`${fontSize}px`;const playerWrap={clientWidth:playerWidth};
- const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preserveLiveMedia:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:20000,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontStyle:'normal',fontWeight:'600',fontSize:element.style.fontSize||'30px',fontFamily:'Arial, sans-serif',letterSpacing:'normal',maxWidth:element.style.maxWidth||cssMaxWidth,paddingLeft:'10px',paddingRight:'10px',borderLeftWidth:'0px',borderRightWidth:'0px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
+ const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preservePlayback:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:20000,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontStyle:'normal',fontWeight:'600',fontSize:element.style.fontSize||'30px',fontFamily:'Arial, sans-serif',letterSpacing:'normal',maxWidth:element.style.maxWidth||cssMaxWidth,paddingLeft:'10px',paddingRight:'10px',borderLeftWidth:'0px',borderRightWidth:'0px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
+ context.originalCaptionMode=false;
  const moduleFile=path.join(__dirname,'../../lisca/web/static/caption_presenter.js');
  if(fs.existsSync(moduleFile)){const module=require(moduleFile);context.CaptionPresenter=module.CaptionPresenter;context.CaptionLayout=module.CaptionLayout;context.lines=()=>[];context.captionPresenter=new context.CaptionPresenter();}
  vm.createContext(uiContext(context));
@@ -38,7 +39,7 @@ function shareHistoryViewer(){
    ['shareHistoryNotice',{hidden:true,textContent:''}]]);
  c.generation=4;c.connectionGeneration=4;c.terminalReceived=false;c.recognitionOnlyStopped=false;
  c.audioClockPts=null;c.timelineMapped=false;c.queuedMediaMessages=[];c.mediaOffset=0;
- c.sharedViewerActive=true;c.preserveLiveMedia=false;c.originalCaptionMode=false;c.uiPaused=false;
+ c.sharedViewerActive=true;c.preservePlayback=false;c.originalCaptionMode=false;c.uiPaused=false;
  c.holdingForBuffer=false;c.holdingForSync=false;c.playStarted=false;c.captionHasSpeech=false;
  c.activeInput='';c.currentEl.classList={contains:name=>classes.has(name),add:name=>classes.add(name),remove:name=>classes.delete(name)};
  c.player={currentTime:1,paused:false,ended:false,playCalls:0,play(){this.playCalls++;return Promise.resolve();}};
@@ -59,7 +60,7 @@ function lateHlsClockViewer(){
  const b=shareHistoryViewer(),c=b.context,html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
  const {RecoveryController}=require('../../lisca/web/static/recovery_controller.js');
  Object.assign(c,{generation:9,connectionGeneration:9,terminalReceived:false,recognitionOnlyStopped:false,
-   preserveLiveMedia:true,originalCaptionMode:true,sharedViewerActive:false,isHls:true,
+   preservePlayback:true,originalCaptionMode:true,sharedViewerActive:false,isHls:true,
    audioClockPts:null,videoClockPts:null,hlsVideoClockPts:null,timelineMapped:false,mediaOffset:0,
    queuedMediaMessages:[],captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:1000,
    captionHasSpeech:false,originalCaptionsComplete:false,playbackLimit:null,playStarted:true,
@@ -76,7 +77,7 @@ function lateHlsClockViewer(){
  c.flushCurrentMediaClock=c.flushMediaClock;
  c.activeMediaClockFlush=c.flushCurrentMediaClock;
  const offsetStart=html.indexOf('  function offsetMediaMessage(msg, offset) {');
- const offsetEnd=html.indexOf('\n\n  function shouldPreserveLiveMedia',offsetStart);
+ const offsetEnd=html.indexOf('\n\n  function shouldPreservePlayback',offsetStart);
  vm.runInContext(html.slice(offsetStart,offsetEnd),c);
  const identityStart=html.indexOf('  function scopeSessionCaptionIdentity(');
  const identityEnd=html.indexOf('\n\n  async function connect(',identityStart);
@@ -128,7 +129,7 @@ function endedSession(reason){
  const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
  const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:true}]]);
  const {RecoveryController}=require('../../lisca/web/static/recovery_controller.js');
- const c={generation:1,connectionGeneration:1,preserveLiveMedia:false,RecoveryController,
+ const c={generation:1,connectionGeneration:1,preservePlayback:false,RecoveryController,
    recoveryController:new RecoveryController(),recognitionOnlyStopped:false,audioClockPts:null,
    timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:msg=>msg,
    playbackGuard:{done:false},document:{getElementById:id=>elements.get(id)},
@@ -146,7 +147,7 @@ function terminalCloseSession(reason,{awaitingTimeline=false}={}){
  const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
  const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:false}]]);
  const recoveries=[];
- const c={generation:1,connectionGeneration:1,preserveLiveMedia:false,terminalReceived:false,recognitionOnlyStopped:false,
+ const c={generation:1,connectionGeneration:1,preservePlayback:false,terminalReceived:false,recognitionOnlyStopped:false,
    audioClockPts:awaitingTimeline?0:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:msg=>msg,
    playbackGuard:{done:false},document:{getElementById:id=>elements.get(id)},
    originalCaptionMode:true,isHls:false,currentEl:{classList:{contains:()=>false}},
@@ -263,7 +264,7 @@ test('server caption capacity errors retain existing captions and continue in on
  const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
  const row={sentenceId:'old',text:'已有终稿。'},preview={sentenceId:'draft',text:'已有预览。'};
  const actions={hidden:false};let resets=0;
- const c={generation:1,connectionGeneration:1,preserveLiveMedia:false,recognitionOnlyStopped:false,sharedViewerActive:false,
+ const c={generation:1,connectionGeneration:1,preservePlayback:false,recognitionOnlyStopped:false,sharedViewerActive:false,
    originalCaptionMode:true,audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,
    recoveredRevisionOffsets:null,
    recoveryController:{cancel(){}},cancelPendingLocalSeek(){},pendingSeekOrigin:null,restoringSeek:null,
@@ -628,11 +629,37 @@ test('an anonymous caption is not blocked by another sentence retraction',()=>{c
 test('captions without a revision retain the legacy client behavior',()=>{const b=browser(),id='legacy-id';b.context.onSubtitle({sentence_id:id,beg:1,end:2,is_final:true,translated:false,text:'旧服务字幕。'});b.context.subs=[];b.context.captionPresenter.remove(id,0);b.context.onSubtitle({sentence_id:id,beg:1,end:2,is_final:true,translated:false,text:'旧服务后续字幕。'});assert.equal(b.context.subs.length,1);assert.equal(b.context.subs[0].text,'旧服务后续字幕。');});
 
 test('a cloud disconnect during local pause preserves the caption and reconnects at the same position on play',()=>{const b=browser();b.push({});vm.runInContext('uiPaused=true',b.context);assert.equal(b.context.holdCaptionForCloudReconnect(),true);assert.match(b.current.textContent,/这句译文/);assert.equal(b.context.resumeClosedCloudAfterPause(),true);assert.deepEqual(Array.from(b.context.reconnected).slice(0,3),['test.mp4',null,10]);assert.equal(b.context.reconnected[3].automaticRecovery,true);assert.equal(b.context.cloudResumeRequired,false);assert.equal(b.context.resumeClosedCloudAfterPause(),false);});
+test('resuming a disconnected original-caption session keeps the local player running',()=>{
+ const {context:c}=browser();
+ Object.assign(c,{uiPaused:true,originalCaptionMode:true,translatedSession:false,cloudResumeRequired:true});
+ assert.equal(c.resumeClosedCloudAfterPause(),false);
+ assert.equal(c.playStarted,true);
+ assert.equal(c.player.paused,false);
+ assert.equal(c.cloudResumeRequired,false);
+ assert.deepEqual(Array.from(c.reconnected).slice(0,3),['test.mp4',null,10]);
+ assert.equal(c.reconnected[3].automaticRecovery,true);
+});
+
+test('resuming the same original file preserves playback when the old socket never reported closure',()=>{
+ for(const {now,readyState} of [{now:16000,readyState:1},{now:3000,readyState:3}]){
+   const session=playBrowser({position:22,pauseStartedAt:0,now,readyState});
+   const c=session.context;
+   c.originalCaptionMode=true;
+   vm.runInContext('uiPaused=true',c);
+   session.play();
+   assert.equal(c.player.paused,false);
+   assert.equal(vm.runInContext('uiPaused',c),false);
+   assert.equal(c.playStarted,true);
+   assert.deepEqual(Array.from(c.reconnected).slice(0,3),['local.mp4',null,22]);
+   assert.equal(c.reconnected[3].automaticRecovery,true);
+ }
+});
+
 test('cloud failures during normal playback remain visible errors rather than silent reconnect loops',()=>{const b=browser();assert.equal(b.context.holdCaptionForCloudReconnect(),false);assert.equal(b.context.cloudResumeRequired,false);});
 
 test('a recovered ASR session reusing a sentence ID preserves both generations of transcript history',()=>{
  const b=browser(),c=b.context,html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
- Object.assign(c,{generation:2,connectionGeneration:2,preserveLiveMedia:true,recognitionOnlyStopped:false,
+ Object.assign(c,{generation:2,connectionGeneration:2,preservePlayback:true,recognitionOnlyStopped:false,
    audioClockPts:null,videoClockPts:null,hlsVideoClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,
    originalCaptionMode:true,captionHasSpeech:true,playStarted:true,holdingForBuffer:false,
    syncSubtitle(){},markSessionRecoveryProgress(){},
@@ -703,21 +730,25 @@ test('the preserved HLS INIT_PTS callback drains a queued terminal end without a
  assert.equal(c.terminalReceived,true);
 });
 
-test('only automatic original-caption recovery on an active live HLS source preserves the media player',()=>{
+test('automatic original-caption recovery preserves an active HLS player or the same local file',()=>{
  const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
- const start=html.indexOf('  function shouldPreserveLiveMedia(');
+ const start=html.indexOf('  function shouldPreservePlayback(');
  const end=html.indexOf('\n\n  async function connect(',start);
  const c={};vm.createContext(uiContext(c));vm.runInContext(html.slice(start,end),c);
  const source={};
- assert.equal(c.shouldPreserveLiveMedia({automaticRecovery:true,live:true,originalCaptionMode:true,
+ assert.equal(c.shouldPreservePlayback({automaticRecovery:true,live:true,originalCaptionMode:true,
    sharedViewerActive:false,hlsPlayer:source}),true);
+ assert.equal(c.shouldPreservePlayback({automaticRecovery:true,live:false,originalCaptionMode:true,
+   sharedViewerActive:false,sameLocalFile:true}),true);
  for(const changed of [
+   {automaticRecovery:false,live:false,originalCaptionMode:true,sameLocalFile:true},
+   {automaticRecovery:true,live:false,originalCaptionMode:true,sharedViewerActive:true,sameLocalFile:true},
    {automaticRecovery:false,live:true,originalCaptionMode:true,sharedViewerActive:false,hlsPlayer:source},
    {automaticRecovery:true,live:false,originalCaptionMode:true,sharedViewerActive:false,hlsPlayer:source},
    {automaticRecovery:true,live:true,originalCaptionMode:false,sharedViewerActive:false,hlsPlayer:source},
    {automaticRecovery:true,live:true,originalCaptionMode:true,sharedViewerActive:true,hlsPlayer:source},
    {automaticRecovery:true,live:true,originalCaptionMode:true,sharedViewerActive:false,hlsPlayer:null},
- ]) assert.equal(c.shouldPreserveLiveMedia(changed),false);
+ ]) assert.equal(c.shouldPreservePlayback(changed),false);
 });
 
 test('a long local pause reconnects before reusing a potentially expired ASR socket',()=>{const b=browser();b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),true);assert.deepEqual(Array.from(b.context.reconnected),['test.mp4',null,10]);});
@@ -827,7 +858,7 @@ function recoveryBrowser(){
  const Hls=require('../../lisca/web/static/hls.min.js');
  const {RecoveryController}=require('../../lisca/web/static/recovery_controller.js');
  let now=0,nextId=1;const timers=new Map(),actions=[],recoveryOrder=[];
- const c={recoveries:0,cancellations:0,preserveLiveMedia:false,sharedViewerActive:false,recognitionOnlyStopped:false,
+ const c={recoveries:0,cancellations:0,preservePlayback:false,sharedViewerActive:false,recognitionOnlyStopped:false,
    originalCaptionMode:true,uiPaused:false,activeInput:'https://stream.test/live.m3u8',
    audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],
    connectionGeneration:1,generation:1,playbackLimit:0,playbackGuard:{live:true},player:{currentTime:8},
@@ -980,7 +1011,7 @@ test('late first ready never rewinds an already playing live source, but initial
   {live:true,started:true,preserve:true,expected:40.833},
  ]){
   const {context:c}=lateHlsClockViewer();
-  c.preserveLiveMedia=state.preserve;c.playStarted=state.started;
+  c.preservePlayback=state.preserve;c.playStarted=state.started;
   c.playbackGuard.live=state.live;c.player.currentTime=40.833;
   c.receiveMessage({type:'preview',sentence_id:'aligned',beg:35.160,end:38,text:'Prepared sentence.'});
   c.receiveMessage({type:'ready',original:true,buffered:true,start_at:35.160});
@@ -992,6 +1023,7 @@ test('late first ready never rewinds an already playing live source, but initial
 test('draft history cannot claim visible caption coverage or announce ready',()=>{
  const {context:c}=shareHistoryViewer();
  c.originalCaptionMode=true;c.sharedViewerActive=false;c.playStarted=true;c.activeInput='live.m3u8';
+ c.playbackGuard.live=true;
  const covered=[];c.playbackGuard.captionProgress=(...args)=>covered.push(args);
  c.receiveMessage({type:'subtitle',sentence_id:900,revision:1,beg:0,end:4,
    is_final:false,text:'An unfinished hypothesis'});
@@ -1047,6 +1079,28 @@ function preparingMessageBrowser({live=false}={}){
  vm.runInContext(html.slice(html.indexOf('function syncPlaybackToBuffer()'),html.indexOf('// 字幕整句快照')),c);
  return b;
 }
+
+test('advancing local recognition keeps the session alive without releasing unfinished captions',()=>{
+ const {context:c}=preparingMessageBrowser();
+ c.receiveMessage({type:'subtitle',sentence_id:10,revision:1,is_final:true,beg:54,end:59.76,text:'第一句。'});
+ c.receiveMessage({type:'buffer',play_at:59.76});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+ c.syncPlaybackToBuffer();
+ c.player.currentTime=59.747376;
+ c.now=1000;c.syncPlaybackToBuffer();
+ c.now=3000;c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,false);
+ const draft={type:'subtitle',sentence_id:11,beg:60.2,end:null,is_final:false,text:'可以相互成就',
+  words:[[74.88,75.24,'可以'],[75.24,75.68,'相互'],[75.68,76.24,'成就']]};
+ c.now=14000;c.receiveMessage({...draft,revision:1});
+ c.now=16000;c.syncPlaybackToBuffer();
+ assert.equal(c.failure,undefined);
+ assert.equal(c.playbackGuard.covers(75.5),false);
+ c.now=28000;c.receiveMessage({...draft,revision:2});
+ c.receiveMessage({type:'buffer',play_at:100});
+ c.now=29000;c.syncPlaybackToBuffer();
+ assert.match(c.failure,/15 秒没有进展/);
+});
 
 test('recorded live final handoff follows the read 警方 boundary after timing and numeral revisions',()=>{
  const fixture=require('./fixtures/zh-live-caption-handoff.json');

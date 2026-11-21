@@ -2,6 +2,25 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {CaptionPlaybackGuard} = require('../../lisca/web/static/playback_guard.js');
 
+test('local caption holds share two seconds across faults and exclude source buffering', () => {
+  const guard = new CaptionPlaybackGuard();
+  const tick = (now, time, limit, extra = {}) =>
+    guard.tick({now, time, limit, ready:true, userPaused:false, ...extra});
+  guard.captionProgress('opening', 0, 4, 0);
+  assert.equal(tick(100, 4, 4), 'hold');
+  guard.captionProgress('next', 4, 8, 850);
+  assert.equal(tick(850, 4, 8), 'resume');
+  assert.equal(tick(900, 4.1, 8), 'none');
+  guard.captionProgress('later', 8, 10, 1600);
+  assert.equal(tick(1600, 4.8, 10), 'recovered');
+  assert.equal(tick(7000, 10, 10), 'hold');
+  assert.equal(tick(7250, 10, 10, {sourceBuffering:true}), 'none');
+  assert.equal(tick(14250, 10, 10), 'none');
+  assert.equal(tick(15249, 10, 10), 'none');
+  assert.equal(tick(15250, 10, 10), 'degrade');
+  assert.equal(guard.heldForSessionMs, 2000);
+});
+
 test('whole-sentence preparation holds before playback without spending the live fault budget',()=>{
   const guard=new CaptionPlaybackGuard();
   guard.reset({now:0,live:true});
