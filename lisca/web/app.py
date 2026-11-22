@@ -974,16 +974,22 @@ async def ws_endpoint(ws: WebSocket):
                         continue
                     retain_caption_variant(revision_key, item["fingerprint"])
                     retain_caption_variant(revision_key, clause_fingerprint)
+                commit = item["preview"].commits[index] if original_mode else None
+                if commit is not None:
+                    words = item["preview"].words_for_commit(commit["commit_id"])
+                else:
+                    words = [(word_beg, word_end, token)
+                             for word_beg, word_end, token in item["words"] or []
+                             if isinstance(word_beg, (int, float))
+                             and isinstance(word_end, (int, float))
+                             and word_beg >= clause_beg and word_end <= clause_end]
                 preview_message = {"type": "preview", "beg": clause_beg + timeline_offset,
                     "end": clause_end + timeline_offset, "text": clause_text,
                     "words": [(word_beg + timeline_offset, word_end + timeline_offset, token)
-                              for word_beg, word_end, token in item["words"] or []
-                              if isinstance(word_beg, (int, float))
-                              and isinstance(word_end, (int, float))
-                              and word_beg >= clause_beg and word_end <= clause_end],
+                              for word_beg, word_end, token in words],
                     "sentence_id": sentence_id}
-                if original_mode:
-                    preview_message.update(item["preview"].commits[index],
+                if commit is not None:
+                    preview_message.update(commit,
                                            is_final=False, revision=item["revision"])
                 put(preview_message)
                 caption_seen = emitted = True

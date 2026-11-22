@@ -48,12 +48,22 @@ class StableCaptionPreview:
         self.sequence = 0
         self.stable_chars = 0
         self.words = []
+        self._word_spans = []
         self.released = []
         self.pending_corrections = set()
 
     def observe(self, text: str, words: list | None) -> list[tuple[float, float, str]]:
         """Return stable clauses or bounded word phrases with ASR timing."""
         self.commits = []
+        common = 0
+        for left, right in zip(self.previous_text, text):
+            if left != right:
+                break
+            common += 1
+        self.words = [(beg, end, str(token)) for beg, end, token in words or []
+                      if isinstance(beg, (int, float)) and isinstance(end, (int, float))
+                      and math.isfinite(beg) and math.isfinite(end)
+                      and end > beg and token]
         if self.emitted_chars and self.previous_text[:self.emitted_chars] != text[:self.emitted_chars]:
             # Final replaces corrected previews; remap the consumed prefix so
             # an earlier insertion/deletion cannot swallow the pending tail.
@@ -85,38 +95,34 @@ class StableCaptionPreview:
                             released["start"], released["finish"], released["text"]):
                         self.pending_corrections.add(released["commit_id"])
                         released.update(start=start, finish=finish, text=corrected)
-        common = 0
-        for left, right in zip(self.previous_text, text):
-            if left != right:
-                break
-            common += 1
         self.previous_text = text
         self.stable_chars = common
-        self.words = [(beg, end, str(token)) for beg, end, token in words or []
-                      if isinstance(beg, (int, float)) and isinstance(end, (int, float))
-                      and math.isfinite(beg) and math.isfinite(end)
-                      and end > beg and token]
         results = []
-        if self.sentence_first and common:
-            for released in self.released:
-                if (released["commit_id"] in self.pending_corrections
-                        and released["finish"] <= common):
-                    timing = self._range_timing(released["start"], released["finish"])
-                    if timing is None and released["text"]:
-                        continue
-                    if timing is not None:
-                        released.update(beg=timing[0], end=timing[1])
-                    results.append((released["beg"], released["end"], released["text"]))
-                    self.commits.append(self._metadata(released))
-                    self.pending_corrections.remove(released["commit_id"])
-                    if released is self.released[-1]:
-                        self.emitted_end = released["end"]
-        if common <= self.emitted_chars or not words:
+        if self.sentence_first:
+            self._word_spans = self._source_word_spans()
+            safe_releases = self._align_released_ranges(common)
+            for index, released in enumerate(self.released):
+                if index not in safe_releases or released["finish"] > common:
+                    continue
+                timing, range_words = self._range_data(released["start"], released["finish"])
+                if timing is None and released["text"]:
+                    continue
+                changed = timing is not None and (
+                    timing != (released["beg"], released["end"]) or range_words != released["words"])
+                if not changed and released["commit_id"] not in self.pending_corrections:
+                    continue
+                if timing is not None:
+                    released["beg"], released["end"] = timing
+                released["words"] = range_words
+                results.append((released["beg"], released["end"], released["text"]))
+                self.commits.append(self._metadata(released))
+                self.pending_corrections.discard(released["commit_id"])
+                if released is self.released[-1]:
+                    self.emitted_end = released["end"]
+        if common <= self.emitted_chars or not self.words:
             return results
 
         timed_words = self.words
-        if not timed_words:
-            return results
 
         endings = _SENTENCE_END if self.sentence_first else _CLAUSE_END
         for match in endings.finditer(text, self.emitted_chars):
@@ -125,6 +131,10 @@ class StableCaptionPreview:
                 break
             if self.sentence_first and not _sentence_ending(text, match):
                 continue
+            if self.sentence_first:
+                boundary = self._complete_word_boundary(boundary, common)
+                if boundary is None:
+                    continue
             phrase = text[self.emitted_chars:boundary]
             if not self.sentence_first:
                 phrase = phrase.strip()
@@ -189,9 +199,11 @@ class StableCaptionPreview:
         return result
 
     def _record(self, beg, end, finish, reason):
+        _, words = self._range_data(self.emitted_chars, finish)
         released = {"commit_id": self.sequence, "commit_reason": reason,
             "start": self.emitted_chars, "finish": finish,
-            "text": self.previous_text[self.emitted_chars:finish], "beg": beg, "end": end}
+            "text": self.previous_text[self.emitted_chars:finish], "beg": beg, "end": end,
+            "words": words}
         self.sequence += 1
         self.released.append(released)
         self.commits.append(self._metadata(released))
@@ -201,25 +213,75 @@ class StableCaptionPreview:
             "source_text": self.previous_text,
             "source_start": released["start"], "source_end": released["finish"]}
 
-    def _range_timing(self, start, finish):
+    def words_for_commit(self, commit_id):
+        """Return the current source-aligned word spans for a released commit."""
+        return self.released[commit_id]["words"]
+
+    def _source_word_spans(self):
         text = self.previous_text
         spoken = _SPOKEN.sub("", text)
         timed = _SPOKEN.sub("", "".join(token for _, _, token in self.words))
         if not timed or not spoken.startswith(timed):
-            return None
-        before = len(_SPOKEN.sub("", text[:start]))
-        through = len(_SPOKEN.sub("", text[:finish]))
-        beg = self.begin if start == 0 else None
-        end = None
+            return []
+        positions = [match.start() for match in re.finditer(r"\w", text)]
+        spans = []
         seen = 0
-        for word_beg, word_end, token in self.words:
-            if seen == before and beg is None:
-                beg = word_beg
-            seen += len(_SPOKEN.sub("", token))
-            if seen == through:
-                end = word_end
-                break
-        return (beg, end) if beg is not None and end is not None and end > beg else None
+        for word in self.words:
+            count = len(_SPOKEN.sub("", word[2]))
+            if count:
+                spans.append((positions[seen], positions[seen + count - 1] + 1, word))
+                seen += count
+        return spans
+
+    def _range_data(self, start, finish):
+        # Only observed whole words can give a revised commit its playback interval.
+        words = [word for left, right, word in self._word_spans if start <= left and right <= finish]
+        spoken = _SPOKEN.sub("", self.previous_text[start:finish])
+        if not words or _SPOKEN.sub("", "".join(word[2] for word in words)) != spoken:
+            return None, []
+        beg = self.begin if start == 0 else words[0][0]
+        end = words[-1][1]
+        return ((beg, end), words) if end > beg else (None, [])
+
+    def _align_released_ranges(self, stable_chars):
+        if not self.released:
+            return set()
+        boundaries = [self.released[0]["start"]]
+        boundaries.extend(released["finish"] for released in self.released)
+        blocked = set()
+        for word_start, word_finish, _ in self._word_spans:
+            crossing = [index for index, boundary in enumerate(boundaries)
+                        if word_start < boundary < word_finish]
+            if not crossing:
+                continue
+            if word_finish > stable_chars:
+                blocked.update(crossing)
+            elif crossing == [len(self.released)]:
+                boundaries[-1] = word_finish
+            else:
+                boundaries[crossing[0]] = word_start
+                for index in crossing[1:]:
+                    boundaries[index] = word_finish
+        safe = set()
+        for index, released in enumerate(self.released):
+            if index in blocked or index + 1 in blocked:
+                continue
+            start, finish = boundaries[index:index + 2]
+            corrected = self.previous_text[start:finish]
+            if (start, finish, corrected) != (
+                    released["start"], released["finish"], released["text"]):
+                self.pending_corrections.add(released["commit_id"])
+                released.update(start=start, finish=finish, text=corrected)
+            safe.add(index)
+        if len(boundaries) - 1 not in blocked:
+            self.emitted_chars = boundaries[-1]
+        return safe
+
+    def _complete_word_boundary(self, boundary, stable_chars):
+        for word_start, word_finish, _ in self._word_spans:
+            if word_start < boundary < word_finish:
+                return word_finish if word_finish <= stable_chars else None
+        return boundary
 
     def _bounded_boundary(self, text, words, common):
         spoken_positions = [match.end() for match in re.finditer(r"\w", text)]

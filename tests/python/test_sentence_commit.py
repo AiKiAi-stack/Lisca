@@ -194,6 +194,49 @@ def test_timeout_growth_and_prefix_revision_update_the_same_commit_without_losin
     assert previews[2]["end"] == pytest.approx(2.6)
 
 
+def test_stable_correction_crossing_a_regrouped_word_keeps_both_commits(
+        tmp_path, monkeypatch):
+    # The real Chinese long input regrouped a corrected character into 雕像,
+    # crossing a released range and blocking every subsequent preview.
+    first = "白头海钓雕"
+    original = first + "像给习近平"
+    corrected = "白头海雕雕像给习近平"
+    corrected_words = [(0, .8, "白头海雕"), (.8, 1.2, "雕像"),
+                       (1.2, 1.4, "给"), (1.4, 2, "习近平")]
+    events = _session_events(tmp_path, monkeypatch, [
+        (0.0, (0.0, 1.0, first, _characters(first, 1), False, 8)),
+        (0.2, (0.0, 1.0, first, _characters(first, 1), False, 8)),
+        (6.1, (None, None, "", None)),
+        (6.2, (0.0, 2.0, original, _characters(original, 2), False, 8)),
+        (6.3, (0.0, 2.0, original, _characters(original, 2), False, 8)),
+        (6.4, (0.0, 2.0, corrected, corrected_words, False, 8)),
+        (6.5, (0.0, 2.0, corrected, corrected_words, False, 8)),
+        (6.6, (0.0, 2.0, corrected, corrected_words, True, 8)),
+    ])
+    previews = [event for event in events if event["type"] == "preview"]
+    # Reconstruct the public preview just as a consumer applies revisions by ID.
+    latest = {event["commit_id"]: event for event in previews}
+    parts = sorted(latest.values(), key=lambda event: event["source_start"])
+    assert "".join(event["text"] for event in parts) == corrected
+    assert sum("雕像" in event["text"] for event in parts) == 1
+
+
+def test_revised_final_word_with_the_same_end_time_replaces_the_old_preview(
+        tmp_path, monkeypatch):
+    events = _session_events(tmp_path, monkeypatch, [
+        (0.0, (0, 1, "雕", [(0, 1, "雕")], False, 8)),
+        (0.2, (0, 1, "雕", [(0, 1, "雕")], False, 8)),
+        (6.1, (None, None, "", None)),
+        (6.2, (0, 1, "雕像", [(0, 1, "雕像")], False, 8)),
+        (6.3, (0, 1, "雕像", [(0, 1, "雕像")], False, 8)),
+        (6.4, (0, 1, "雕像", [(0, 1, "雕像")], True, 8)),
+    ])
+    previews = [event for event in events if event["type"] == "preview"]
+    assert any(event["text"] == "雕" for event in previews)
+    latest = {event["commit_id"]: event for event in previews}
+    assert [event["text"] for event in latest.values() if event["text"]] == ["雕像"]
+
+
 @pytest.mark.parametrize("first,second,words,state", [
     ("今天继续关注", "明天继续关注", _characters("明天继续关注"), "no_stable_text"),
     ("今天继续关注", "今天继续关注", None, "missing_timing"),
