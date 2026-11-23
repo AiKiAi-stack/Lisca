@@ -29,3 +29,11 @@ PY
 ```
 
 应用配置后再执行明确输入和运行上限的识别任务。检查连接与实际识别的费用由该 Key 所属账户承担。停止任务后保留可复核的会话与关闭记录。
+
+如果本机通过 HTTP 代理访问 DashScope，可在启动 WebUI 时显式为安全 WebSocket 指定同一路由。将以下命令用于已经设置 `https_proxy` 的终端，由项目虚拟环境执行：
+
+```bash
+env wss_proxy="$https_proxy" WSS_PROXY="$https_proxy" python -m lisca --host 127.0.0.1 --port 8002
+```
+
+2026-11-20，本机安装的 SDK 在仅设置 `https_proxy` 时对 WSS 选择了直连。显式指定代理后，一段 8 秒中文参考音频在 0.340 秒收到服务端任务确认，1.134 秒收到首段文字。
