@@ -10,7 +10,8 @@ from lisca.web import app as webui
 
 
 def _session_events(
-        tmp_path, monkeypatch, callbacks, *, chunk_sizes=None, observed=None):
+        tmp_path, monkeypatch, callbacks, *, chunk_sizes=None, observed=None,
+        connect_delay=0.0):
     monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
     monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
     clock = [0.0]
@@ -46,6 +47,7 @@ def _session_events(
             "url": "https://media.test/sentence.mp4",
         })
         assert ticket.status_code == 200
+        clock[0] = max(clock[0], connect_delay)
         with client.websocket_connect("/ws?session=" + ticket.json()["session"]) as socket:
             events = []
             while True:
@@ -91,7 +93,7 @@ def test_late_first_playable_sentence_commits_before_the_preparation_budget(
         (7.0, (3.72, 4.16, "", [], True, 1)),
         (11.0, (0.0, None, text, words, False, 7)),
         (11.2, (0.0, None, text, words, False, 7)),
-    ], observed=observed)
+    ], observed=observed, connect_delay=1.0)
 
     preview_at, preview = next(
         (at, event) for at, event in observed if event["type"] == "preview")

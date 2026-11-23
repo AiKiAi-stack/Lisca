@@ -202,6 +202,7 @@ async def create_cloud_session(request: Request):
                 "source": source, "target": target, "mode": mode, "start_at": position,
                 "sentence_wait_sec": sentence_wait_sec,
                 "live_prepare_ahead_sec": live_prepare_ahead_sec,
+                "preparation_started_at": _session_monotonic(),
                 "stop": RequestStop(), "expires": now + 60, "active": False}
         return {"session": token, "mode": mode}
     except (ValueError, TypeError) as exc:
@@ -904,8 +905,11 @@ async def ws_endpoint(ws: WebSocket):
         translation = None
         translation_clauses = {}
         caption_seen = False
-        first_caption_commit_deadline = (
-            active_session_time() + _FIRST_CAPTION_COMMIT_DEADLINE_SEC)
+        session_clock_now = active_session_time()
+        preparation_elapsed = max(
+            0.0, session_clock_now - cloud.get("preparation_started_at", session_clock_now))
+        first_caption_commit_deadline = session_clock_now + max(
+            0.0, _FIRST_CAPTION_COMMIT_DEADLINE_SEC - preparation_elapsed)
         terminal_reason = "error"
         normal_completion = False
         worker_failed = False
