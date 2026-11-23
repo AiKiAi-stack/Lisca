@@ -906,8 +906,11 @@ async def ws_endpoint(ws: WebSocket):
         translation_clauses = {}
         caption_seen = False
         session_clock_now = active_session_time()
+        preparation_started_at = (
+            cloud.get("preparation_started_at", session_clock_now)
+            if cloud else session_clock_now)
         preparation_elapsed = max(
-            0.0, session_clock_now - cloud.get("preparation_started_at", session_clock_now))
+            0.0, session_clock_now - preparation_started_at)
         first_caption_commit_deadline = session_clock_now + max(
             0.0, _FIRST_CAPTION_COMMIT_DEADLINE_SEC - preparation_elapsed)
         terminal_reason = "error"
