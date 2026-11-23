@@ -927,6 +927,25 @@ async def ws_endpoint(ws: WebSocket):
                 last_progress_through = through
                 last_progress_at = active_session_time()
 
+        visible_caption_text = {}
+
+        def advance_visible_caption(kind, sentence_id, beg, text) -> None:
+            nonlocal last_progress_at
+            normalized = " ".join(str(text or "").split())
+            if not normalized:
+                return
+            try:
+                beg_key = round(float(beg), 3)
+            except (TypeError, ValueError):
+                beg_key = beg
+            key = (kind, sentence_id, beg_key)
+            if visible_caption_text.get(key) == normalized:
+                return
+            # A provider can revise earlier speech after silence has advanced the
+            # timeline watermark. The newly visible text is still real progress.
+            visible_caption_text[key] = normalized
+            last_progress_at = active_session_time()
+
         def fail_capacity() -> None:
             nonlocal phase
             phase = "capacity"
@@ -992,6 +1011,8 @@ async def ws_endpoint(ws: WebSocket):
                     preview_message.update(commit,
                                            is_final=False, revision=item["revision"])
                 put(preview_message)
+                advance_visible_caption(
+                    "preview", sentence_id, clause_beg + timeline_offset, clause_text)
                 caption_seen = emitted = True
             return emitted
 
@@ -1136,6 +1157,8 @@ async def ws_endpoint(ws: WebSocket):
                 if original_mode and is_final:
                     message["commit_reason"] = "final"
                 put(message)
+                advance_visible_caption(
+                    "subtitle", sentence_id, beg + timeline_offset, text)
                 if original_mode and str(text or "").strip():
                     progress_end = end
                     if progress_end is None and words:

@@ -1055,6 +1055,98 @@ def test_only_a_forward_caption_range_refreshes_server_progress_budget(tmp_path,
     assert events[-1] == {'type': 'end', 'reason': 'error'}
 
 
+def test_new_visible_caption_refreshes_progress_budget_when_silence_watermark_is_ahead(
+        tmp_path, monkeypatch):
+    # The real long local input had captions arriving for earlier speech after a
+    # silence run had advanced the server watermark beyond their word times.
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    clock = [0.0]
+    silence = b'\x00' * 3200
+    speech = b'\x00\x10' * 1600
+    blocked_after_silence = threading.Event()
+    allow_speech = threading.Event()
+    blocked_after_caption = threading.Event()
+    allow_after_caption = threading.Event()
+    sent = []
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            for _ in range(20):
+                yield silence
+            blocked_after_silence.set()
+            allow_speech.wait(3)
+            yield speech
+            blocked_after_caption.set()
+            allow_after_caption.wait(3)
+            yield speech
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            sent.append(len(sent) + 1)
+            if len(sent) == 21:
+                return (0.0, 1.0, '静音水位之后的新文字', [
+                    (0.0, 1.0, '静音水位之后的新文字')
+                ], True, 'late-visible-caption')
+            return (None, None, '', None)
+
+        def poll(self):
+            return (None, None, '', None)
+
+        def finish(self):
+            return self.poll()
+
+        def close(self):
+            pass
+
+    def advance(stop, seconds):
+        return stop.is_set()
+
+    monkeypatch.setattr(webui, '_session_monotonic', lambda: clock[0])
+    monkeypatch.setattr(webui, '_session_wait', advance)
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    media = tmp_path / 'progress.mp4'
+    media.touch()
+    try:
+        with TestClient(webui.app) as client:
+            client.put('/api/cloud', json={'api_key': 'test-private-key'})
+            ticket = client.post('/api/cloud/sessions',
+                                 json={'url': str(media)}).json()
+            with client.websocket_connect('/ws?session=' + ticket['session']) as socket:
+                assert blocked_after_silence.wait(2)
+                clock[0] = 14.0
+                allow_speech.set()
+                events = []
+                while True:
+                    event = socket.receive_json()
+                    events.append(event)
+                    if event['type'] == 'subtitle':
+                        break
+                assert event['text'] == '静音水位之后的新文字'
+                assert blocked_after_caption.wait(2)
+                clock[0] = 15.1
+                allow_after_caption.set()
+                while True:
+                    event = socket.receive_json()
+                    events.append(event)
+                    if event['type'] == 'end':
+                        break
+    finally:
+        allow_speech.set()
+        allow_after_caption.set()
+
+    assert len(sent) == 22
+    assert not any(event['type'] == 'error' for event in events)
+    assert events[-1] == {'type': 'end', 'reason': 'completed'}
+
+
 @pytest.mark.parametrize('raise_after_first', [False, True])
 def test_audio_timeline_error_is_terminal_and_stops_source(
     tmp_path, monkeypatch, raise_after_first
