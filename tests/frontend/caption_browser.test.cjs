@@ -372,6 +372,31 @@ test('a timeout keeps complete stable words visible without another callback',()
   assert.equal(b.current.textContent,text,source);
  }
 });
+test('a withdrawn preview fragment does not strand later revised speech',()=>{
+ for(const [replacement,gap] of [['，', 'punctuation'],['某，', 'spoken']]){
+  const b=browser({playerWidth:1216}),c=b.context;
+  const prefix='甲乙、丙丁';
+  const oldSource=`${prefix}，像`;
+  const newSource=`${prefix}${replacement}戊己`;
+  const revisedStart=Array.from(`${prefix}${replacement}`).length;
+  const words=source=>Array.from(source,(char,index)=>[index,index+1,char]);
+  const preview=(commitId,revision,source,start,end)=>b.preview({
+   sentence_id:'revised-gap',commit_id:commitId,revision,commit_reason:'timeout',
+   source_text:source,source_start:start,source_end:end,
+   text:Array.from(source).slice(start,end).join(''),beg:start,end,
+   words:words(source).slice(start,end),
+  });
+  preview(0,1,prefix,0,2);
+  preview(1,2,oldSource,2,5);
+  preview(2,3,oldSource,5,7);
+  c.player.currentTime=revisedStart+.5;
+  const cue=preview(3,4,newSource,revisedStart,revisedStart+2);
+  assert.ok(cue.text.includes('戊己'),`${gap}: ${JSON.stringify(cue.text)}`);
+  assert.match(b.current.textContent,/戊己/);
+  assert.equal(c.captionSegments(cue).map(page=>page.text).join('').replace(/\s/gu,''),
+   gap==='punctuation'?newSource:'戊己');
+ }
+});
 test('an older timeout context cannot replace a newer sentence correction',()=>{
  const b=browser({playerWidth:1216}),c=b.context;c.player.currentTime=.1;
  const update=(revision,source,commitId,start,end)=>b.preview({sentence_id:'revised-tail',

@@ -1115,13 +1115,39 @@
         ? item : {commit_id:item.commit_id, revision:item.revision});
       const commits = cue.previewCommits.filter(item => item.text)
         .sort((left, right) => left.source_start - right.source_start);
-      const contiguous = [];
-      let rangeEnd = commits[0]?.source_start ?? msg.source_start;
+      // A provider revision can withdraw one preview fragment and shift every
+      // later range. Keep punctuation-only gaps so the next page remains
+      // playable, and use the furthest valid run after a real text gap instead
+      // of letting the rest of the sentence remain hidden indefinitely.
+      const runs = [];
+      let run = [];
+      let rangeEnd = null;
       for (const commit of commits) {
-        if (commit.source_start !== rangeEnd) break;
-        contiguous.push(commit);
-        rangeEnd = commit.source_end;
+        if (!run.length) {
+          run = [commit];
+          rangeEnd = commit.source_end;
+          continue;
+        }
+        if (commit.source_start === rangeEnd) {
+          run.push(commit);
+          rangeEnd = commit.source_end;
+          continue;
+        }
+        const gap = commit.source_start > rangeEnd
+          ? sourceChars.slice(rangeEnd, commit.source_start).join('') : null;
+        if (gap && /^[\s\p{P}]*$/u.test(gap)) {
+          run.push(commit);
+          rangeEnd = commit.source_end;
+        } else {
+          runs.push(run);
+          run = [commit];
+          rangeEnd = commit.source_end;
+        }
       }
+      if (run.length) runs.push(run);
+      const contiguous = runs.reduce((furthest, candidate) =>
+        !furthest.length || candidate.at(-1).source_end > furthest.at(-1).source_end
+          ? candidate : furthest, []);
       const rangeStart = contiguous[0]?.source_start ?? rangeEnd;
       const safe = CaptionLayout.completeRange(msg.source_text, rangeStart, rangeEnd);
       const normalize = text => text.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
