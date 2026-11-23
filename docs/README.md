@@ -40,6 +40,7 @@ docs/
 | 理解字幕行为 | [术语](../GLOSSARY.md)、[ADR-0008](adr/0008-original-language-captions.md)、[已确认的整句准备预算](adr/0010-sentence-caption-preparation-budgets.md)、[浏览器时钟工程同步口径](adr/0011-browser-clock-engineering-sync.md)、[固定参考结果](research/2026-11-18-browser-clock-reference-results.md)、[长时验收](research/2026-11-18-caption-acceptance-followup.md) |
 | 核对预览验收与正式发布缺口 | [ADR-0009](adr/0009-pr89-preview-acceptance-2026-11-04.md)、[PR89 复测](plans/2026-11-04-pr89-acceptance-recheck.md)、[GitHub Issues](https://github.com/AiKiAi-stack/Lisca/issues) |
 | 运行回归、浏览器或真实验收 | [测试说明](../tests/README.md) |
+| 复核长片中的字幕修订与等待 | [11-21 播放事件、同源重连与实测记录](research/2026-11-21-caption-playback-followup.md) |
 | 构建和发布便携二进制 | [发布流程](guides/releasing.md) |
 | 采集真实播放器证据 | [浏览器采集指南](guides/real-browser-collector.md) |
 | 本地新闻回放 | [回放方法与证据](research/p0-local-news-2026-11-04.md) |
