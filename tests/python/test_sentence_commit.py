@@ -267,6 +267,47 @@ def test_revised_final_word_with_the_same_end_time_replaces_the_old_preview(
     assert [event["text"] for event in latest.values() if event["text"]] == ["雕像"]
 
 
+def test_timeout_holds_a_trailing_chinese_character_before_its_word_is_stable(
+        tmp_path, monkeypatch):
+    # Acceptance: a deadline must not turn a known-but-unsettled word tail such
+    # as "明"/"明年" into a 0.1-second page followed by a correction.
+    prefix = "中秋连假第一天，全台国道东流线涌现人潮"
+    draft = prefix + "明年最低工资"
+    shortened = prefix + "明最低工资"
+    events = _session_events(tmp_path, monkeypatch, [
+        (0.0, (0.0, 4.0, draft, _characters(draft), False, 8)),
+        (0.2, (0.0, 4.0, shortened, _characters(shortened), False, 8)),
+        (6.1, (None, None, "", None)),
+    ])
+
+    preview, = [event for event in events if event["type"] == "preview"]
+    assert preview["text"] == prefix
+    assert preview["commit_reason"] == "timeout"
+    assert (preview["source_start"], preview["source_end"]) == (0, len(prefix))
+
+
+def test_recovered_caption_preview_clears_the_expired_wait_status(
+        tmp_path, monkeypatch):
+    # Acceptance: a later valid caption must replace the stale instruction to
+    # retry, play without captions, or stop.
+    recovered = "画面恢复，字幕完整。"
+    events = _session_events(tmp_path, monkeypatch, [
+        (0.0, (0.0, 1.0, "今天继续关注", _characters("今天继续关注"), False, 13)),
+        (0.2, (0.0, 1.0, "明天继续关注", _characters("明天继续关注"), False, 13)),
+        (6.1, (None, None, "", None)),
+        (6.2, (2.0, 4.0, recovered, _characters(recovered), False, 14)),
+        (6.3, (2.0, 4.0, recovered, _characters(recovered), False, 14)),
+        (6.4, (2.0, 4.0, recovered, _characters(recovered), True, 14)),
+    ])
+
+    states = [event["caption_state"] for event in events if event.get("caption_state")]
+    previews = [event for event in events if event["type"] == "preview"]
+    assert states == ["no_stable_text", "ready"]
+    assert [event["text"] for event in previews] == [recovered]
+    assert events.index(previews[0]) < events.index(
+        next(event for event in events if event.get("caption_state") == "ready"))
+
+
 @pytest.mark.parametrize("first,second,words,state", [
     ("今天继续关注", "明天继续关注", _characters("明天继续关注"), "no_stable_text"),
     ("今天继续关注", "今天继续关注", None, "missing_timing"),
@@ -285,7 +326,7 @@ def test_timeout_reports_unusable_stable_text_without_inventing_a_preview(
     ])
 
     states = [event for event in events if event.get("caption_state")]
-    assert [event["caption_state"] for event in states] == [state]
+    assert [event["caption_state"] for event in states] == [state, "ready"]
     assert states[0]["sentence_id"] == 13
     assert not any(event["type"] == "preview" for event in events)
     final = [event for event in events if event["type"] == "subtitle"][-1]

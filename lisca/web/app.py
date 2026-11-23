@@ -917,6 +917,7 @@ async def ws_endpoint(ws: WebSocket):
         normal_completion = False
         worker_failed = False
         provider_exception = None
+        caption_recovery_pending = False
 
         def call_provider(function, *args, **kwargs):
             nonlocal provider_exception
@@ -990,7 +991,7 @@ async def ws_endpoint(ws: WebSocket):
             retain_caption_variant(revision_key, fingerprint)
 
         def publish_previews(item, results) -> bool:
-            nonlocal caption_seen
+            nonlocal caption_seen, caption_recovery_pending
             emitted = False
             for index, (clause_beg, clause_end, clause_text) in enumerate(results):
                 if stop.is_set():
@@ -1026,9 +1027,14 @@ async def ws_endpoint(ws: WebSocket):
                 advance_visible_caption(
                     "preview", sentence_id, clause_beg + timeline_offset, clause_text)
                 caption_seen = emitted = True
+            if emitted and caption_recovery_pending:
+                caption_recovery_pending = False
+                put({"type": "status", "caption_state": "ready",
+                     "sentence_id": item["id"], "message": "字幕已就绪，继续播放"})
             return emitted
 
         def check_caption_deadlines() -> bool:
+            nonlocal caption_recovery_pending
             if not original_mode or stop.is_set() or paused.is_set():
                 return False
             emitted = False
@@ -1053,12 +1059,13 @@ async def ws_endpoint(ws: WebSocket):
                                        "稳定字幕缺少可用语音时间；可重试、仅播放或停止")
                             put({"type": "status", "caption_state": state,
                                  "sentence_id": item["id"], "message": message})
+                            caption_recovery_pending = True
                         item["deadline_reported"] = True
             return emitted
 
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
-            nonlocal caption_seen
+            nonlocal caption_seen, caption_recovery_pending
             if stop.is_set():
                 return
             beg, end, text, words = o[:4]
@@ -1174,6 +1181,12 @@ async def ws_endpoint(ws: WebSocket):
                 put(message)
                 advance_visible_caption(
                     "subtitle", sentence_id, beg + timeline_offset, text)
+                if (is_final and str(text or "").strip()
+                        and caption_recovery_pending):
+                    caption_recovery_pending = False
+                    put({"type": "status", "caption_state": "ready",
+                         "sentence_id": sentence_id,
+                         "message": "字幕已就绪，继续播放"})
                 if original_mode and str(text or "").strip():
                     progress_end = end
                     if progress_end is None and words:

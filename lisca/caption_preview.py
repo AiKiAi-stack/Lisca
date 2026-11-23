@@ -51,6 +51,7 @@ class StableCaptionPreview:
         self._word_spans = []
         self.released = []
         self.pending_corrections = set()
+        self._tail_was_revised = False
 
     def observe(self, text: str, words: list | None) -> list[tuple[float, float, str]]:
         """Return stable clauses or bounded word phrases with ASR timing."""
@@ -60,6 +61,10 @@ class StableCaptionPreview:
             if left != right:
                 break
             common += 1
+        self._tail_was_revised = bool(
+            self.sentence_first and self.previous_text and common
+            and common < len(self.previous_text)
+            and len(text) <= len(self.previous_text))
         self.words = [(beg, end, str(token)) for beg, end, token in words or []
                       if isinstance(beg, (int, float)) and isinstance(end, (int, float))
                       and math.isfinite(beg) and math.isfinite(end)
@@ -177,6 +182,7 @@ class StableCaptionPreview:
         seen = 0
         boundary = self.emitted_chars
         phrase_end = self.emitted_end
+        timed_boundaries = []
         for _, end, token in self.words:
             seen += len(_SPOKEN.sub("", token))
             if not seen:
@@ -188,8 +194,19 @@ class StableCaptionPreview:
                 continue
             if finish > boundary and end > phrase_end:
                 boundary, phrase_end = finish, end
+                timed_boundaries.append((boundary, phrase_end))
         if boundary <= self.emitted_chars:
             return []
+        if (boundary == self.stable_chars and self._tail_was_revised
+                and self._ends_with_unsettled_cjk(boundary)):
+            # A provider can revise "明年" down to "明" while keeping the next
+            # characters pending. The surviving one-character token may be the
+            # start of a revised word, so its timeout page is not safe to show.
+            boundary -= 1
+            prior = [item for item in timed_boundaries if item[0] <= boundary]
+            if not prior or prior[-1][1] <= self.emitted_end:
+                return []
+            phrase_end = prior[-1][1]
         # Keep stable punctuation/spacing with its speech, without guessing a time.
         while boundary < self.stable_chars and not re.match(r"\w", text[boundary]):
             boundary += 1
@@ -197,6 +214,15 @@ class StableCaptionPreview:
         result = [(self.emitted_end, phrase_end, text[self.emitted_chars:boundary])]
         self.emitted_chars, self.emitted_end = boundary, phrase_end
         return result
+
+    def _ends_with_unsettled_cjk(self, boundary):
+        if boundary <= 0 or not re.match(r"[\u3400-\u9fff]", self.previous_text[boundary - 1]):
+            return False
+        token = next((word for _, right, word in self._word_spans if right == boundary),
+                     None)
+        return (token is not None
+                and len(_SPOKEN.sub("", token[2])) == 1
+                and bool(re.fullmatch(r"[\u3400-\u9fff]", token[2])))
 
     def _record(self, beg, end, finish, reason):
         _, words = self._range_data(self.emitted_chars, finish)

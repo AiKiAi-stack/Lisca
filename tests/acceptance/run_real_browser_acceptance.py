@@ -50,6 +50,7 @@ EVENT_FIELDS = {
     "buffer": ("play_at", "local_silence_from", "local_silence_through"),
     "ready": ("delay", "start_at", "original", "buffered", "silent", "prepared",
               "progressive", "prepare_ahead_sec"),
+    "status": ("caption_state", "sentence_id", "message"),
     "error": ("failure_category", "retryable", "sdk_failure_kind", "sdk_failure_source"),
     "end": ("reason",),
 }

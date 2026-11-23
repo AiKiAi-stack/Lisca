@@ -40,6 +40,24 @@ def test_recording_preserves_the_live_preparation_requirement(tmp_path):
     assert saved["prepare_ahead_sec"] == 10
 
 
+def test_recording_preserves_caption_recovery_status(tmp_path):
+    media = tmp_path / "sample.mp4"
+    media.write_bytes(b"fixed candidate input")
+    output = tmp_path / "recording.json"
+    acceptance.write_browser_recording(
+        media_path=str(media), output_path=output,
+        events=[{"type": "status", "caption_state": "ready", "sentence_id": 14,
+                 "message": "字幕已就绪，继续播放"}],
+        status="cancelled", completion_signal="cancelled",
+        completion_reason="cancelled", errors=[],
+        started_at="2026-11-24T00:00:00+00:00", started=time.monotonic(), metadata={},
+    )
+    saved = json.loads(output.read_text())["events"][0]
+    assert saved == {"type": "status", "caption_state": "ready",
+                     "sentence_id": 14, "message": "字幕已就绪，继续播放",
+                     "observed_after_ms": saved["observed_after_ms"]}
+
+
 def test_capped_recording_keeps_cancelled_truth_and_redacts_transport_secrets(tmp_path):
     media = tmp_path / "sample.mp4"
     media.write_bytes(b"fixed local test input")
