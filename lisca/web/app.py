@@ -72,6 +72,9 @@ _MAX_SESSION_CAPTION_VARIANTS = 8
 _MAX_SESSION_CAPTION_RETENTION_FINGERPRINTS = 20_000
 _MAX_PENDING_CAPTIONS = 2_048
 _MAX_ACTIVE_RECOGNITION_WORKERS = 8
+# The browser stops preparation at 15 seconds. Commit at least 500 ms earlier
+# so the preview, buffer state, and ready event can reach the renderer.
+_FIRST_CAPTION_COMMIT_DEADLINE_SEC = 14.5
 logger = logging.getLogger("lisca.web.app")  # 会话生命周期 INFO 日志（用户可见）
 _SHARES: dict[str, LiveShare] = {}
 _SHARE_LOCK = threading.RLock()
@@ -901,6 +904,8 @@ async def ws_endpoint(ws: WebSocket):
         translation = None
         translation_clauses = {}
         caption_seen = False
+        first_caption_commit_deadline = (
+            active_session_time() + _FIRST_CAPTION_COMMIT_DEADLINE_SEC)
         terminal_reason = "error"
         normal_completion = False
         worker_failed = False
@@ -1021,8 +1026,11 @@ async def ws_endpoint(ws: WebSocket):
                 return False
             emitted = False
             now = active_session_time()
+            first_caption_wait_expired = (
+                original_mode and not ready_sent
+                and now >= first_caption_commit_deadline)
             for item in pending_sentences:
-                if now >= item["deadline"]:
+                if now >= item["deadline"] or first_caption_wait_expired:
                     preview = item["preview"]
                     if (preview.emitted_chars >= len(preview.previous_text)
                             and not preview.pending_corrections):

@@ -9,7 +9,8 @@ from lisca.cloud_translation import CloudConfigStore
 from lisca.web import app as webui
 
 
-def _session_events(tmp_path, monkeypatch, callbacks, *, chunk_sizes=None):
+def _session_events(
+        tmp_path, monkeypatch, callbacks, *, chunk_sizes=None, observed=None):
     monkeypatch.setattr(webui, "_CLOUD", CloudConfigStore(tmp_path / "cloud.bin"))
     monkeypatch.setattr(webui, "_CLOUD_JOBS", {})
     clock = [0.0]
@@ -50,6 +51,8 @@ def _session_events(tmp_path, monkeypatch, callbacks, *, chunk_sizes=None):
             while True:
                 event = socket.receive_json()
                 events.append(event)
+                if observed is not None:
+                    observed.append((clock[0], event))
                 if event["type"] == "end":
                     return events
 
@@ -73,6 +76,31 @@ def test_original_caption_waits_for_the_sentence_instead_of_a_stable_clause(
 
     assert [event for event in events if event["type"] == "preview"] == []
     assert events[-1] == {"type": "end", "reason": "completed"}
+
+
+def test_late_first_playable_sentence_commits_before_the_preparation_budget(
+        tmp_path, monkeypatch):
+    # Acceptance: a withdrawn opening sentence must not give a later first
+    # caption a fresh six-second window beyond the session-wide 15-second hold.
+    text = "观众朋友您好，欢迎收看今天的新闻"
+    words = _characters(text, 2.0)
+    observed = []
+    _session_events(tmp_path, monkeypatch, [
+        (0.0, (3.72, None, "啊", [(3.72, 3.96, "啊")], False, 1)),
+        (0.2, (3.92, None, "呃", [(3.92, 4.16, "呃")], False, 1)),
+        (7.0, (3.72, 4.16, "", [], True, 1)),
+        (11.0, (0.0, None, text, words, False, 7)),
+        (11.2, (0.0, None, text, words, False, 7)),
+    ], observed=observed)
+
+    preview_at, preview = next(
+        (at, event) for at, event in observed if event["type"] == "preview")
+    ready_at, _ = next(
+        (at, event) for at, event in observed if event["type"] == "ready")
+    assert preview["text"] == text
+    assert preview["commit_reason"] == "timeout"
+    assert preview_at < 15.0
+    assert ready_at < 15.0
 
 
 def test_stable_sentence_keeps_closing_quote_and_reports_its_commit_identity(
