@@ -273,6 +273,29 @@ def test_stable_correction_crossing_a_regrouped_word_keeps_both_commits(
     assert sum("雕像" in event["text"] for event in parts) == 1
 
 
+def test_regrouped_word_after_comma_keeps_the_prepared_prefix_playable(tmp_path, monkeypatch):
+    first = [(0, 1, "人潮")]
+    split = first + [(1, 1.3, "眼"), (1.3, 1.6, "看")]
+    joined = first + [(1, 1.6, "眼看")]
+    text = "人潮，眼看"
+    events = _session_events(tmp_path, monkeypatch, [
+        (0.0, (0, 1, "人潮", first, False, 43)),
+        (0.2, (0, 1, "人潮", first, False, 43)),
+        (6.1, (None, None, "", None)),
+        (6.2, (0, 1.3, "人潮，眼", split[:2], False, 43)),
+        (6.3, (0, 1.3, "人潮，眼", split[:2], False, 43)),
+        (6.4, (0, 1.6, text, split, False, 43)),
+        (6.5, (0, 1.6, text, split, False, 43)),
+        (6.6, (0, 1.6, text, joined, False, 43)),
+        (6.7, (0, 1.6, text, joined, True, 43)),
+    ])
+    latest = {event["commit_id"]: event for event in events if event["type"] == "preview"}
+    parts = sorted((part for part in latest.values() if part["text"]),
+                   key=lambda part: part["source_start"])
+    assert "".join(part["text"] for part in parts) == text
+    assert [word[2] for part in parts for word in part["words"]] == ["人潮", "眼看"]
+
+
 def test_revised_final_word_with_the_same_end_time_replaces_the_old_preview(
         tmp_path, monkeypatch):
     events = _session_events(tmp_path, monkeypatch, [

@@ -290,7 +290,10 @@ class StableCaptionPreview:
             elif crossing == [len(self.released)]:
                 boundaries[-1] = word_finish
             else:
-                boundaries[crossing[0]] = word_start
+                first = crossing[0]
+                start = boundaries[first - 1] if first else word_start
+                prefix = self.previous_text[start:word_start]
+                boundaries[first] = word_start if _SPOKEN.sub("", prefix) else start
                 for index in crossing[1:]:
                     boundaries[index] = word_finish
         safe = set()
