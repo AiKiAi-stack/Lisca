@@ -1,6 +1,7 @@
 function uiContext(context){context.uiText=value=>String(value ?? '');context.setUiText=(element,value)=>{element.textContent=value;};return context;}
 const {test}=require('node:test'); const assert=require('node:assert/strict'); const fs=require('node:fs'); const vm=require('node:vm'); const path=require('node:path');
-test('diagnostic log keeps source identity but hides signed URL query values',()=>{const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');const elements=new Map();const c={URL,document:{getElementById(id){if(!elements.has(id))elements.set(id,{hidden:true,value:'',onclick:null});return elements.get(id);}}};vm.createContext(uiContext(c));const start=html.indexOf("const logBtn = document.getElementById('logBtn');"),end=html.indexOf('// 字幕开关',start);vm.runInContext(html.slice(start,end),c);c.logEvent('connect','https://media.test/video.mp4?token=private-token&sig=private-signature rtsp://media.test/live?auth=private-rtsp-auth');const line=vm.runInContext('logBuffer[0]',c);assert.match(line,/media\.test\/video\.mp4/);assert.match(line,/media\.test\/live/);assert.doesNotMatch(line,/private-token|private-signature|private-rtsp-auth/);});
+const stripSentencePunct=text=>String(text).replace(/[。！？.!?;；]/gu,'');
+test('diagnostic log keeps source identity but hides signed URL query values',()=>{const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');const elements=new Map();const c={URL,Headers,sessionStorage:{getItem:()=>null,setItem(){}},fetch:async()=>({ok:true,json:async()=>({})}),setTimeout:()=>0,clearTimeout:()=>{},addEventListener(){},document:{getElementById(id){if(!elements.has(id))elements.set(id,{hidden:true,value:'',onclick:null});return elements.get(id);}}};vm.createContext(uiContext(c));const start=html.indexOf("const logBtn = document.getElementById('logBtn');"),end=html.indexOf('// 字幕开关',start);vm.runInContext(html.slice(start,end),c);c.logEvent('connect','https://media.test/video.mp4?token=private-token&sig=private-signature rtsp://media.test/live?auth=private-rtsp-auth');const line=vm.runInContext('logBuffer[0]',c);assert.match(line,/media\.test\/video\.mp4/);assert.match(line,/media\.test\/live/);assert.doesNotMatch(line,/private-token|private-signature|private-rtsp-auth/);});
 function browser({playerWidth=260,fontSize=30,cssMaxWidth='90%'}={}){
  const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
  const element=()=>({textContent:'',hidden:true,dataset:{},classList:{contains:()=>false},style:{},remove(){}});
@@ -318,7 +319,7 @@ test('preview messages use the same timed two-line pagination as final captions'
  for(const segment of segments){
   c.player.currentTime=(segment.beg+segment.end)/2;
   b.tick(0);
-  assert.equal(b.current.textContent,segment.text);
+  assert.equal(stripSentencePunct(b.current.textContent),stripSentencePunct(segment.text));
  }
  assert.deepEqual(Array.from(segments.flatMap(segment=>segment.text.match(/[\p{Script=Latin}\p{N}]+(?:[-’'][\p{Script=Latin}\p{N}]+)*/gu)||[])),
   Array.from(text.match(/[\p{Script=Latin}\p{N}]+(?:[-’'][\p{Script=Latin}\p{N}]+)*/gu)||[]));
@@ -336,7 +337,7 @@ test('stable previews paginate with speech word times rather than text-length ti
  assert.equal(actual[0].end,7.8);
  for(const segment of actual){
    c.player.currentTime=(segment.beg+segment.end)/2;b.tick(0);
-   assert.equal(b.current.textContent,segment.text);
+   assert.equal(stripSentencePunct(b.current.textContent),stripSentencePunct(segment.text));
  }
 });
 test('timeout ranges retain an incomplete Chinese tail and join its next commit without replay',()=>{
@@ -354,7 +355,7 @@ test('timeout ranges retain an incomplete Chinese tail and join its next commit 
  assert.equal(next.text,source);
  assert.equal(b.current.textContent,held);
  c.player.currentTime=1.1;b.tick(0);
- assert.equal(b.current.textContent.replace(/\s/gu,''),'发展趋势。');
+ assert.equal(b.current.textContent.replace(/\s/gu,''),'发展趋势');
  const pages=c.captionSegments(next);
  assert.equal(pages.map(page=>page.text).join('').replace(/\s/gu,''),source);
  assert.deepEqual(Array.from(pages,page=>[page.beg,page.end]),[[0,.8],[.8,1.8]]);
@@ -444,13 +445,13 @@ test('a final revision does not replace an already visible preview for its last 
  const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
  c.player.currentTime=.5;
  b.preview({sentence_id:7,beg:0,end:3,text:'We are ready.',words:[[0,1,'We'],[1,2,'are'],[2,3,'ready.']]});
- assert.equal(b.current.textContent,'We are ready.');
+ assert.equal(b.current.textContent,'We are ready');
  c.player.currentTime=2.9;
  b.push({translated:false,sentence_id:7,beg:0,end:5,text:'We are already ready. Next words.',
   words:[[0,1,'We'],[1,1.5,'are'],[1.5,2.5,'already'],[2.5,3,'ready.'],[3,3.5,'Next'],[3.5,5,'words.']]});
- assert.equal(b.current.textContent,'We are ready.');
+ assert.equal(b.current.textContent,'We are ready');
  c.player.currentTime=3.1;b.tick(0);
- assert.equal(b.current.textContent,'Next words.');
+ assert.equal(b.current.textContent,'Next words');
 });
 test('a final arriving before the preview is visible repaginates the complete 女尸 word',()=>{
  const text='广州女大学生登山失联4天，警方找到疑似女尸。';
@@ -479,7 +480,7 @@ test('a final arriving after a preview page ended continues past the consumed wo
  c.player.currentTime=3.1;b.tick(0);assert.equal(b.current.textContent,'');
  b.push({translated:false,sentence_id:7,beg:0,end:5,text:'We are already ready. Next words.',
   words:[[0,1,'We'],[1,1.5,'are'],[1.5,2.5,'already'],[2.5,3,'ready.'],[3,3.5,'Next'],[3.5,5,'words.']]});
- assert.equal(b.current.textContent,'Next words.');
+ assert.equal(b.current.textContent,'Next words');
 });
 for(const capture of require('./fixtures/en-long-continuity-captured.json').cases)
 test(`captured English live sentence ${capture.sentence_id} presents every passage once as previews grow`,t=>{
@@ -499,8 +500,8 @@ test(`captured English live sentence ${capture.sentence_id} presents every passa
   }
   const text=visible.join(' ');
   t.diagnostic(`sentence ${capture.sentence_id}: ${text}`);
-  assert.equal(text,normalize(capture.events.find(message=>message.is_final).text));
-  if(capture.sentence_id===97)assert.equal(text.split('Thank you for having us.').length-1,2);
+  assert.equal(stripSentencePunct(text),stripSentencePunct(normalize(capture.events.find(message=>message.is_final).text)));
+  if(capture.sentence_id===97)assert.equal(text.split('Thank you for having us').length-1,2);
 });
 test('real final handoffs keep only table and 阶段 after their held previews',()=>{
  const fixtures=[{
@@ -526,7 +527,7 @@ test('real final handoffs keep only table and 阶段 after their held previews',
   b.push({translated:false,sentence_id:7,beg:f.words[0][0]+f.offset,end:f.end+f.offset,text:f.final,words:shifted(f.words)});
   assert.equal(b.current.textContent,displayed);
   c.player.currentTime=f.cut+f.offset+.01;b.tick(0);
-  assert.equal(b.current.textContent,f.remaining);
+  assert.equal(stripSentencePunct(b.current.textContent),stripSentencePunct(f.remaining));
   const pages=c.captionSegments(c.subs[0]);
   assert.equal(pages.map(p=>p.text).join('').replace(/\s/gu,''),f.final.replace(/\s/gu,''));
   assert.equal(pages.at(-1).beg,f.cut+f.offset);assert.equal(pages.at(-1).end,f.end+f.offset);
@@ -547,7 +548,7 @@ test('withdrawing or replacing a preview clears its held page immediately',()=>{
  c.previewSubs=[];c.subs=[];b.tick(0);
  assert.equal(b.current.textContent,'');
  b.preview({sentence_id:7,beg:0,end:3,text:'The new source.'});
- assert.equal(b.current.textContent,'The new\nsource.');
+ assert.equal(b.current.textContent,'The new\nsource');
 });
 test('a preview retired by a final cannot reappear after a seek or outlast its revised interval',()=>{
  const b=browser(),c=b.context;c.player.currentTime=.5;
@@ -779,7 +780,7 @@ test('automatic original-caption recovery preserves an active HLS player or the 
 test('a long local pause reconnects before reusing a potentially expired ASR socket',()=>{const b=browser();b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),true);assert.deepEqual(Array.from(b.context.reconnected),['test.mp4',null,10]);});
 test('a short local pause continues on the existing open recognition connection',()=>{const b=browser();b.context.pauseStartedAt=0;b.context.now=3000;assert.equal(b.context.resumeClosedCloudAfterPause(),false);assert.equal(b.context.reconnected,undefined);});
 
-test('original captions follow source word times rather than the translated reading queue',()=>{const b=browser();b.context.player.currentTime=.2;b.push({translated:false,beg:0,end:10,text:'别太装。我们还是很期待的。',words:[[0,.2,'别'],[.2,.4,'太'],[.4,.8,'装'],[8,8.2,'我'],[8.2,8.4,'们'],[8.4,8.6,'还'],[8.6,8.8,'是'],[8.8,9,'很'],[9,9.2,'期'],[9.2,9.4,'待'],[9.4,10,'的']]});b.tick(0);assert.equal(b.current.textContent,'别太装。');b.context.player.currentTime=2;b.tick(100);assert.equal(b.current.textContent,'');b.context.player.currentTime=8.5;b.tick(200);assert.equal(b.current.textContent.replace(/\s+/gu,''),'我们还是很期待的。');assert.equal(b.context.captionPresenter.queue.length,0);});
+test('original captions follow source word times rather than the translated reading queue',()=>{const b=browser();b.context.player.currentTime=.2;b.push({translated:false,beg:0,end:10,text:'别太装。我们还是很期待的。',words:[[0,.2,'别'],[.2,.4,'太'],[.4,.8,'装'],[8,8.2,'我'],[8.2,8.4,'们'],[8.4,8.6,'还'],[8.6,8.8,'是'],[8.8,9,'很'],[9,9.2,'期'],[9.2,9.4,'待'],[9.4,10,'的']]});b.tick(0);assert.equal(b.current.textContent,'别太装');b.context.player.currentTime=2;b.tick(100);assert.equal(b.current.textContent,'');b.context.player.currentTime=8.5;b.tick(200);assert.equal(b.current.textContent.replace(/\s+/gu,''),'我们还是很期待的');assert.equal(b.context.captionPresenter.queue.length,0);});
 test('completed original captions resume locally without opening another billed session',()=>{const b=browser();b.context.originalCaptionsComplete=true;b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),false);assert.equal(b.context.reconnected,undefined);});
 
 function bufferBrowser(){const b=browser(),c=b.context;const {CaptionPlaybackGuard}=require('../../lisca/web/static/playback_guard.js');c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live:true});c.showCaptionRecovery=message=>{c.status=message};Object.assign(c,{sourceBufferingSince:null,useCaptionBuffer:true,originalCaptionMode:true,holdingForBuffer:false,uiPaused:false,playbackLimit:10,urlEl:{value:'https://stream.test/live.m3u8'},setStatus(t){c.status=t},audioEl:{pause(){},play(){return Promise.resolve()}},player:{currentTime:10,paused:false,pause(){this.paused=true},play(){this.paused=false;return Promise.resolve()}}});const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');vm.runInContext(html.slice(html.indexOf('function syncPlaybackToBuffer()'),html.indexOf('// 字幕整句快照')),c);return b;}
@@ -1084,7 +1085,7 @@ test('preview messages release playback coverage only through their complete dis
   source_start:3,source_end:5,text:'势。',beg:.6,end:1,words:words.slice(3)});
  assert.equal(c.playbackGuard.coversRange(0,1),true);
  c.player.currentTime=.7;c.syncSubtitle();
- assert.equal(current.textContent.replace(/\s/gu,''),'趋势。');
+ assert.equal(current.textContent.replace(/\s/gu,''),'趋势');
 });
 
 function preparingMessageBrowser({live=false}={}){
@@ -1145,7 +1146,7 @@ test('recorded live final handoff follows the read 警方 boundary after timing 
  c.player.currentTime=7.253439;c.syncSubtitle();
  assert.equal(c.currentEl.textContent,fixture.first_visible.text,'警方 stays on its original page through the corrected word end');
  c.player.currentTime=7.5;c.syncSubtitle();
- assert.equal(c.currentEl.textContent,'找到疑似女尸。','the next page neither repeats 警方 nor loses 找到');
+ assert.equal(c.currentEl.textContent,'找到疑似女尸','the next page neither repeats 警方 nor loses 找到');
  c.player.currentTime=.9;c.syncSubtitle();
  assert.ok(c.currentEl.textContent.includes('四天'),'replaying the final accepts the corrected numeral');
 });
@@ -1161,10 +1162,10 @@ test('a final handoff does not consume a later occurrence of the preview word',(
   text:'Go go on.',is_final:true,words:[[0,.8,'Go'],[.8,1.6,'go'],[1.6,2.4,'on']]});
  assert.equal(c.currentEl.textContent,'Go','the current preview page stays stable');
  c.player.currentTime=1.01;c.syncSubtitle();
- assert.equal(c.currentEl.textContent,'go on.','the second go remains on the next page');
+ assert.equal(c.currentEl.textContent,'go on','the second go remains on the next page');
  c.player.currentTime=.1;c.syncSubtitle();const first=c.currentEl.textContent;
  c.player.currentTime=1.7;c.syncSubtitle();
- assert.equal(`${first} ${c.currentEl.textContent}`,'Go go on.','replaying retains the complete final');
+ assert.equal(`${first} ${c.currentEl.textContent}`,'Go go on','replaying retains the complete final');
 });
 
 test('ready holds a retained half-word until a complete preview arrives',()=>{
@@ -1267,7 +1268,7 @@ test('a remembered ready accepts a later final or verified silence without inven
   }
   c.syncPlaybackToBuffer();c.syncSubtitle();
   assert.equal(c.player.paused,false);
-  assert.equal(c.currentEl.textContent,silent?'':'发展趋势。');
+  assert.equal(c.currentEl.textContent,silent?'':'发展趋势');
  }
 });
 

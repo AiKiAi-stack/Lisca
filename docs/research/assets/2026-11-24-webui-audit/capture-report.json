@@ -1,0 +1,17 @@
+{
+  "at_unix_seconds": 1795531685.1832886,
+  "page_errors": [],
+  "screens": [
+    "01-home.png",
+    "02-channels.png",
+    "03-batch-running.png",
+    "04-batch-cancelled.png",
+    "05-style-panel.png",
+    "06-style-adjusted.png",
+    "07-settings.png",
+    "08-history-empty.png",
+    "09-playing.png",
+    "10-history-filled.png",
+    "11-operation-log.png"
+  ]
+}

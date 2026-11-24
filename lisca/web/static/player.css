@@ -122,7 +122,7 @@ video { display: block; width: 100%; height: 100%; object-fit: contain; backgrou
 .empty-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 8px; }
 #emptyState .btn-outline { --btn-color: #e4eaf7; --btn-fg: #e4eaf7; --btn-border: #49536b; --btn-bg: transparent; color: #e4eaf7; background: transparent; }
 #emptyState .btn-outline:hover { background: #252e40; }
-#current { position: absolute; z-index: 1; bottom: 12%; left: 50%; transform: translateX(-50%); width: max-content; max-width: 90%; padding: 7px 15px; border-radius: 5px; color: #fff; background: #000b; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 30px; line-height: 1.45; font-weight: 600; text-align: center; text-shadow: 0 1px 3px #000; white-space: pre-line; overflow-wrap: anywhere; pointer-events: none; }
+#current { position: absolute; z-index: 1; bottom: var(--caption-bottom, 12%); left: 50%; transform: translateX(-50%); width: max-content; max-width: 90%; padding: 7px 15px; border-radius: 5px; color: var(--caption-color, #fff); background: var(--caption-bg, #000b); font-family: var(--caption-font, "Segoe UI", "Microsoft YaHei", sans-serif); font-size: var(--caption-size, 30px); line-height: 1.45; font-weight: 600; text-align: center; text-shadow: 0 1px 3px #000; white-space: pre-line; overflow-wrap: anywhere; pointer-events: none; }
 #current:empty { display: none; }
 #captionLag { position: absolute; top: 16px; left: 16px; padding: 5px 9px; border-radius: 5px; background: #11151eec; color: #f0d29b; font-size: 12px; }
 .player-footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 70px; padding: 12px 0; }
@@ -139,7 +139,7 @@ video { display: block; width: 100%; height: 100%; object-fit: contain; backgrou
 .err { color: var(--err) !important; }
 #current.err { color: #ffb4bd !important; }
 #playerWrap:fullscreen { width: 100vw; height: 100dvh; aspect-ratio: auto; max-height: none; border-radius: 0; }
-#playerWrap:fullscreen #current { font-size: clamp(30px,3vw,50px); }
+#playerWrap:fullscreen #current { font-size: var(--caption-size, 30px); }
 video::-webkit-media-controls-fullscreen-button { display: none; }
 #exitFullscreenBtn { display: none; position: absolute; right: 16px; top: 16px; color: #fff; background: #11151ed9; }
 #playerWrap:fullscreen #exitFullscreenBtn { display: inline-flex; }
@@ -168,12 +168,19 @@ dialog::backdrop { background: #121b36a3; }
 #cloudPanel .btn { margin: 2px 5px 8px 0; }
 #cloudPanel .checkbox { flex-shrink: 0; }
 #cloudState { display: block; min-height: 22px; margin: 8px 0 10px; color: var(--accent); font-size: 12px; }
-#stylePanel { display: flex; flex-direction: column; gap: 26px; }
-#stylePanel label { display: flex; flex-wrap: nowrap; align-items: center; gap: 16px; }
+.caption-style-panel { position: fixed; right: 16px; bottom: 96px; z-index: 20; display: flex; flex-direction: column; gap: 18px; width: 300px; max-height: min(60dvh, 520px); overflow: auto; padding: 16px; border-radius: 12px; background: #fff; color: var(--fg); box-shadow: var(--elevation); }
+.caption-style-panel[hidden] { display: none; }
+.caption-style-panel .style-head { display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 600; }
+.caption-style-panel label { display: flex; flex-wrap: nowrap; align-items: center; gap: 12px; font-size: 13px; }
+
 #stylePanel label > .range, #stylePanel label > .select { flex: 1; width: 0; min-width: 0; }
 #stylePanel .val { width: 44px; text-align: right; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 #styleReset { align-self: flex-start; }
 .help { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.ops-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.ops-toolbar label { color: var(--muted); font-size: 12px; }
+.ops-toolbar .select { width: auto; min-width: 110px; height: 36px; font-size: 12px; }
+.ops-toolbar .ops-full { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 #history { min-height: 130px; font-size: 15px; line-height: 1.8; }
 #history:empty::after { content: var(--history-empty-text); color: var(--muted); font-size: 13px; }
 #history > div { padding: 14px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
@@ -242,11 +249,12 @@ body.viewer #sidebarHome, body.viewer #sidebarToggle, body.viewer .source-dock, 
   .player-footer { padding-top: 14px; gap: 10px; }
   .player-tools { gap: 2px; }
   .player-tools .btn { min-height: 40px; height: 40px; padding-inline: 8px; }
-  #current { max-width: 94%; font-size: 24px; padding: 5px 10px; }
+  #current { max-width: 94%; padding: 5px 10px; }
   .dialog-head { padding: 16px 18px; }
   .dialog-body { padding: 20px 18px; }
   #cloudPanel .btn { font-size: 12px; }
   .tabs-box .tab { font-size: 12px; padding-inline: 8px; }
+  .caption-style-panel { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 46dvh; }
 }
 @media (pointer:coarse) {
   .btn, .btn-sm, .library-section-head .btn { min-height: 44px; }

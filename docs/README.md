@@ -38,6 +38,7 @@ docs/
 | 理解当前产品范围 | [原文字幕 PRD](plans/2026-10-21-live-translation-prd.md)、[实现规格](plans/2026-10-23-original-caption-release-spec.md) |
 | 制订下一轮字幕体验规格 | [规格草案](plans/2026-11-14-caption-experience-spec-draft.md)、[技术可行性审查](research/2026-11-14-caption-experience-feasibility-review.md)、[完整句历史信号基线](research/2026-11-14-complete-sentence-history-baseline.md)、[11-16 候选实测](research/2026-11-16-caption-preparation-candidate-results.md) |
 | 理解字幕行为 | [术语](../GLOSSARY.md)、[ADR-0008](adr/0008-original-language-captions.md)、[已确认的整句准备预算](adr/0010-sentence-caption-preparation-budgets.md)、[浏览器时钟工程同步口径](adr/0011-browser-clock-engineering-sync.md)、[固定参考结果](research/2026-11-18-browser-clock-reference-results.md)、[长时验收](research/2026-11-18-caption-acceptance-followup.md) |
+| 记录与验收 WebUI 使用问题 | [使用问题修复规格](plans/2026-11-24-webui-usage-fixes-spec.md)、[操作记录规格](plans/2026-11-24-operation-record-spec.md)、[GitHub #113](https://github.com/AiKiAi-stack/Lisca/issues/113) |
 | 核对预览验收与正式发布缺口 | [ADR-0009](adr/0009-pr89-preview-acceptance-2026-11-04.md)、[0.2.0 起启动门槛范围](adr/0012-startup-threshold-scope.md)、[PR89 复测](plans/2026-11-04-pr89-acceptance-recheck.md)、[GitHub Issues](https://github.com/AiKiAi-stack/Lisca/issues) |
 | 运行回归、浏览器或真实验收 | [测试说明](../tests/README.md) |
 | 复核长片中的字幕修订与等待 | [11-21 播放事件、同源重连与实测记录](research/2026-11-21-caption-playback-followup.md) |

@@ -147,7 +147,7 @@ def main():
             diagnostics = page.locator("#logText").input_value()
             assert "connect" in diagnostics
             assert "offline-fixture-key" not in diagnostics
-            page.get_by_role("button", name="关闭诊断日志", exact=True).click()
+            page.get_by_role("button", name="关闭操作记录", exact=True).click()
             results.append({"case": "configure-upload-visible-caption", "passed": True,
                             "snapshot": playing, "configuration_saved": False})
             page.screenshot(path=str(directory / "configure-upload.png"))

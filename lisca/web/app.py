@@ -52,6 +52,7 @@ from lisca.cloud_translation import (CloudConfigStore, CloudError, QwenTranslato
 from lisca.provider_errors import classify_provider_failure  # noqa: E402
 from lisca.asr.recognition_process import RecognitionCapacityError  # noqa: E402
 from lisca.paths import DATA_DIR
+from lisca.web.operation_log import OpsLog, redact_entry
 
 app = FastAPI(title="Lisca")
 
@@ -114,6 +115,87 @@ def _redact_url(value: str) -> str:
 
 
 _URL_IN_TEXT = re.compile(r"(?:https?|rtsp|rtmp|rtp)://[^\s\"'<>]+", re.I)
+
+# 操作记录（#111）：本机 JSONL，按会话 / 请求 ID 关联前后端动作。
+_OPS = OpsLog(DATA_DIR / "logs")
+_OPS_HTTP_EXACT = {"/", "/channels", "/upload", "/ops"}
+_OPS_HTTP_PREFIXES = ("/api/", "/share/")
+
+
+def _recordable_request(path: str) -> bool:
+    return (path in _OPS_HTTP_EXACT or path.startswith(_OPS_HTTP_PREFIXES)) \
+        and not path.startswith("/api/ops")
+
+
+@app.middleware("http")
+async def record_http_operation(request: Request, call_next):
+    record = _recordable_request(request.url.path)
+    started = time.perf_counter()
+    response = await call_next(request)
+    if record:
+        try:
+            _OPS.append({
+                "kind": "http",
+                "session": request.headers.get("X-Lisca-Session-Id") or None,
+                "req_id": request.headers.get("X-Lisca-Request-Id") or None,
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "dur_ms": round((time.perf_counter() - started) * 1000, 1),
+            })
+        except Exception:  # noqa: BLE001 - 记录失败不能影响请求
+            logger.warning("操作记录写入失败")
+    return response
+
+
+@app.post("/ops")
+async def record_operations(request: Request):
+    """前端批量上报用户动作；缺少会话头时仍可落盘。"""
+    try:
+        payload = await request.json()
+    except Exception:  # noqa: BLE001 - 非法 JSON 由客户端负责
+        raise HTTPException(status_code=400, detail="事件格式无效") from None
+    events = payload.get("events") if isinstance(payload, dict) else None
+    if not isinstance(events, list) or not events:
+        raise HTTPException(status_code=400, detail="事件格式无效")
+    session = request.headers.get("X-Lisca-Session-Id") or None
+    recorded = 0
+    for event in events[:200]:
+        if not isinstance(event, dict):
+            continue
+        action = str(event.get("action") or "").strip()[:80]
+        if not action:
+            continue
+        _OPS.append({
+            "kind": "user",
+            "session": session,
+            "req_id": (str(event.get("req_id"))[:80] if event.get("req_id") else None),
+            "action": action,
+            "detail": str(event.get("detail") or "")[:500],
+            "client_ts": str(event.get("ts") or "")[:40] or None,
+        })
+        recorded += 1
+    if not recorded:
+        raise HTTPException(status_code=400, detail="没有可记录的事件")
+    return {"recorded": recorded}
+
+
+@app.get("/api/ops")
+def list_operations(session: str = "", limit: int = 500):
+    """按会话读取本机操作记录；默认脱敏。"""
+    limit = max(1, min(int(limit or 500), 2000))
+    events = _OPS.read(session=session or None, limit=limit)
+    return {"session": session or None, "events": [redact_entry(event) for event in events]}
+
+
+@app.get("/api/ops/export")
+def export_operations(session: str = "", full: int = 0):
+    """导出 JSONL；full=1 才包含完整地址（默认脱敏）。"""
+    content = _OPS.export(session=session or None, full=bool(full))
+    filename = f"ops-{time.strftime('%Y%m%d')}.jsonl"
+    return Response(content, media_type="application/x-ndjson",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
 
 
 def _redact_urls_in_text(value: str) -> str:
@@ -578,23 +660,39 @@ async def _proxy_media_route(url: str, request: Request, resolver):
         raise HTTPException(status_code=502, detail="媒体拉流失败：请检查来源、网络和访问权限") from None
 
 
-@app.get("/channels")
-async def channels_proxy(url: str):
-    """解析 m3u 频道列表（URL 或本地路径）→ [{group, name, url}]（ticket-19）。
+_CHANNELS_TOTAL_TIMEOUT_SEC = 30.0
 
-    浏览器跨域不能直接读 m3u，统一走本地代理（补 UA/Referer）。"""
+
+def _read_text_file(path: str) -> str:
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        return handle.read()
+
+
+async def _fetch_channel_list(url: str) -> str:
     import httpx
 
+    headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True, verify=False) as client:
+        resp = await client.get(url, headers=headers)
+        resp.raise_for_status()
+        return resp.content.decode("utf-8", "replace")
+
+
+@app.get("/channels")
+async def channels_proxy(url: str, request: Request):
+    """解析 m3u 频道列表（URL 或本地路径）→ [{group, name, url}]（ticket-19）。
+
+    浏览器跨域不能直接读 m3u，统一走本地代理（补 UA/Referer）。整体读取有
+    总时限，本地文件读取放到工作线程，避免一次慢加载堵住事件循环（#108）。"""
     try:
         if os.path.exists(url):
-            with open(url, encoding="utf-8", errors="replace") as f:
-                text = f.read()
+            text = await asyncio.to_thread(_read_text_file, url)
         else:
-            headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
-            async with httpx.AsyncClient(timeout=20, follow_redirects=True, verify=False) as client:
-                resp = await client.get(url, headers=headers)
-                resp.raise_for_status()
-                text = resp.content.decode("utf-8", "replace")
+            text = await asyncio.wait_for(
+                _fetch_channel_list(url), _CHANNELS_TOTAL_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        logger.warning("频道列表读取超时: %s", _redact_urls_in_text(url)[:120])
+        raise HTTPException(status_code=502, detail="频道列表读取超时：请检查地址与网络") from None
     except Exception as exc:  # noqa: BLE001 - distinguish fetch failures from malformed lists
         logger.warning("频道列表读取失败: %s", _redact_urls_in_text(str(exc)))
         raise HTTPException(
@@ -608,58 +706,91 @@ async def channels_proxy(url: str):
 
 
 _PROBE_CACHE: dict = {}  # url -> (ts, {ok, latency_ms})，缓存 5 分钟
+_PROBE_TOTAL_TIMEOUT_SEC = 15.0
+
+
+class _ClientGone(Exception):
+    """客户端已断开：中止探测，且不写入结果缓存。"""
+
+
+async def _probe_once(url: str, request: Request) -> dict:
+    """一次频道探测；客户端断开时抛 _ClientGone。"""
+    import time
+    import httpx
+
+    headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
+    result = {"ok": False, "latency_ms": 0, "mbps": 0}
+
+    async def check_gone():
+        if await request.is_disconnected():
+            raise _ClientGone()
+
+    await check_gone()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=3.0),
+                                 follow_redirects=True, verify=False) as client:
+        t0 = time.time()
+        async with client.stream("GET", url, headers=headers) as resp:
+            head = b""
+            chunks = 0
+            async for chunk in resp.aiter_bytes():
+                head += chunk
+                chunks += 1
+                if chunks % 16 == 0:
+                    await check_gone()
+                if len(head) >= 8192:
+                    break
+            result["latency_ms"] = int((time.time() - t0) * 1000)
+            text = head.decode("utf-8", "replace")
+        if resp.status_code >= 400 or "#EXTM3U" not in text:
+            return result  # 列表都拉不到 → 失效
+        seg = next((ln.strip() for ln in text.splitlines()
+                    if ln.strip() and not ln.strip().startswith("#")), None)
+        if not seg:
+            return result  # 无分片条目（变体列表等）→ 不可播
+        seg_url = urljoin(url, seg)
+        t1 = time.time()
+        async with client.stream("GET", seg_url, headers=headers) as sresp:
+            n = 0
+            chunks = 0
+            async for chunk in sresp.aiter_bytes():
+                n += len(chunk)
+                chunks += 1
+                if chunks % 16 == 0:
+                    await check_gone()
+                if n >= 1048576:  # 下 1MB 估算带宽
+                    break
+        dt = time.time() - t1
+        result["mbps"] = round(n / dt / 1024 / 1024, 1) if dt > 0 else 0
+        result["ok"] = sresp.status_code < 400 and n > 0
+    return result
 
 
 @app.get("/probe")
-async def probe_stream(url: str):
+async def probe_stream(url: str, request: Request):
     """频道连通性检测：拉播放列表（TTFB 计延迟）→ 分片前 1MB 测带宽。
 
     只测列表/首字节会误导（实测 TTFB 65ms 的源带宽仅 1MB/s 播放卡死）；
     分片下载速率才是"能不能流畅播"的关键（1080p IPTV 码率 ~1.1MB/s）。
-    结果内存缓存 5 分钟，批量检测并发调用时命中秒回。"""
+    结果内存缓存 5 分钟，批量检测并发调用时命中秒回。整体探测有总时限；
+    客户端断开或超时返回标记且不写缓存，避免把取消误当成失效（#108）。"""
     import time
 
     now = time.time()
     hit = _PROBE_CACHE.get(url)
     if hit and now - hit[0] < 300:
         return hit[1]
-    result = {"ok": False, "latency_ms": 0, "mbps": 0}
-    headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
-    import httpx
-
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=3.0),
-                                     follow_redirects=True, verify=False) as client:
-            t0 = time.time()
-            async with client.stream("GET", url, headers=headers) as resp:
-                head = b""
-                async for chunk in resp.aiter_bytes():
-                    head += chunk
-                    if len(head) >= 8192:
-                        break
-                result["latency_ms"] = int((time.time() - t0) * 1000)
-                text = head.decode("utf-8", "replace")
-            if resp.status_code >= 400 or "#EXTM3U" not in text:
-                return result  # 列表都拉不到 → 失效
-            seg = next((ln.strip() for ln in text.splitlines()
-                        if ln.strip() and not ln.strip().startswith("#")), None)
-            if not seg:
-                return result  # 无分片条目（变体列表等）→ 不可播
-            seg_url = urljoin(url, seg)
-            t1 = time.time()
-            async with client.stream("GET", seg_url, headers=headers) as sresp:
-                n = 0
-                async for chunk in sresp.aiter_bytes():
-                    n += len(chunk)
-                    if n >= 1048576:  # 下 1MB 估算带宽
-                        break
-            dt = time.time() - t1
-            result["mbps"] = round(n / dt / 1024 / 1024, 1) if dt > 0 else 0
-            result["ok"] = sresp.status_code < 400 and n > 0
+        result = await asyncio.wait_for(_probe_once(url, request), _PROBE_TOTAL_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        logger.warning("probe 超时 %s", _redact_url(url)[:120])
+        return {"ok": False, "timed_out": True, "latency_ms": 0, "mbps": 0}
+    except _ClientGone:
+        logger.info("probe 已取消（客户端断开） %s", _redact_url(url)[:120])
+        return {"ok": False, "cancelled": True, "latency_ms": 0, "mbps": 0}
     except Exception as exc:  # noqa: BLE001 - 检测失败即频道失效
         logger.warning("probe 失败 %s: %s", _redact_url(url)[:120],
                        _redact_urls_in_text(str(exc)))
-        result["ok"] = False
+        result = {"ok": False, "latency_ms": 0, "mbps": 0}
     _PROBE_CACHE[url] = (time.time(), dict(result))
     return result
 
@@ -752,6 +883,7 @@ async def ws_endpoint(ws: WebSocket):
         await ws.close(code=4403, reason="请求来源不匹配")
         return
     await ws.accept()
+    ops_session = ws.query_params.get("ops_session", "").strip() or None
     cloud_token = ws.query_params.get("session", "")
     cloud = None
     if cloud_token:
@@ -1208,6 +1340,8 @@ async def ws_endpoint(ws: WebSocket):
         _LOG_SINKS.append(put)
         logger.info("会话开始 url=%s engine=%s silence=%s",
                     _redact_url(url)[:120], engine_name, silence)
+        _OPS.append({"kind": "session", "session": ops_session, "event": "start",
+                     "url": _redact_url(url)[:200], "engine": engine_name}),
 
         engine = None
         phase = "input_validation"
@@ -1640,6 +1774,7 @@ async def ws_endpoint(ws: WebSocket):
                 if put in _LOG_SINKS:
                     _LOG_SINKS.remove(put)
                 logger.info("会话结束")
+                _OPS.append({"kind": "session", "session": ops_session, "event": "end"})
                 if worker_failed:
                     terminal_reason = "error"
                 elif overflowed.is_set():

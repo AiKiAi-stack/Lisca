@@ -27,13 +27,30 @@
  <div class="source-row source-dock"><label class="sr-only" for="url">直播链接或本地文件路径</label><input id="url" placeholder="粘贴直播链接，或输入本机文件路径" autocomplete="off" spellcheck="false" class="input"><button id="uploadBtn" title="打开文件" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#folder-open"/></svg>打开文件</button><button id="start" class="primary btn btn-primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#play"/></svg>播放并生成字幕</button><button id="stop" title="停止播放与识别" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#square"/></svg>结束观看</button></div>
  <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mkv,.flac" hidden>
  <div id="playerWrap"><video id="player" controls muted playsinline></video><audio id="audioEl" preload="auto"></audio><div id="emptyState"><svg class="icon empty-symbol" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#monitor-play"/></svg><h2>打开一段内容</h2><p>直播与本地视频，保留语音原文</p><div class="empty-actions"><button id="emptyUpload" class="primary btn btn-primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#file-video"/></svg>本地视频</button><button id="emptyLink" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#link"/></svg>直播链接</button></div></div><div id="current"></div><span id="captionLag" hidden></span><button id="exitFullscreenBtn" class="quiet btn btn-ghost" title="退出全屏"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#minimize"/></svg>退出全屏</button></div>
- <div class="player-footer"><div><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div id="shareHistoryNotice" role="status" hidden></div><div id="sourceBufferStatus" role="status" hidden></div></div><div class="player-tools"><button id="shareCopy" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#share-2"/></svg>复制观众链接</button><select id="shareAddress" aria-label="观众设备所在局域网" hidden class="select"></select><button id="subToggle" class="quiet btn btn-ghost" aria-pressed="true" title="开关原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#captions"/></svg><span id="subToggleLabel">字幕 开</span></button><button id="historyBtn" class="quiet btn btn-ghost"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#history"/></svg>字幕记录</button><button id="fullscreenBtn" class="quiet btn btn-ghost" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#maximize"/></svg>全屏</button></div></div>
+ <div class="player-footer"><div><div id="status" role="status">打开直播或本地视频，自动识别语音语言</div><div id="shareHistoryNotice" role="status" hidden></div><div id="sourceBufferStatus" role="status" hidden></div></div><div class="player-tools"><button id="shareCopy" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#share-2"/></svg>复制观众链接</button><select id="shareAddress" aria-label="观众设备所在局域网" hidden class="select"></select><button id="subToggle" class="quiet btn btn-ghost" aria-pressed="true" title="开关原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#captions"/></svg><span id="subToggleLabel">字幕 开</span></button><button id="styleBtn" class="quiet btn btn-ghost" aria-controls="stylePanel" aria-expanded="false" title="调整字幕字号、位置、颜色与字体"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#settings-2"/></svg>字幕样式</button><button id="historyBtn" class="quiet btn btn-ghost"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#history"/></svg>字幕记录</button><button id="fullscreenBtn" class="quiet btn btn-ghost" title="全屏显示视频与原文字幕"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#maximize"/></svg>全屏</button></div></div>
  <div id="captionActions" hidden><button id="retryCaptions" class="btn btn-outline">重试字幕</button><button id="playOnly" class="btn btn-outline">仅播放（停止识别）</button></div>
  <div id="lateCaption" hidden></div>
 </main>
 </div>
+<section id="stylePanel" class="caption-style-panel" aria-label="字幕样式" hidden>
+  <div class="style-head"><span>字幕样式</span><button id="styleClose" class="quiet btn btn-ghost btn-square btn-sm" aria-label="关闭字幕样式">关闭</button></div>
+  <input id="bilingual" type="checkbox" hidden class="checkbox checkbox-sm">
+  <label>字号 <input type="range" id="sizeRange" min="16" max="64" step="1" value="30" class="range range-xs"><span class="val" id="sizeVal">30px</span></label>
+  <label>位置 <input type="range" id="posRange" min="0" max="30" step="1" value="12" class="range range-xs"><span class="val" id="posVal">12%</span></label>
+  <label>对比度 <select id="contrastSel" class="select"><option value="default">白字 · 半透明黑底</option><option value="high">白字 · 实黑底</option><option value="yellow">黄字 · 实黑底</option></select></label>
+  <label>字体
+    <select id="fontSel" class="select">
+      <option value="default">系统默认</option>
+      <option value="heiti">黑体</option>
+      <option value="songti">宋体</option>
+      <option value="mono">等宽</option>
+      <option value="kaiti">楷体</option>
+    </select>
+  </label>
+  <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 白字半透明黑底 / 字体系统默认" class="btn btn-outline">重置默认</button>
+</section>
 <dialog id="sourceDrawer" aria-labelledby="sourceLibraryTitle"></dialog>
-<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle"><div class="dialog-head"><h2 id="settingsDialogTitle">设置</h2><button class="quiet btn btn-ghost" data-close="settingsDialog" aria-label="关闭设置">关闭</button></div><div class="dialog-body"><div class="tabs tabs-box" role="tablist" aria-label="设置分类"><button role="tab" aria-selected="true" aria-controls="cloudSettings" data-pane="cloudSettings" class="tab">识别服务</button><button role="tab" aria-selected="false" aria-controls="captionSettings" data-pane="captionSettings" class="tab">字幕样式</button><button role="tab" aria-selected="false" aria-controls="moreSettings" data-pane="moreSettings" class="tab">高级</button></div><section id="cloudSettings" class="setting-section">  <section id="cloudPanel">
+<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle"><div class="dialog-head"><h2 id="settingsDialogTitle">设置</h2><button class="quiet btn btn-ghost" data-close="settingsDialog" aria-label="关闭设置">关闭</button></div><div class="dialog-body"><div class="tabs tabs-box" role="tablist" aria-label="设置分类"><button role="tab" aria-selected="true" aria-controls="cloudSettings" data-pane="cloudSettings" class="tab">识别服务</button><button role="tab" aria-selected="false" aria-controls="moreSettings" data-pane="moreSettings" class="tab">高级</button></div><section id="cloudSettings" class="setting-section">  <section id="cloudPanel">
     <h3>阿里云百炼（中国内地）</h3>
     <p>使用 FunASR 识别音频，字幕保留语音原文。音频会发送给百炼，费用由你的 API 账户承担；本模式不调用翻译服务。</p>
     <label>API Key <input id="apiKey" type="password" autocomplete="off" placeholder="填写百炼 API Key，不会放入链接或日志" class="input"></label>
@@ -44,22 +61,7 @@
     <span id="cloudState" role="status">尚未配置</span>
     <p style="font-size:12px">请先在百炼开通 fun-asr-realtime。检查连接不代表实际语音效果；费用以服务商账单为准。</p>
   </section>
-<label for="sourceLanguage">语音语言</label><select id="sourceLanguage" class="select"><option value="auto" selected>自动识别（原语言输出）</option><option value="zh">中文</option><option value="en">English</option></select></section><section id="captionSettings" class="setting-section" hidden><input id="bilingual" type="checkbox" hidden class="checkbox checkbox-sm">  <div id="stylePanel">
-    <label>字号 <input type="range" id="sizeRange" min="16" max="64" step="1" value="30" class="range range-xs"><span class="val" id="sizeVal">30px</span></label>
-    <label>位置 <input type="range" id="posRange" min="0" max="30" step="1" value="12" class="range range-xs"><span class="val" id="posVal">12%</span></label>
-    <label>对比度 <select id="contrastSel" class="select"><option value="default">白字 · 半透明黑底</option><option value="high">白字 · 实黑底</option><option value="yellow">黄字 · 实黑底</option></select></label>
-    <label>字体
-      <select id="fontSel" class="select">
-        <option value="default">系统默认</option>
-        <option value="heiti">黑体</option>
-        <option value="songti">宋体</option>
-        <option value="mono">等宽</option>
-        <option value="kaiti">楷体</option>
-      </select>
-    </label>
-    <button id="styleReset" title="恢复默认：字号 30px / 位置 12% / 白字半透明黑底 / 字体系统默认" class="btn btn-outline">重置默认</button>
-  </div>
-<p>字幕按语音时间显示完整短句；长句按时间分段，完整识别内容可在字幕记录查看。</p></section><section id="moreSettings" class="setting-section" hidden><label for="engine">字幕服务</label>  <select id="engine" class="select">
+<label for="sourceLanguage">语音语言</label><select id="sourceLanguage" class="select"><option value="auto" selected>自动识别（原语言输出）</option><option value="zh">中文</option><option value="en">English</option></select></section><section id="moreSettings" class="setting-section" hidden><label for="engine">字幕服务</label>  <select id="engine" class="select">
     <option value="aliyun-funasr" selected>云端原文字幕</option>
     <option value="demo">演示字幕（无识别，仅验证链路）</option>
   </select>
@@ -74,18 +76,17 @@
     <option value="1">音视频延迟 1s</option>
     <option value="5">音视频延迟 5s</option>
   </select>
-<div><button id="logBtn" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#file-text"/></svg>诊断日志</button></div></section></div></dialog>
+<div><button id="logBtn" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#file-text"/></svg>操作记录</button></div></section></div></dialog>
 <dialog id="historyDialog" aria-labelledby="historyDialogTitle"><div class="dialog-head"><h2 id="historyDialogTitle">字幕记录</h2><button class="quiet btn btn-ghost" data-close="historyDialog" aria-label="关闭字幕记录">关闭</button></div><div class="dialog-body"><div id="history"></div></div></dialog>
 <dialog id="channelsDialog" aria-labelledby="channelsDialogTitle"><div class="dialog-head"><h2 id="channelsDialogTitle">频道列表</h2><button class="quiet btn btn-ghost" data-close="channelsDialog" aria-label="关闭频道列表">关闭</button></div><div class="dialog-body"><label for="channelListUrl">M3U 频道列表地址</label><div class="source-row"><input id="channelListUrl" type="url" placeholder="https://…/channels.m3u" class="input"><button id="loadChannelsBtn" class="btn btn-outline">加载频道</button></div><p id="channelStatus" role="status"></p>  <div id="chPanel">
     <div class="ch-head">
       <span id="chInfo">未加载频道列表</span>
-      <button id="chProbeBtn" title="批量检测所有频道的连通性与延迟（手动触发，并发 20，逐条显示）" class="btn btn-outline"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#search"/></svg>批量检测</button>
+      <button id="chProbeBtn" title="批量检测所有频道的连通性与延迟（手动触发，并发 20，逐条显示；运行中可取消）" class="btn btn-outline" aria-pressed="false"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#search"/></svg><span id="chProbeLabel">批量检测</span></button>
     </div>
     <div id="chList"></div>
   </div>
 </div></dialog>
-<dialog id="logsDialog" aria-labelledby="logsDialogTitle"><div class="dialog-head"><h2 id="logsDialogTitle">诊断日志</h2><button class="quiet btn btn-ghost" data-close="logsDialog" aria-label="关闭诊断日志">关闭</button></div><div class="dialog-body"><div id="logPanel" hidden><textarea id="logText" aria-label="会话日志" readonly spellcheck="false" class="textarea"></textarea><button id="copyLogBtn" class="btn btn-outline">复制日志</button></div></div></dialog>
-<button id="styleBtn" hidden class="btn btn-outline">字幕样式</button>
+<dialog id="logsDialog" aria-labelledby="logsDialogTitle"><div class="dialog-head"><h2 id="logsDialogTitle">操作记录</h2><button class="quiet btn btn-ghost" data-close="logsDialog" aria-label="关闭操作记录">关闭</button></div><div class="dialog-body"><div id="logPanel" hidden><div class="ops-toolbar"><label for="opsFilter">显示</label><select id="opsFilter" class="select"><option value="all">全部</option><option value="user">我的操作</option><option value="http">请求</option><option value="session">会话</option></select><label class="ops-full" title="导出文件保留完整地址与凭据，仅保存在本机"><input id="opsFull" type="checkbox" class="checkbox checkbox-sm"> 含完整地址</label><button id="copyLogBtn" class="btn btn-outline">复制记录</button><button id="exportLogBtn" class="btn btn-outline">导出记录</button></div><textarea id="logText" aria-label="操作记录" readonly spellcheck="false" class="textarea"></textarea></div></div></dialog>
 <script src="/hls.min.js"></script>
 <script src="/caption_presenter.js"></script>
 <script src="/playback_guard.js"></script>
@@ -268,15 +269,87 @@
       }
     });
   }
+  // 操作记录（#111）：页面会话 ID + 请求 ID，动作与 HTTP 请求落到本机 JSONL
+  const OPS_SESSION_KEY = 'lisca-ops-session';
+  const opsSessionId = (() => {
+    try {
+      const saved = sessionStorage.getItem(OPS_SESSION_KEY);
+      if (saved) return saved;
+      const created = globalThis.crypto?.randomUUID?.()
+        || `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      sessionStorage.setItem(OPS_SESSION_KEY, created);
+      return created;
+    } catch (_) { return `s-${Date.now().toString(36)}`; }
+  })();
+  let opsRequestSeq = 0;
+  const opsQueue = [];
+  let opsFlushTimer = null;
+  const nativeFetch = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = (input, init = {}) => {
+    const headers = new Headers(init.headers || {});
+    headers.set('X-Lisca-Session-Id', opsSessionId);
+    headers.set('X-Lisca-Request-Id', `${opsSessionId}-${++opsRequestSeq}`);
+    return nativeFetch(input, { ...init, headers });
+  };
+  function flushOperations() {
+    if (opsFlushTimer != null) { clearTimeout(opsFlushTimer); opsFlushTimer = null; }
+    if (!opsQueue.length) return;
+    const events = opsQueue.splice(0, opsQueue.length);
+    globalThis.fetch('/ops', { method: 'POST', keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events }) }).catch(() => {});
+  }
+  function formatOperation(event) {
+    const time = String(event.ts || '').slice(11, 23);
+    if (event.kind === 'http')
+      return `[${time}] http ${event.method} ${event.path} ${event.status} ${event.dur_ms}ms`;
+    if (event.kind === 'session')
+      return `[${time}] session ${event.event || ''} ${event.engine || ''}`.trim();
+    return `[${time}] ${event.action || 'event'}: ${event.detail || ''}`;
+  }
+  let opsTimeline = [];
+  const opsFilter = document.getElementById('opsFilter');
+  function renderOperations() {
+    const filter = opsFilter?.value || 'all';
+    const events = opsTimeline.filter(event => filter === 'all' || event.kind === filter);
+    const lines = events.map(formatOperation);
+    logText.value = lines.length ? lines.join('\n') : logBuffer.join('\n');
+  }
+  async function loadOperationTimeline() {
+    try {
+      const resp = await globalThis.fetch('/api/ops?session=' + encodeURIComponent(opsSessionId) + '&limit=500');
+      const data = await resp.json();
+      opsTimeline = data.events || [];
+    } catch (_) { opsTimeline = []; }
+    renderOperations();
+  }
+  if (opsFilter) opsFilter.onchange = () => { renderOperations(); logEvent('ops_filter', opsFilter.value); };
   function logEvent(type, detail) {
     const ts = new Date().toISOString().slice(11, 23);
     logBuffer.push(`[${ts}] ${type}: ${redactDiagnosticDetail(detail)}`);
     if (logBuffer.length > 500) logBuffer.shift();
     if (!logPanel.hidden) logText.value = logBuffer.join('\n');
+    if (type !== 'server' && type !== 'sub') {
+      opsQueue.push({ action: String(type || 'event').slice(0, 80),
+        detail: String(detail ?? '').slice(0, 500), ts: new Date().toISOString() });
+    }
+    if (opsQueue.length >= 20) flushOperations();
+    else if (opsFlushTimer == null) opsFlushTimer = setTimeout(flushOperations, 200);
   }
+  globalThis.addEventListener('pagehide', flushOperations);
   logBtn.onclick = () => {
-    logPanel.hidden = !logPanel.hidden;
-    if (!logPanel.hidden) logText.value = logBuffer.join('\n');
+    logPanel.hidden = false;
+    openDialog('logsDialog');
+    void loadOperationTimeline();
+    logEvent('ops_view', '打开操作记录');
+  };
+  const exportLogBtn = document.getElementById('exportLogBtn');
+  exportLogBtn.onclick = () => {
+    const full = document.getElementById('opsFull')?.checked;
+    if (full && !window.confirm('导出文件将包含完整地址与凭据，仅保存在本机。继续？')) return;
+    window.open('/api/ops/export?session=' + encodeURIComponent(opsSessionId)
+      + (full ? '&full=1' : ''), '_blank');
+    logEvent('ops_export', full ? '完整地址' : '脱敏');
   };
   copyLogBtn.onclick = () => {
     const text = logText.value || logBuffer.join('\n');
@@ -335,14 +408,15 @@
     try { localStorage.setItem(STYLE_KEY, JSON.stringify(styleState)); } catch (e) { /* 隐私模式等 */ }
   }
   let styleState = loadStyle();
+  const styleClose = document.getElementById('styleClose');
   function applyStyle() {
     const s = styleState;
-    currentEl.style.fontSize = `${s.size}px`;
-    currentEl.style.bottom = `${s.pos}%`;
-    currentEl.style.backgroundColor = s.contrast === 'default' ? 'rgba(0,0,0,.72)' : '#000';
-    currentEl.style.color = s.contrast === 'yellow' ? '#ffe766' : '#fff';
-    if (FONTS[s.font]) currentEl.style.fontFamily = FONTS[s.font];
-    else currentEl.style.removeProperty('font-family');
+    const root = document.documentElement.style;
+    root.setProperty('--caption-size', `${s.size}px`);
+    root.setProperty('--caption-bottom', `${s.pos}%`);
+    root.setProperty('--caption-bg', s.contrast === 'default' ? 'rgba(0,0,0,.72)' : '#000');
+    root.setProperty('--caption-color', s.contrast === 'yellow' ? '#ffe766' : '#fff');
+    root.setProperty('--caption-font', FONTS[s.font] || 'inherit');
     sizeRange.value = s.size;
     sizeVal.textContent = `${s.size}px`;
     posRange.value = s.pos;
@@ -351,10 +425,17 @@
     fontSel.value = s.font;
     fitCaptionWidth();
   }
-  styleBtn.onclick = () => {
-    stylePanel.hidden = !stylePanel.hidden;
-    logEvent('style_panel', stylePanel.hidden ? '收起' : '展开');
-  };
+  function toggleStylePanel(show) {
+    const visible = show ?? stylePanel.hidden;
+    stylePanel.hidden = !visible;
+    styleBtn.setAttribute('aria-expanded', String(visible));
+    logEvent('style_panel', visible ? '展开' : '收起');
+  }
+  styleBtn.onclick = () => toggleStylePanel(stylePanel.hidden);
+  if (styleClose) styleClose.onclick = () => { toggleStylePanel(false); styleBtn.focus(); };
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !stylePanel.hidden) { toggleStylePanel(false); styleBtn.focus(); }
+  });
   // input 事件：拖动中即时生效（实时调整）；change 事件：下拉选择生效
   sizeRange.oninput = () => { styleState.size = parseInt(sizeRange.value, 10); applyStyle(); saveStyle(); };
   posRange.oninput = () => { styleState.pos = parseInt(posRange.value, 10); applyStyle(); saveStyle(); };
@@ -383,9 +464,32 @@
   let channels = [];       // [{group, name, url}]
   let chRows = new Map();  // url -> {row, status}
   let loadedChannelListUrl = '';
+  const chProbeLabel = document.getElementById('chProbeLabel');
+  const PROBE_TIMEOUT_MS = 15000;
+  const CHANNELS_TIMEOUT_MS = 30000;
+  let activeChannelLoad = null;
+  let scanGeneration = 0;
+  let activeScanController = null;
+  let scanState = null;   // 运行中的批量检测：{done,total,ok,failed,cancelled}
+
+  function cancelBatchScan(reason = '取消检测') {
+    if (!scanState) return;
+    const state = scanState;
+    scanState = null;
+    scanGeneration++;
+    if (activeScanController) { activeScanController.abort(); activeScanController = null; }
+    if (chProbeLabel) chProbeLabel.textContent = '批量检测';
+    chProbeBtn.setAttribute('aria-pressed', 'false');
+    setUiText(chInfo, `${reason}，已测 ${state.done}/${state.total}`);
+    logEvent('scan_cancel', `${reason} ${state.done}/${state.total} 成功=${state.ok} 失败=${state.failed}`);
+  }
 
   async function loadChannels(m3uUrl) {
     const channelStatus = document.getElementById('channelStatus');
+    cancelBatchScan('已替换列表');
+    if (activeChannelLoad) activeChannelLoad.abort();
+    const controller = new AbortController();
+    activeChannelLoad = controller;
     setUiText(channelStatus, '加载频道列表…');
     setStatus('加载频道列表…');
     logEvent('channels_load', m3uUrl.slice(0, 100));
@@ -394,19 +498,29 @@
     chList.innerHTML = '';
     chPanel.hidden = true;
     setUiText(chInfo, '');
+    const timer = setTimeout(() => controller.abort(), CHANNELS_TIMEOUT_MS);
     try {
-      const resp = await fetch('/channels?url=' + encodeURIComponent(m3uUrl));
+      const resp = await fetch('/channels?url=' + encodeURIComponent(m3uUrl), {signal: controller.signal});
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
         throw new Error(data.detail || ('HTTP ' + resp.status));
       }
       channels = await resp.json();
     } catch (e) {
+      if (controller.signal.aborted) {
+        setUiText(channelStatus, '频道列表加载已取消');
+        setStatus(channelStatus.textContent, true);
+        return;
+      }
       setUiText(channelStatus, '频道列表加载失败：' + e.message);
       setStatus(channelStatus.textContent, true);
       return;
+    } finally {
+      clearTimeout(timer);
+      if (activeChannelLoad === controller) activeChannelLoad = null;
     }
     if (!channels.length) { setUiText(channelStatus, '频道列表为空（源可能失效）'); setStatus(channelStatus.textContent, true); return; }
+    if (controller.signal.aborted) return;
     loadedChannelListUrl = m3uUrl;
     document.getElementById('channelListUrl').value = m3uUrl;
     setUiText(channelStatus, `共 ${channels.length} 个频道，选择后再开始播放`);
@@ -466,11 +580,19 @@
     }
   }
 
-  async function probeChannel(url) {
+  async function probeChannel(url, signal) {
     const cell = chRows.get(url);
     if (cell) { cell.row.classList.remove('ok', 'fail'); setUiText(cell.status, '检测中…'); }
+    const controller = new AbortController();
+    let timedOut = false;
+    const forwardAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener('abort', forwardAbort, { once: true });
+    }
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, PROBE_TIMEOUT_MS);
     try {
-      const resp = await fetch('/probe?url=' + encodeURIComponent(url));
+      const resp = await fetch('/probe?url=' + encodeURIComponent(url), { signal: controller.signal });
       const data = await resp.json();
       if (cell) {
         cell.row.classList.toggle('ok', !!data.ok);
@@ -478,34 +600,72 @@
         // 带宽是能否流畅播的关键（1080p IPTV 码率 ~1.1MB/s），与延迟并列展示
         setUiText(cell.status, data.ok
           ? `✅ ${data.latency_ms}ms·${data.mbps}MB/s`
-          : '❌ 失效');
+          : data.timed_out ? '❌ 检测超时' : '❌ 失效');
       }
       return data;
     } catch (e) {
+      if (timedOut) {
+        if (cell) { cell.row.classList.add('fail'); setUiText(cell.status, '❌ 检测超时'); }
+        return { ok: false, timed_out: true };
+      }
+      if (signal?.aborted) {
+        if (cell) setUiText(cell.status, '已取消');
+        return { ok: false, cancelled: true };
+      }
       if (cell) { cell.row.classList.add('fail'); setUiText(cell.status, '❌ 检测失败'); }
       return { ok: false };
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', forwardAbort);
     }
   }
 
-  // 批量检测（ticket-19）：手动触发，并发 20，逐条异步更新（测完一个立即显示）
-  chProbeBtn.onclick = () => {
-    if (!channels.length) return;
-    chProbeBtn.disabled = true;
-    const total = channels.length;
-    let i = 0, done = 0;
+  // 批量检测（ticket-19）：手动触发，并发 20；运行中按钮变为取消（#108）。
+  async function startBatchScan() {
+    if (!channels.length || scanState) return;
+    const list = channels.slice();   // 快照：换列表不影响本批
+    const total = list.length;
+    const generation = ++scanGeneration;
+    const controller = new AbortController();
+    activeScanController = controller;
+    scanState = { done: 0, total, ok: 0, failed: 0, cancelled: 0 };
+    if (chProbeLabel) chProbeLabel.textContent = '取消检测';
+    chProbeBtn.setAttribute('aria-pressed', 'true');
     setUiText(chInfo, `批量检测 0/${total}`);
-    async function run() {
-      while (true) {
-        const idx = i++;
-        if (idx >= total) break;
-        await probeChannel(channels[idx].url);
-        done++;
-        setUiText(chInfo, `批量检测 ${done}/${total}`);
+    logEvent('scan_start', `${total} 个频道`);
+    let cursor = 0;
+    const run = async () => {
+      while (scanState && generation === scanGeneration) {
+        const index = cursor++;
+        if (index >= total) return;
+        const result = await probeChannel(list[index].url, controller.signal);
+        if (!scanState || generation !== scanGeneration) return;
+        scanState.done++;
+        if (result.ok) scanState.ok++;
+        else if (result.cancelled) scanState.cancelled++;
+        else scanState.failed++;
+        setUiText(chInfo, `批量检测 ${scanState.done}/${total}`);
       }
-      if (done >= total) { setUiText(chInfo, `批量检测完成 ${total}/${total}`); chProbeBtn.disabled = false; }
-    }
-    for (let k = 0; k < Math.min(20, total); k++) run();
+    };
+    await Promise.all(Array.from({ length: Math.min(20, total) }, () => run()));
+    if (!scanState || generation !== scanGeneration) return;
+    const state = scanState;
+    scanState = null;
+    activeScanController = null;
+    if (chProbeLabel) chProbeLabel.textContent = '批量检测';
+    chProbeBtn.setAttribute('aria-pressed', 'false');
+    setUiText(chInfo, `批量检测完成 ${state.done}/${total}`);
+    logEvent('scan_complete', `${state.done}/${total} 成功=${state.ok} 失败=${state.failed} 取消=${state.cancelled}`);
+  }
+
+  chProbeBtn.onclick = () => {
+    if (scanState) { cancelBatchScan(); return; }
+    void startBatchScan().catch(error => {
+      if (scanState) cancelBatchScan('检测异常');
+      logEvent('scan_error', String(error));
+    });
   };
+
   chBtn.onclick = async () => {
     openDialog('channelsDialog');
     chPanel.hidden = !channels.length;
@@ -731,6 +891,14 @@
   }
 
   function syncSubtitle() {
+    // 直播字幕不显示句末标点：标点来自识别引擎原文，只在显示层去掉，
+    // 断句/分页/提交/历史记录继续使用原文（#109）。
+    const TRAILING_SENTENCE = /[。！？.!?;；]+(?=[”’"'）)\]】]*\s*$)/u;
+    function displayCaptionText(text) {
+      return String(text ?? '').split('\n').map(line =>
+        line.replace(/\s+$/u, '').replace(TRAILING_SENTENCE, '').replace(/\s+$/u, '')
+      ).join('\n');
+    }
     const t = player.currentTime;
     if (!activeInput && !sharedViewerActive) return;
     // 出错态：保留错误提示，不被占位符/字幕覆盖
@@ -743,11 +911,11 @@
     }
     if (translatedSession) {
       const cue = captionPresenter.tick(t, performance.now(), player.paused && !player.ended);
-      currentEl.textContent = cue ? cue.text : '';
+      currentEl.textContent = cue ? displayCaptionText(cue.text) : '';
       currentEl.dataset.caption = cue ? 'final' : 'empty';
       if (cue && bilingualEl.checked && cue.source_text) {
         const source = lines(cue.source_text, captionPresenter.columns - 2)[0];
-        currentEl.textContent = source + (source.length < cue.source_text.length ? '…' : '') + '\n' + cue.text;
+        currentEl.textContent = displayCaptionText(source + (source.length < cue.source_text.length ? '…' : '') + '\n' + cue.text);
       }
       const lag = document.getElementById('captionLag');
       if (lag) {
@@ -767,7 +935,7 @@
       if (previewSubs.includes(displayed.source) && !player.seeking && !seekPending
           && t >= displayed.beg && t < displayed.end && t >= displayed.at - .15
           && displayed.layoutKey === captionLayoutOptions().key) {
-        currentEl.textContent = displayed.text;
+        currentEl.textContent = displayCaptionText(displayed.text);
         displayed.at = t;
         return;
       }
@@ -840,10 +1008,10 @@
           if (caption.text.trim().length > group.text.length) group.text = caption.text.trim();
         }
       }
-    currentEl.textContent = groups.map(g => g.text).join(' ');
+    currentEl.textContent = displayCaptionText(groups.map(g => g.text).join(' '));
     if (bilingualEl.checked) {
       const sourceText = [...new Set(candidates.map(c => c.sourceText).filter(Boolean))].join(' ');
-      if (sourceText) currentEl.textContent = sourceText + '\n' + currentEl.textContent;
+      if (sourceText) currentEl.textContent = displayCaptionText(sourceText + '\n' + currentEl.textContent);
     }
     const preview = candidates.length === 1 ? candidates[0] : null;
     if (preview?.previewSource) {
@@ -1416,8 +1584,9 @@
         silence:silenceEl.value, delay:isHls ? delayEl.value : '0.1',
         share:activeShareToken});
     }
+    params.set('ops_session', opsSessionId);
     ws = new WebSocket(sharedViewerActive
-      ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/share/${encodeURIComponent(shareToken)}/ws?viewer_id=${encodeURIComponent(viewerInfo.viewer_id)}`
+      ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/share/${encodeURIComponent(shareToken)}/ws?viewer_id=${encodeURIComponent(viewerInfo.viewer_id)}&ops_session=${encodeURIComponent(opsSessionId)}`
       : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?${params}`);
     startBtn.style.display = 'none';
     stopBtn.style.display = sharedViewerActive ? 'none' : 'inline-flex';
@@ -2173,11 +2342,11 @@
   document.querySelectorAll('[data-pane]').forEach(button => { button.onkeydown = event => {
     if (!['ArrowLeft','ArrowRight'].includes(event.key)) return;
     const tabs = [...document.querySelectorAll('[data-pane]')];
-    const next = tabs[(tabs.indexOf(button) + (event.key === 'ArrowRight' ? 1 : 2)) % tabs.length];
+    const next = tabs[(tabs.indexOf(button) + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
     next.click(); next.focus(); event.preventDefault();
   }; button.onclick = () => {
     document.querySelectorAll('[data-pane]').forEach(tab => tab.setAttribute('aria-selected', String(tab === button)));
-    ['cloudSettings','captionSettings','moreSettings'].forEach(id => { document.getElementById(id).hidden = id !== button.dataset.pane; });
+    ['cloudSettings','moreSettings'].forEach(id => { document.getElementById(id).hidden = id !== button.dataset.pane; });
   }; });
   logBtn.onclick = () => { logPanel.hidden = false; logText.value = logBuffer.join('\n'); openDialog('logsDialog'); };
   document.getElementById('loadChannelsBtn').onclick = () => loadChannels(document.getElementById('channelListUrl').value.trim());

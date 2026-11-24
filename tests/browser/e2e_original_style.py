@@ -27,13 +27,17 @@ def main():
             page.wait_for_function("document.querySelector('#current').innerText.includes('第一句')")
             page.locator("video").evaluate("video=>video.pause()")
             original = colors(page)
-            page.locator("#settingsBtn").click()
-            page.get_by_role("tab", name="字幕", exact=True).click()
-            page.locator("#contrastSel").wait_for(state="visible", timeout=1000)
+            page.locator("#styleBtn").click()
+            page.locator("#stylePanel").wait_for(state="visible", timeout=1000)
             page.locator("#contrastSel").select_option("high")
             page.locator("#posRange").focus()
             page.locator("#posRange").press("End")
-            page.get_by_role("button", name="关闭设置", exact=True).click()
+            page.locator("#sizeRange").focus()
+            page.locator("#sizeRange").press("End")
+            live_size = page.locator("#current").evaluate(
+                "element => parseFloat(getComputedStyle(element).fontSize)")
+            assert abs(live_size - 64) < .1, live_size
+            page.locator("#styleBtn").click()
             high = colors(page)
             assert high["background"] == "rgb(0, 0, 0)", high
             assert high["bottom"] > original["bottom"], (original, high)
@@ -44,20 +48,24 @@ def main():
             assert "第一句" in snapshot(page)["text"]
             results.append({"case": "contrast-position-and-subtitle-toggle", "passed": True,
                             "original": original, "high": high})
-            page.locator("#settingsBtn").click()
-            page.get_by_role("tab", name="字幕", exact=True).click()
+            page.locator("#styleBtn").click()
+            page.locator("#stylePanel").wait_for(state="visible", timeout=1000)
             page.locator("#posRange").focus()
             page.locator("#posRange").press("Home")
-            page.get_by_role("button", name="关闭设置", exact=True).click()
+            page.locator("#styleBtn").click()
             stop_if_active(page)
             page.reload(wait_until="domcontentloaded")
-            page.locator("#settingsBtn").click()
-            page.get_by_role("tab", name="字幕", exact=True).click()
+            page.locator("#styleBtn").click()
+            page.locator("#stylePanel").wait_for(state="visible", timeout=1000)
             assert page.locator("#contrastSel").input_value() == "high"
             assert page.locator("#posRange").input_value() == "0"
             page.locator("#styleReset").click()
             assert page.locator("#contrastSel").input_value() == "default"
             assert page.locator("#posRange").input_value() == "12"
+            page.locator("#styleBtn").click()
+            page.locator("#settingsBtn").click()
+            assert page.get_by_role("tab", name="字幕样式").count() == 0
+            page.get_by_role("button", name="关闭设置", exact=True).click()
             results.append({"case": "style-preferences-and-reset", "passed": True})
             assert not errors, errors
         finally:
