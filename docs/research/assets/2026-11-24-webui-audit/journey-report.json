@@ -1,18 +1,19 @@
 {
-  "session": "0810ae3d-50f0-4ab9-af61-ffce510c7441",
+  "session": "1c9344ac-4c50-48b6-8042-567d7c2a91f9",
   "user_timeline": [
-    "[14:50:07.771] status: 加载频道列表…",
-    "[14:50:07.771] channels_load: /run/media/wbb/系统/MyProject/stream-with-asr/.scratch/audit-channels.m3u",
-    "[14:50:07.794] status: 频道列表 60 个，选择后再开始播放",
-    "[14:50:07.862] scan_start: 60 个频道",
-    "[14:50:09.133] scan_cancel: 取消检测 0/60 成功=0 失败=0",
-    "[14:50:09.805] connect: /run/media/wbb/系统/MyProject/stream-with-asr/logs/cloud-smoke.mp4"
+    "[15:12:52.400] status: 加载频道列表…",
+    "[15:12:52.400] channels_load: /run/media/wbb/系统/MyProject/stream-with-asr/.scratch/audit-channels.m3u",
+    "[15:12:52.507] status: 频道列表 60 个，选择后再开始播放",
+    "[15:12:52.617] scan_start: 60 个频道",
+    "[15:12:53.831] scan_cancel: 取消检测 0/60 成功=0 失败=0",
+    "[15:12:54.384] connect: /run/media/wbb/系统/MyProject/stream-with-asr/logs/cloud-smoke.mp4"
   ],
   "page_errors": [],
-  "exported_events": 33,
+  "exported_events": 35,
   "kinds": [
     "http",
     "session",
+    "system",
     "user"
   ],
   "actions": [
@@ -24,7 +25,6 @@
     "scan_cancel",
     "scan_start",
     "status",
-    "video_abort",
     "video_emptied",
     "video_ok",
     "video_suspend",
@@ -35,10 +35,10 @@
     "/channels",
     "/ops",
     "/share/start",
-    "/share/stop/jzTV7j-C9sYDcXoHJC0CUwh15GV2S4S4"
+    "/share/stop/rXWruHp9XBsBnI19j0HSvFCz_S3R7wLE"
   ],
   "sessions": [
-    "0810ae3d-50f0-4ab9-af61-ffce510c7441"
+    "1c9344ac-4c50-48b6-8042-567d7c2a91f9"
   ],
   "probe_details_recorded": false,
   "sensitive_url_present": false

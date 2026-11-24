@@ -86,7 +86,7 @@
     <div id="chList"></div>
   </div>
 </div></dialog>
-<dialog id="logsDialog" aria-labelledby="logsDialogTitle"><div class="dialog-head"><h2 id="logsDialogTitle">操作记录</h2><button class="quiet btn btn-ghost" data-close="logsDialog" aria-label="关闭操作记录">关闭</button></div><div class="dialog-body"><div id="logPanel" hidden><div class="ops-toolbar"><label for="opsFilter">显示</label><select id="opsFilter" class="select"><option value="all">全部</option><option value="user">我的操作</option><option value="http">请求</option><option value="session">会话</option></select><label class="ops-full" title="导出文件保留完整地址与凭据，仅保存在本机"><input id="opsFull" type="checkbox" class="checkbox checkbox-sm"> 含完整地址</label><button id="copyLogBtn" class="btn btn-outline">复制记录</button><button id="exportLogBtn" class="btn btn-outline">导出记录</button></div><textarea id="logText" aria-label="操作记录" readonly spellcheck="false" class="textarea"></textarea></div></div></dialog>
+<dialog id="logsDialog" aria-labelledby="logsDialogTitle"><div class="dialog-head"><h2 id="logsDialogTitle">操作记录</h2><button class="quiet btn btn-ghost" data-close="logsDialog" aria-label="关闭操作记录">关闭</button></div><div class="dialog-body"><div id="logPanel" hidden><div class="ops-toolbar"><label for="opsFilter">显示</label><select id="opsFilter" class="select"><option value="all">全部</option><option value="user">我的操作</option><option value="http">请求</option><option value="system">系统</option><option value="session">会话</option></select><label class="ops-full" title="导出文件保留完整地址与凭据，仅保存在本机"><input id="opsFull" type="checkbox" class="checkbox checkbox-sm"> 含完整地址</label><button id="copyLogBtn" class="btn btn-outline">复制记录</button><button id="exportLogBtn" class="btn btn-outline">导出记录</button></div><textarea id="logText" aria-label="操作记录" readonly spellcheck="false" class="textarea"></textarea></div></div></dialog>
 <script src="/hls.min.js"></script>
 <script src="/caption_presenter.js"></script>
 <script src="/playback_guard.js"></script>
@@ -305,6 +305,11 @@
       return `[${time}] http ${event.method} ${event.path} ${event.status} ${event.dur_ms}ms`;
     if (event.kind === 'session')
       return `[${time}] session ${event.event || ''} ${event.engine || ''}`.trim();
+    if (event.kind === 'system') {
+      const extra = [event.detail, event.reason && `reason=${event.reason}`,
+        event.count != null && `count=${event.count}`].filter(Boolean).join(' ');
+      return `[${time}] system ${event.action || ''}${extra ? ': ' + extra : ''}`;
+    }
     return `[${time}] ${event.action || 'event'}: ${event.detail || ''}`;
   }
   let opsTimeline = [];

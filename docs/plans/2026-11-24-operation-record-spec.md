@@ -62,3 +62,10 @@
 - 自动回归覆盖第 3 节；真实旅程导出文件可用 `session_id` 还原动作序列。
 - 用户能按「会话 ID + 时间」定位到对应操作与请求；无敏感值出现在默认视图与默认导出中。
 - 未实现前不宣称可追溯；磁盘保留原值这一取舍写进导出提示与本文档。
+
+## 增补 2026-11-24：后端动作与持久日志（#114）
+
+- 新增 `kind=system` 事件：`channels_loaded`、`channels_failed`、`upload`、`share_start`、`share_stop`、`cloud_config`、`session_ready`、`session_end`（含字幕条数、时长、结束原因）；事件定义见 [操作记录指南](../guides/operation-records.md)。
+- 新增本机详细日志 `logs/webui-YYYYMMDD.log`（RotatingFileHandler，5MB × 5）：此前只有内存环形缓冲与 stdout，Agent 无法事后读取后端细节。
+- 新增 `python -m lisca.ops` 读取入口，支持会话/类型过滤与脱敏；操作记录面板增加「系统」筛选。
+- 代理环境无法解析时回退直连（#115），避免该环境下探测与频道列表整体失效。

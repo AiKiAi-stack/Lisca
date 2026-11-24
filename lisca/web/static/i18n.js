@@ -52,6 +52,7 @@
   "关闭设置": "Close settings",
   "关闭操作记录": "Close operation log",
   "操作记录": "Operation log",
+  "系统": "System",
   "复制记录": "Copy records",
   "导出记录": "Export records",
   "取消检测": "Cancel check",

@@ -77,3 +77,15 @@ test('the record view filters user actions from HTTP requests',()=>{
   assert.match(elements.logText.value,/scan_start: 60 个频道/);
   assert.doesNotMatch(elements.logText.value,/\/channels/);
 });
+
+test('system events are shown and can be filtered alone',()=>{
+  const {context,elements}=setup();
+  vm.runInContext(`opsTimeline = [
+    {kind:'user',action:'scan_start',detail:'60 个频道',ts:'2026-11-24T14:47:57.126Z'},
+    {kind:'system',action:'channels_loaded',count:60,dur_ms:12,ts:'2026-11-24T14:47:56.700Z'}
+  ]`,context);
+  elements.opsFilter.value='system';
+  context.renderOperations();
+  assert.match(elements.logText.value,/system channels_loaded: count=60/);
+  assert.doesNotMatch(elements.logText.value,/scan_start/);
+});

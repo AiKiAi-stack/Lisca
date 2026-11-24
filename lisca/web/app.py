@@ -127,6 +127,18 @@ def _recordable_request(path: str) -> bool:
         and not path.startswith("/api/ops")
 
 
+def _request_session(request: Request) -> str | None:
+    return request.headers.get("X-Lisca-Session-Id") or None
+
+
+def _record_system(action: str, session: str | None = None, **fields) -> None:
+    """Append a backend/system action for agent-side tracing (#114)."""
+    try:
+        _OPS.append({"kind": "system", "session": session, "action": action, **fields})
+    except Exception:  # noqa: BLE001 - 记录失败不能影响请求
+        logger.warning("系统动作写入失败")
+
+
 @app.middleware("http")
 async def record_http_operation(request: Request, call_next):
     record = _recordable_request(request.url.path)
@@ -202,6 +214,22 @@ def _redact_urls_in_text(value: str) -> str:
     return _URL_IN_TEXT.sub(lambda match: _redact_url(match.group(0)), value)
 
 
+def _http_client(**kwargs):
+    """Build an httpx client, ignoring unparseable proxy environment values.
+
+    Some local proxy tools leave bracketed IPv6 entries in NO_PROXY, which this
+    httpx version cannot parse; without a fallback every probe and channel read
+    fails before any request is made (#115)."""
+    import httpx
+
+    try:
+        return httpx.AsyncClient(**kwargs)
+    except httpx.InvalidURL:
+        logger.warning("HTTP 代理环境无法解析，改用直连（忽略环境代理）")
+        kwargs["trust_env"] = False
+        return httpx.AsyncClient(**kwargs)
+
+
 @app.get("/api/cloud")
 def cloud_config():
     try:
@@ -216,20 +244,24 @@ async def update_cloud_config(request: Request):
         data = await request.json()
         if not isinstance(data, dict):
             raise CloudError("配置格式无效")
-        return _CLOUD.update(data)
+        saved = _CLOUD.update(data)
+        _record_system("cloud_config", _request_session(request), saved=True)
+        return saved
     except (ValueError, OSError) as exc:
         message = str(exc) if isinstance(exc, CloudError) else "无法保存云端配置"
         raise HTTPException(400, message) from None
 
 
 @app.delete("/api/cloud")
-def delete_cloud_config():
+def delete_cloud_config(request: Request):
     with _CLOUD_LOCK:
         jobs = list(_CLOUD_JOBS.values())
         _CLOUD_JOBS.clear()
     for job in jobs:
         job["stop"].set()
-    return _CLOUD.clear()
+    cleared = _CLOUD.clear()
+    _record_system("cloud_config", _request_session(request), saved=False)
+    return cleared
 
 
 @app.post("/api/cloud/sessions")
@@ -392,6 +424,8 @@ async def start_share(request: Request):
         share.video_id = share.register_media(url, "video")
         share.audio_id = share.register_media(url, "audio")
         _SHARES[share.token] = share
+        _record_system("share_start", _request_session(request),
+                       url=_redact_url(url)[:200])
     addresses = _lan_ipv4_candidates() or ["127.0.0.1"]
     port = request.url.port or 8002
     urls = [f"http://{ip}:{port}/share/{share.token}" for ip in addresses]
@@ -409,6 +443,7 @@ async def stop_share(token: str, request: Request):
             return {"ok": True}
         _SHARES.pop(token, None)
     await asyncio.to_thread(share.stop)
+    _record_system("share_stop", _request_session(request))
     return {"ok": True}
 
 
@@ -478,6 +513,21 @@ async def share_media(token: str, viewer_id: str, media_id: str, request: Reques
     except Exception as exc:  # noqa: BLE001 - keep pull errors distinct from page parsing
         logger.warning("共享直播媒体拉流失败: %s", _redact_urls_in_text(str(exc)))
         raise HTTPException(status_code=502, detail="媒体拉流失败：请检查来源、网络和访问权限") from None
+
+
+def _install_file_logging(directory=None):
+    """Persist the detailed WebUI log next to the operation records (#114)."""
+    from logging.handlers import RotatingFileHandler
+
+    log_dir = Path(directory) if directory else DATA_DIR / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / f"webui-{time.strftime('%Y%m%d')}.log"
+    handler = RotatingFileHandler(path, maxBytes=5 * 1024 * 1024,
+                                  backupCount=5, encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.getLogger().addHandler(handler)
+    return handler
 
 
 class _ServerLogHandler(logging.Handler):
@@ -585,7 +635,7 @@ async def _proxy_stream(request: Request, stream_url: str,
         headers["Range"] = request.headers["range"]
     # verify=False（ticket-17）：B站 CDN 存在证书过期/异常，httpx 默认校验 TLS 会
     # 代理 500 → 视频黑屏。流媒体代理标准做法（yt-dlp/ffmpeg 均不校验这些 CDN）。
-    client = httpx.AsyncClient(timeout=None, follow_redirects=True, verify=False)
+    client = _http_client(timeout=None, follow_redirects=True, verify=False)
     try:
         req = client.build_request("GET", stream_url, headers=headers)
         upstream = await client.send(req, stream=True)
@@ -672,7 +722,7 @@ async def _fetch_channel_list(url: str) -> str:
     import httpx
 
     headers = {"Referer": "https://www.bilibili.com", "User-Agent": UA}
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True, verify=False) as client:
+    async with _http_client(timeout=20, follow_redirects=True, verify=False) as client:
         resp = await client.get(url, headers=headers)
         resp.raise_for_status()
         return resp.content.decode("utf-8", "replace")
@@ -684,25 +734,40 @@ async def channels_proxy(url: str, request: Request):
 
     浏览器跨域不能直接读 m3u，统一走本地代理（补 UA/Referer）。整体读取有
     总时限，本地文件读取放到工作线程，避免一次慢加载堵住事件循环（#108）。"""
+    session = _request_session(request)
+    source_kind = "file" if os.path.exists(url) else "url"
+    started = time.perf_counter()
     try:
-        if os.path.exists(url):
+        if source_kind == "file":
             text = await asyncio.to_thread(_read_text_file, url)
         else:
             text = await asyncio.wait_for(
                 _fetch_channel_list(url), _CHANNELS_TOTAL_TIMEOUT_SEC)
     except asyncio.TimeoutError:
         logger.warning("频道列表读取超时: %s", _redact_urls_in_text(url)[:120])
+        _record_system("channels_failed", session, source=source_kind, reason="timeout",
+                       dur_ms=round((time.perf_counter() - started) * 1000, 1))
         raise HTTPException(status_code=502, detail="频道列表读取超时：请检查地址与网络") from None
     except Exception as exc:  # noqa: BLE001 - distinguish fetch failures from malformed lists
         logger.warning("频道列表读取失败: %s", _redact_urls_in_text(str(exc)))
+        _record_system("channels_failed", session, source=source_kind, reason="read",
+                       detail=_redact_urls_in_text(str(exc))[:200],
+                       dur_ms=round((time.perf_counter() - started) * 1000, 1))
         raise HTTPException(
             status_code=502,
             detail="频道列表读取失败：请检查地址、网络和访问权限",
         ) from None
     try:
-        return parse_m3u(text)
+        channels = parse_m3u(text)
     except ValueError as exc:
+        _record_system("channels_failed", session, source=source_kind, reason="parse",
+                       detail=str(exc)[:200],
+                       dur_ms=round((time.perf_counter() - started) * 1000, 1))
         raise HTTPException(status_code=422, detail=f"频道列表解析失败：{exc}") from None
+    _record_system("channels_loaded", session, source=source_kind, count=len(channels),
+                   dur_ms=round((time.perf_counter() - started) * 1000, 1),
+                   url=_redact_url(url)[:200])
+    return channels
 
 
 _PROBE_CACHE: dict = {}  # url -> (ts, {ok, latency_ms})，缓存 5 分钟
@@ -726,8 +791,8 @@ async def _probe_once(url: str, request: Request) -> dict:
             raise _ClientGone()
 
     await check_gone()
-    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=3.0),
-                                 follow_redirects=True, verify=False) as client:
+    async with _http_client(timeout=httpx.Timeout(8.0, connect=3.0),
+                            follow_redirects=True, verify=False) as client:
         t0 = time.time()
         async with client.stream("GET", url, headers=headers) as resp:
             head = b""
@@ -864,12 +929,14 @@ def hls_js():
 
 
 @app.post("/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(request: Request, file: UploadFile = File(...)):
     """保存上传的音频/视频文件，返回可被 StreamSource 读取的绝对路径"""
     safe_name = os.path.basename(file.filename or "upload.bin")
     dst = os.path.join(UPLOAD_DIR, safe_name)
     with open(dst, "wb") as f:
         shutil.copyfileobj(file.file, f)
+    _record_system("upload", _request_session(request), name=safe_name,
+                   bytes=os.path.getsize(dst))
     return {"path": os.path.abspath(dst), "name": safe_name}
 
 
@@ -1037,6 +1104,8 @@ async def ws_endpoint(ws: WebSocket):
         translation = None
         translation_clauses = {}
         caption_seen = False
+        caption_total = 0
+        session_started = time.monotonic()
         session_clock_now = active_session_time()
         preparation_started_at = (
             cloud.get("preparation_started_at", session_clock_now)
@@ -1201,7 +1270,7 @@ async def ws_endpoint(ws: WebSocket):
 
         def emit(o) -> None:
             """推送整句累计文本与 ASR final 状态；旧式四元组引擎默认为 final。"""
-            nonlocal caption_seen, caption_recovery_pending
+            nonlocal caption_seen, caption_recovery_pending, caption_total
             if stop.is_set():
                 return
             beg, end, text, words = o[:4]
@@ -1316,6 +1385,8 @@ async def ws_endpoint(ws: WebSocket):
                     message["revision"] = revision
                 if original_mode and is_final:
                     message["commit_reason"] = "final"
+                if is_final and str(text or "").strip():
+                    caption_total += 1
                 put(message)
                 advance_visible_caption(
                     "subtitle", sentence_id, beg + timeline_offset, text)
@@ -1427,6 +1498,9 @@ async def ws_endpoint(ws: WebSocket):
                     raise ValueError("FunASR Vulkan（文件模式）只支持本地媒体文件；直播流请使用实时引擎")
                 put({"type": "status", "message": f"引擎就绪，开始拉流: {_redact_url(real_url)[:100]}"})
                 logger.info("引擎就绪 %s，拉流 %s", engine_name, _redact_url(real_url)[:120])
+                _OPS.append({"kind": "system", "session": ops_session, "action": "session_ready",
+                             "engine": engine_name, "local_media": os.path.isfile(real_url),
+                             "url": _redact_url(real_url)[:200]})
                 # 音频持续送入 ASR；视频元素同时承载 HLS 音轨，并保持在已送入音频的
                 # delay 秒之后播放。这样延迟覆盖整个画面和声音，而非只延迟字幕。
                 ready_sent = False
@@ -1774,7 +1848,12 @@ async def ws_endpoint(ws: WebSocket):
                 if put in _LOG_SINKS:
                     _LOG_SINKS.remove(put)
                 logger.info("会话结束")
-                _OPS.append({"kind": "session", "session": ops_session, "event": "end"})
+                reason = ("error" if worker_failed or overflowed.is_set()
+                          else "cancelled" if stop.is_set()
+                          else "completed" if normal_completion else "unknown")
+                _OPS.append({"kind": "system", "session": ops_session, "action": "session_end",
+                             "reason": reason, "captions": caption_total,
+                             "duration_sec": round(time.monotonic() - session_started, 1)})
                 if worker_failed:
                     terminal_reason = "error"
                 elif overflowed.is_set():
@@ -1916,6 +1995,7 @@ def main():
         logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     root = logging.getLogger()
     root.addHandler(handler)
+    _install_file_logging()
     root.setLevel(logging.INFO)
     # 噪音源压到 WARNING：uvicorn 访问日志 / HTTP 客户端 / dashscope SDK
     for noisy in ("uvicorn.access", "uvicorn.error", "httpx", "dashscope"):
