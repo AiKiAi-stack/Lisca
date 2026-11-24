@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://github.com/AiKiAi-stack/Lisca/actions/workflows/test.yml"><img src="https://github.com/AiKiAi-stack/Lisca/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-363a3f" alt="MIT license"></a>
-  <a href="#status"><img src="https://img.shields.io/badge/status-preview-ed6a3b" alt="Experimental preview"></a>
+  <a href="https://github.com/AiKiAi-stack/Lisca/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/release-v0.2.0-blue" alt="Download 0.2.0"></a>
 </p>
 
 Lisca (LIve Stream CAptions) adds original-language captions to live streams in your browser. Paste a stream URL or choose a channel from a playlist to start watching. Chinese speech produces Chinese captions; English speech produces English captions. You can also open a local video.
@@ -42,14 +42,14 @@ Program source: [PTS News](https://www.youtube.com/watch?v=gnF2NFYjRPE). Both sc
 
 ## Get started
 
-You need 64-bit Python 3.10–3.12 (3.12 recommended) and a DashScope API key for the mainland China region with `fun-asr-realtime` enabled. Cloud mode does not require a local GPU, model downloads or a separate system FFmpeg installation.
+Choose the portable package for your OS and processor on the [0.2.0 download page](https://github.com/AiKiAi-stack/Lisca/releases/tag/v0.2.0) and follow its launch instructions. In Settings, enter a DashScope API key for the mainland China region with `fun-asr-realtime` enabled.
 
-### Install and launch
+### Run from source (64-bit Python 3.10–3.12)
 
-[Download the source ZIP](https://github.com/AiKiAi-stack/Lisca/archive/refs/heads/main.zip) and extract it, or clone:
+[Download the source for this version](https://github.com/AiKiAi-stack/Lisca/archive/refs/tags/v0.2.0.zip) and extract it, or clone:
 
 ```bash
-git clone https://github.com/AiKiAi-stack/Lisca.git
+git clone --branch v0.2.0 https://github.com/AiKiAi-stack/Lisca.git
 cd Lisca
 ```
 
@@ -97,7 +97,9 @@ Launch the server with `python -m lisca --host 0.0.0.0 --port 8002`. Open the ma
 
 ## Status
 
-Lisca is an experimental preview for original-language captions. Cross-language translation is paused. Fixed Chinese and English news inputs have each completed 30 minutes of real-time replay, and startup meets the current preview threshold. Independent acoustic synchronization and caption coverage during speech have not passed validation. Some captions appear too briefly, some intervals have no captions, and recognition errors remain. See the [preview scope](docs/adr/0009-pr89-preview-acceptance-2026-11-04.md) and [test record](docs/plans/2026-11-04-pr89-acceptance-recheck.md).
+Version 0.2.0 captions Chinese and English live streams and local videos in the original language. Captions wait for a sentence ending when possible and split long sentences across pages. At the deadline, confirmed words with timing are ready to display while an unfinished word waits for the recognizer. Cross-language translation is paused.
+
+Some captions can disappear too quickly or leave a gap while someone is speaking. Full validation of long local files and seeks, 30-minute Chinese and English live sessions, and memory growth is still open. Speech coverage and caption timing also await independent verification. [Caption experience tracker](https://github.com/AiKiAi-stack/Lisca/issues/99)
 
 Public streams may be restricted by network, region or account. If you cannot find a reliable source, try a local video or use the [news replay method](docs/research/p0-local-news-2026-11-04.md). For offline whole-file transcription, see the [FunASR Vulkan guide](docs/guides/funasr-vulkan.md).
 
