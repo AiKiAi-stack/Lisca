@@ -1040,10 +1040,11 @@ async def ws_endpoint(ws: WebSocket):
             emitted = False
             now = active_session_time()
             first_caption_wait_expired = (
-                original_mode and not ready_sent
+                not ready_sent and not caption_seen
                 and now >= first_caption_commit_deadline)
             for item in pending_sentences:
-                if now >= item["deadline"] or first_caption_wait_expired:
+                if (now >= item["deadline"]
+                        or (first_caption_wait_expired and not emitted)):
                     preview = item["preview"]
                     if (preview.emitted_chars >= len(preview.previous_text)
                             and not preview.pending_corrections):
@@ -1052,10 +1053,13 @@ async def ws_endpoint(ws: WebSocket):
                     emitted = publish_previews(item, preview.commit_stable()) or emitted
                     if not item.get("deadline_reported"):
                         state = ("no_stable_text" if not had_stable else
+                                 "incomplete_word" if preview.withheld_word_tail else
                                  "missing_timing" if preview.stable_chars > preview.emitted_chars else None)
                         if state:
                             message = ("等待上限已到，尚无稳定字幕；可重试、仅播放或停止"
                                        if state == "no_stable_text" else
+                                       "等待上限已到，末尾完整词语仍不稳定；可重试、仅播放或停止"
+                                       if state == "incomplete_word" else
                                        "稳定字幕缺少可用语音时间；可重试、仅播放或停止")
                             put({"type": "status", "caption_state": state,
                                  "sentence_id": item["id"], "message": message})
@@ -1071,6 +1075,8 @@ async def ws_endpoint(ws: WebSocket):
             beg, end, text, words = o[:4]
             is_final = bool(o[4]) if len(o) > 4 else True
             sentence_id = o[5] if len(o) > 5 else None
+            if original_mode and is_final and text and not re.search(r"\w", text):
+                text = ""
             revision = None
             fingerprint = None
             if original_mode and sentence_id is not None:

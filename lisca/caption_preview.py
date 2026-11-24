@@ -34,7 +34,9 @@ def _splits_word(text, position):
     following = text[position:]
     return ((re.match(r"\w", following)
              and not re.search(r"[\u3400-\u9fff]", text[position - 1:position + 1]))
-            or re.match(r"['’ʼ‐‑‒–—-]\w", following))
+            or re.match(r"['’ʼ‐‑‒–—-]\w", following)
+            or (position == len(text) and re.match(r"\w", text[position - 1:position])
+                and not re.search(r"[\u3400-\u9fff]", text[position - 1:position])))
 
 
 class StableCaptionPreview:
@@ -52,6 +54,7 @@ class StableCaptionPreview:
         self.released = []
         self.pending_corrections = set()
         self._tail_was_revised = False
+        self.withheld_word_tail = False
 
     def observe(self, text: str, words: list | None) -> list[tuple[float, float, str]]:
         """Return stable clauses or bounded word phrases with ASR timing."""
@@ -173,6 +176,7 @@ class StableCaptionPreview:
     def commit_stable(self) -> list[tuple[float, float, str]]:
         """Commit the entire timed stable prefix when the session deadline expires."""
         self.commits = []
+        self.withheld_word_tail = False
         text = self.previous_text
         positions = [match.end() for match in re.finditer(r"\w", text)]
         spoken = _SPOKEN.sub("", text)
@@ -191,6 +195,7 @@ class StableCaptionPreview:
             if finish > self.stable_chars:
                 break
             if _splits_word(text, finish):
+                self.withheld_word_tail = finish == len(text)
                 continue
             if finish > boundary and end > phrase_end:
                 boundary, phrase_end = finish, end

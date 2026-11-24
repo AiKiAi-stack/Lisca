@@ -105,6 +105,28 @@ def test_late_first_playable_sentence_commits_before_the_preparation_budget(
     assert ready_at < 15.0
 
 
+def test_first_caption_budget_does_not_commit_a_later_pending_sentence_early(
+        tmp_path, monkeypatch):
+    # Acceptance: once the first playable sentence is released by the session
+    # cutoff, later sentences keep their own six-second preparation deadline.
+    first = "首个待准备字幕"
+    later = "稍后到达的字幕"
+    later_words = [(left + 2.0, right + 2.0, token)
+                   for left, right, token in _characters(later, 2.0)]
+    events = _session_events(tmp_path, monkeypatch, [
+        (11.0, (0.0, None, first, _characters(first, 2.0), False, 20)),
+        (11.2, (0.0, None, first, _characters(first, 2.0), False, 20)),
+        (12.0, (2.0, None, later, later_words, False, 21)),
+        (12.2, (2.0, None, later, later_words, False, 21)),
+        (14.6, (None, None, "", None)),
+        (16.0, (2.0, 4.0, later + "。", later_words, True, 21)),
+    ])
+
+    commits = [(event["text"], event["commit_reason"]) for event in events
+               if event.get("commit_reason")]
+    assert commits == [(first, "timeout"), (later + "。", "final")]
+
+
 def test_stable_sentence_keeps_closing_quote_and_reports_its_commit_identity(
         tmp_path, monkeypatch):
     # Acceptance: stable sentence punctuation differs from provider finality.
@@ -308,6 +330,29 @@ def test_recovered_caption_preview_clears_the_expired_wait_status(
         next(event for event in events if event.get("caption_state") == "ready"))
 
 
+def test_punctuation_only_final_does_not_clear_caption_recovery(
+        tmp_path, monkeypatch):
+    # Acceptance: punctuation without spoken content is an empty final result;
+    # it cannot make the expired caption wait look recovered.
+    recovered = "画面恢复，字幕完整。"
+    events = _session_events(tmp_path, monkeypatch, [
+        (0.0, (0.0, 1.0, "今天继续关注", _characters("今天继续关注"), False, 13)),
+        (0.2, (0.0, 1.0, "明天继续关注", _characters("明天继续关注"), False, 13)),
+        (6.1, (None, None, "", None)),
+        (6.2, (0.0, 1.0, "。", [], True, 13)),
+        (6.3, (2.0, 4.0, recovered, _characters(recovered), False, 14)),
+        (6.4, (2.0, 4.0, recovered, _characters(recovered), False, 14)),
+        (6.5, (2.0, 4.0, recovered, _characters(recovered), True, 14)),
+    ])
+
+    ready, = [event for event in events if event.get("caption_state") == "ready"]
+    assert ready["sentence_id"] == 14
+    assert any(event["type"] == "caption_remove" and event["sentence_id"] == 13
+               for event in events[:events.index(ready)])
+    assert not any(event["type"] == "subtitle" and event["text"] == "。"
+                   for event in events)
+
+
 @pytest.mark.parametrize("first,second,words,state", [
     ("今天继续关注", "明天继续关注", _characters("明天继续关注"), "no_stable_text"),
     ("今天继续关注", "今天继续关注", None, "missing_timing"),
@@ -413,7 +458,7 @@ def test_eof_does_not_complete_with_an_unconfirmed_correction_to_a_released_sent
 def test_timeout_holds_an_english_word_until_all_of_its_fragments_are_stable(
         tmp_path, monkeypatch):
     # Acceptance: recognizer fragments inside one spelling are not word boundaries.
-    # Keep the incomplete tail pending, then release it without dropping its space.
+    # Keep an undelimited final word pending until the provider final settles it.
     text = "Please watch international coverage"
     words = [(0.0, 0.5, "Please"), (0.5, 1.0, "watch"),
              (1.0, 1.5, "inter"), (1.5, 2.0, "national"), (2.0, 2.5, "coverage")]
@@ -426,10 +471,42 @@ def test_timeout_holds_an_english_word_until_all_of_its_fragments_are_stable(
     ])
 
     previews = [event for event in events if event["type"] == "preview"]
-    assert [event["text"] for event in previews] == ["Please watch ", "international coverage"]
-    assert [(event["beg"], event["end"]) for event in previews] == [(0.0, 1.0), (1.0, 2.5)]
+    assert [event["text"] for event in previews] == ["Please watch ", "international "]
+    assert [(event["beg"], event["end"]) for event in previews] == [(0.0, 1.0), (1.0, 2.0)]
     assert all(event["source_text"] == text for event in previews)
-    assert [(event["source_start"], event["source_end"]) for event in previews] == [(0, 13), (13, 35)]
+    assert [(event["source_start"], event["source_end"]) for event in previews] == [(0, 13), (13, 27)]
+    assert any(event["type"] == "status" and event.get("caption_state") == "ready"
+               for event in events)
+    assert any(event["type"] == "subtitle" and event["text"] == text + "."
+               and event["is_final"] for event in events)
+
+
+def test_timeout_does_not_publish_a_trailing_english_fragment_before_extension(
+        tmp_path, monkeypatch):
+    # Acceptance: an unfinished lexical tail has no reliable terminal-word
+    # evidence at the deadline. Keep it pending until a later callback settles it.
+    prefix = "Please watch national coverage and inter"
+    completed = "Please watch national coverage and international"
+    words = [(0.0, 0.5, "Please"), (0.5, 1.0, "watch"),
+             (1.0, 1.5, "national"), (1.5, 2.0, "coverage"),
+             (2.0, 2.5, "and"), (2.5, 3.0, "international")]
+    events = _session_events(tmp_path, monkeypatch, [
+        (0.0, (0.0, 3.0, prefix, words[:5] + [(2.5, 3.0, "inter")], False, 18)),
+        (0.2, (0.0, 3.0, prefix, words[:5] + [(2.5, 3.0, "inter")], False, 18)),
+        (6.1, (None, None, "", None)),
+        (6.4, (0.0, 3.0, completed, words, False, 18)),
+        (6.5, (0.0, 3.0, completed, words, False, 18)),
+        (6.8, (0.0, 3.0, completed + ".", words, True, 18)),
+    ])
+
+    previews = [event for event in events if event["type"] == "preview"]
+    assert previews[0]["text"] == "Please watch national coverage and "
+    assert previews[0]["end"] == 2.5
+    assert all(not event["text"].endswith("inter") for event in previews)
+    assert any(event["type"] == "subtitle" and event["text"] == completed
+               and not event["is_final"] for event in events)
+    assert any(event["type"] == "subtitle" and event["text"] == completed + "."
+               and event["is_final"] for event in events)
 
 
 def test_ready_sentence_does_not_report_missing_stable_text_at_the_deadline(
