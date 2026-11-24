@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 from datetime import datetime, timezone
+from functools import partial
 import hashlib
 import json
 from pathlib import Path
@@ -250,9 +251,18 @@ async def run(path, label, output_path, server_url):
     finally:
         if ticket and ticket.get("session"):
             try:
-                with urlopen(Request(server_url + "/api/cloud/sessions/" + ticket["session"],
-                                     method="DELETE"), timeout=20):
-                    pass
+                # Keep cleanup off the event loop and outside asyncio.run's cancelled tasks.
+                request = Request(server_url + "/api/cloud/sessions/" + ticket["session"],
+                                  method="DELETE")
+                cleanup = asyncio.get_running_loop().run_in_executor(
+                    None, partial(urlopen, request, timeout=20))
+                try:
+                    response = await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    status, completion_signal, completion_reason = "cancelled", "cancelled", "cancelled"
+                    errors.append({"type": "cancelled", "message": "Recording cancelled by operator"})
+                    response = await cleanup
+                response.close()
             except Exception as exc:
                 errors.append({"type": "cleanup_error", "message": str(exc)})
                 status = "failed"

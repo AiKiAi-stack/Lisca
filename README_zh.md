@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://github.com/AiKiAi-stack/Lisca/actions/workflows/test.yml"><img src="https://github.com/AiKiAi-stack/Lisca/actions/workflows/test.yml/badge.svg" alt="自动测试"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-363a3f" alt="MIT 许可证"></a>
-  <a href="#当前状态"><img src="https://img.shields.io/badge/status-preview-ed6a3b" alt="实验预览版"></a>
+  <a href="https://github.com/AiKiAi-stack/Lisca/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/release-v0.2.0-blue" alt="下载 0.2.0"></a>
 </p>
 
 Lisca（LIve Stream CAptions）为浏览器中的直播生成原文字幕。粘贴直播地址，或从频道清单中选台，就能边看边读：中文语音出中文字幕，英文语音出英文字幕。也支持打开本地视频。
@@ -42,14 +42,14 @@ Lisca（LIve Stream CAptions）为浏览器中的直播生成原文字幕。粘�
 
 ## 开始使用
 
-需要 64 位 Python 3.10–3.12（推荐 3.12），以及已开通 `fun-asr-realtime` 的百炼中国内地 API Key。云端模式不需要本地 GPU，也不用下载模型或单独安装系统 FFmpeg。
+从 [0.2.0 下载页](https://github.com/AiKiAi-stack/Lisca/releases/tag/v0.2.0) 选择与你的系统和处理器匹配的便携包，按页面说明启动。在设置中填写已开通 `fun-asr-realtime` 的百炼中国内地 API Key。
 
-### 安装与启动
+### 从源码启动（64 位 Python 3.10–3.12）
 
-[下载源码 ZIP](https://github.com/AiKiAi-stack/Lisca/archive/refs/heads/main.zip) 并解压，或克隆：
+[下载此版本源码](https://github.com/AiKiAi-stack/Lisca/archive/refs/tags/v0.2.0.zip) 并解压，或克隆：
 
 ```bash
-git clone https://github.com/AiKiAi-stack/Lisca.git
+git clone --branch v0.2.0 https://github.com/AiKiAi-stack/Lisca.git
 cd Lisca
 ```
 
@@ -97,7 +97,9 @@ python -m lisca --host 127.0.0.1 --port 8002
 
 ## 当前状态
 
-Lisca 目前是原文字幕的实验预览版，跨语言翻译暂停。中英文固定新闻源各完成了 30 分钟实时回放，启动耗时达到当前预览门槛。独立声学同步和有声片段的字幕覆盖仍未验证通过；部分字幕停留过短，有些时段没有字幕，识别也仍有错误。详见[预览范围](docs/adr/0009-pr89-preview-acceptance-2026-11-04.md)与[实际测试记录](docs/plans/2026-11-04-pr89-acceptance-recheck.md)。
+0.2.0 支持中英文直播和本地视频的原文字幕。字幕优先等到句末，长句自然分页；等待到期就显示已有时间信息的稳定文字，保留尚未识别完整的词尾。跨语言翻译暂停。
+
+有些字幕仍会一闪而过，或在有人说话时迟迟没有出现。当前版本的长片播放与回看、中英文各 30 分钟直播的连续性和内存增长仍待完整验证。独立有声覆盖率和音画字幕同步精度也待验证。[字幕体验跟踪](https://github.com/AiKiAi-stack/Lisca/issues/99)
 
 公共直播源可能受到网络、地区或账号限制。找不到稳定来源时，可先用本地视频，或参考[新闻模拟直播方法](docs/research/p0-local-news-2026-11-04.md)。本地离线整段转写另见 [FunASR Vulkan 指南](docs/guides/funasr-vulkan.md)。
 

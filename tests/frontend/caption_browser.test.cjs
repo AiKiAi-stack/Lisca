@@ -6,7 +6,8 @@ function browser({playerWidth=260,fontSize=30,cssMaxWidth='90%'}={}){
  const element=()=>({textContent:'',hidden:true,dataset:{},classList:{contains:()=>false},style:{},remove(){}});
  const current=element(), late=element();
  current.style.fontSize=`${fontSize}px`;const playerWrap={clientWidth:playerWidth};
- const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preserveLiveMedia:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:20000,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontStyle:'normal',fontWeight:'600',fontSize:element.style.fontSize||'30px',fontFamily:'Arial, sans-serif',letterSpacing:'normal',maxWidth:element.style.maxWidth||cssMaxWidth,paddingLeft:'10px',paddingRight:'10px',borderLeftWidth:'0px',borderRightWidth:'0px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
+ const context={player:{currentTime:10,paused:false,pause(){this.paused=true;}},activeInput:'test.mp4',sharedViewerActive:false,cloudPlayback:true,originalCaptionsComplete:false,cloudResumeRequired:false,pauseStartedAt:null,preservePlayback:false,ws:{readyState:1},holdingForSync:false,setStatus(){},connect(...args){context.reconnected=args;},currentEl:current,subEnabled:true,playStarted:true,translatedSession:false,captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:20000,subs:[],previewSubs:[],seekPending:false,bilingualEl:{checked:false},historyItems:[],document:{getElementById:id=>id==='lateCaption'?late:id==='playerWrap'?playerWrap:null},getComputedStyle:element=>({fontStyle:'normal',fontWeight:'600',fontSize:element.style.fontSize||'30px',fontFamily:'Arial, sans-serif',letterSpacing:'normal',maxWidth:element.style.maxWidth||cssMaxWidth,paddingLeft:'10px',paddingRight:'10px',borderLeftWidth:'0px',borderRightWidth:'0px'}),fitCaptionWidth(){},logEvent(){},appendHistory:element,updateHistory(){},captionSegments:s=>[s],performance:{now:()=>context.now},now:0};
+ context.originalCaptionMode=false;
  const moduleFile=path.join(__dirname,'../../lisca/web/static/caption_presenter.js');
  if(fs.existsSync(moduleFile)){const module=require(moduleFile);context.CaptionPresenter=module.CaptionPresenter;context.CaptionLayout=module.CaptionLayout;context.lines=()=>[];context.captionPresenter=new context.CaptionPresenter();}
  vm.createContext(uiContext(context));
@@ -38,7 +39,7 @@ function shareHistoryViewer(){
    ['shareHistoryNotice',{hidden:true,textContent:''}]]);
  c.generation=4;c.connectionGeneration=4;c.terminalReceived=false;c.recognitionOnlyStopped=false;
  c.audioClockPts=null;c.timelineMapped=false;c.queuedMediaMessages=[];c.mediaOffset=0;
- c.sharedViewerActive=true;c.preserveLiveMedia=false;c.originalCaptionMode=false;c.uiPaused=false;
+ c.sharedViewerActive=true;c.preservePlayback=false;c.originalCaptionMode=false;c.uiPaused=false;
  c.holdingForBuffer=false;c.holdingForSync=false;c.playStarted=false;c.captionHasSpeech=false;
  c.activeInput='';c.currentEl.classList={contains:name=>classes.has(name),add:name=>classes.add(name),remove:name=>classes.delete(name)};
  c.player={currentTime:1,paused:false,ended:false,playCalls:0,play(){this.playCalls++;return Promise.resolve();}};
@@ -59,10 +60,10 @@ function lateHlsClockViewer(){
  const b=shareHistoryViewer(),c=b.context,html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
  const {RecoveryController}=require('../../lisca/web/static/recovery_controller.js');
  Object.assign(c,{generation:9,connectionGeneration:9,terminalReceived:false,recognitionOnlyStopped:false,
-   preserveLiveMedia:true,originalCaptionMode:true,sharedViewerActive:false,isHls:true,
+   preservePlayback:true,originalCaptionMode:true,sharedViewerActive:false,isHls:true,
    audioClockPts:null,videoClockPts:null,hlsVideoClockPts:null,timelineMapped:false,mediaOffset:0,
    queuedMediaMessages:[],captionRevisions:new Map(),MAX_RETAINED_CAPTIONS:1000,
-   captionHasSpeech:false,originalCaptionsComplete:false,playbackLimit:null,
+   captionHasSpeech:false,originalCaptionsComplete:false,playbackLimit:null,playStarted:true,
    playbackGuard:{live:true,degraded:false,done:false,captionProgress(){},removeCaption(){}},
    recoveryController:new RecoveryController(),stallWatchdog(){},markSessionRecoveryProgress(){},
    syncPlaybackToBuffer(){},useCaptionBuffer:true,aligningInitialPlayback:false,
@@ -76,14 +77,11 @@ function lateHlsClockViewer(){
  c.flushCurrentMediaClock=c.flushMediaClock;
  c.activeMediaClockFlush=c.flushCurrentMediaClock;
  const offsetStart=html.indexOf('  function offsetMediaMessage(msg, offset) {');
- const offsetEnd=html.indexOf('\n\n  function shouldPreserveLiveMedia',offsetStart);
+ const offsetEnd=html.indexOf('\n\n  function shouldPreservePlayback',offsetStart);
  vm.runInContext(html.slice(offsetStart,offsetEnd),c);
  const identityStart=html.indexOf('  function scopeSessionCaptionIdentity(');
  const identityEnd=html.indexOf('\n\n  async function connect(',identityStart);
  vm.runInContext(html.slice(identityStart,identityEnd),c);
- const receiveStart=html.indexOf('    function receiveMessage(input) {');
- const receiveEnd=html.indexOf('    ws.onmessage = ',receiveStart);
- vm.runInContext(html.slice(receiveStart,receiveEnd),c);
  return {context:c,current:b.current};
 }
 function socketRecoveryBrowser(eventName,status='scheduled'){
@@ -131,7 +129,7 @@ function endedSession(reason){
  const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
  const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:true}]]);
  const {RecoveryController}=require('../../lisca/web/static/recovery_controller.js');
- const c={generation:1,connectionGeneration:1,preserveLiveMedia:false,RecoveryController,
+ const c={generation:1,connectionGeneration:1,preservePlayback:false,RecoveryController,
    recoveryController:new RecoveryController(),recognitionOnlyStopped:false,audioClockPts:null,
    timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:msg=>msg,
    playbackGuard:{done:false},document:{getElementById:id=>elements.get(id)},
@@ -149,7 +147,7 @@ function terminalCloseSession(reason,{awaitingTimeline=false}={}){
  const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
  const elements=new Map([['captionActions',{hidden:false}],['retryCaptions',{hidden:false}]]);
  const recoveries=[];
- const c={generation:1,connectionGeneration:1,preserveLiveMedia:false,terminalReceived:false,recognitionOnlyStopped:false,
+ const c={generation:1,connectionGeneration:1,preservePlayback:false,terminalReceived:false,recognitionOnlyStopped:false,
    audioClockPts:awaitingTimeline?0:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,offsetMediaMessage:msg=>msg,
    playbackGuard:{done:false},document:{getElementById:id=>elements.get(id)},
    originalCaptionMode:true,isHls:false,currentEl:{classList:{contains:()=>false}},
@@ -266,7 +264,7 @@ test('server caption capacity errors retain existing captions and continue in on
  const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
  const row={sentenceId:'old',text:'已有终稿。'},preview={sentenceId:'draft',text:'已有预览。'};
  const actions={hidden:false};let resets=0;
- const c={generation:1,connectionGeneration:1,preserveLiveMedia:false,recognitionOnlyStopped:false,sharedViewerActive:false,
+ const c={generation:1,connectionGeneration:1,preservePlayback:false,recognitionOnlyStopped:false,sharedViewerActive:false,
    originalCaptionMode:true,audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,
    recoveredRevisionOffsets:null,
    recoveryController:{cancel(){}},cancelPendingLocalSeek(){},pendingSeekOrigin:null,restoringSeek:null,
@@ -341,6 +339,107 @@ test('stable previews paginate with speech word times rather than text-length ti
    assert.equal(b.current.textContent,segment.text);
  }
 });
+test('timeout ranges retain an incomplete Chinese tail and join its next commit without replay',()=>{
+ const b=browser({playerWidth:1216}),c=b.context;
+ const source='我们关注发展趋势。';
+ const words=Array.from(source,(char,i)=>[i*.2,(i+1)*.2,char]);
+ c.player.currentTime=.3;
+ const first=b.preview({sentence_id:'tail',commit_id:1,revision:1,commit_reason:'timeout',
+  source_text:source,source_start:0,source_end:5,text:'我们关注发',beg:0,end:1,words:words.slice(0,5)});
+ assert.equal(first.text,'我们关注');
+ assert.equal(first.end,.8);
+ const held=b.current.textContent;
+ const next=b.preview({sentence_id:'tail',commit_id:2,revision:2,commit_reason:'sentence_end',
+  source_text:source,source_start:5,source_end:9,text:'展趋势。',beg:1,end:1.8,words:words.slice(5)});
+ assert.equal(next.text,source);
+ assert.equal(b.current.textContent,held);
+ c.player.currentTime=1.1;b.tick(0);
+ assert.equal(b.current.textContent.replace(/\s/gu,''),'发展趋势。');
+ const pages=c.captionSegments(next);
+ assert.equal(pages.map(page=>page.text).join('').replace(/\s/gu,''),source);
+ assert.deepEqual(Array.from(pages,page=>[page.beg,page.end]),[[0,.8],[.8,1.8]]);
+});
+test('a timeout keeps complete stable words visible without another callback',()=>{
+ for(const source of ['Hello','发展','Hello.','发展。']) {
+  const b=browser({playerWidth:1216}),c=b.context;
+  const text=source.replace(/[.。]$/u,'');
+  c.player.currentTime=.5;
+  const visible=b.preview({sentence_id:'one-word',commit_id:1,revision:1,commit_reason:'timeout',
+   source_text:source,source_start:0,source_end:Array.from(text).length,text,beg:0,end:2,
+   words:[[0,2,text]]});
+  assert.equal(visible?.text,text,source);
+  b.tick(1200);
+  assert.equal(b.current.textContent,text,source);
+ }
+});
+test('a withdrawn preview fragment does not strand later revised speech',()=>{
+ for(const [replacement,gap] of [['，', 'punctuation'],['某，', 'spoken']]){
+  const b=browser({playerWidth:1216}),c=b.context;
+  const prefix='甲乙、丙丁';
+  const oldSource=`${prefix}，像`;
+  const newSource=`${prefix}${replacement}戊己`;
+  const revisedStart=Array.from(`${prefix}${replacement}`).length;
+  const words=source=>Array.from(source,(char,index)=>[index,index+1,char]);
+  const preview=(commitId,revision,source,start,end)=>b.preview({
+   sentence_id:'revised-gap',commit_id:commitId,revision,commit_reason:'timeout',
+   source_text:source,source_start:start,source_end:end,
+   text:Array.from(source).slice(start,end).join(''),beg:start,end,
+   words:words(source).slice(start,end),
+  });
+  preview(0,1,prefix,0,2);
+  preview(1,2,oldSource,2,5);
+  preview(2,3,oldSource,5,7);
+  c.player.currentTime=revisedStart+.5;
+  const cue=preview(3,4,newSource,revisedStart,revisedStart+2);
+  assert.ok(cue.text.includes('戊己'),`${gap}: ${JSON.stringify(cue.text)}`);
+  assert.match(b.current.textContent,/戊己/);
+  assert.equal(c.captionSegments(cue).map(page=>page.text).join('').replace(/\s/gu,''),
+   gap==='punctuation'?newSource:'戊己');
+ }
+});
+test('an older timeout context cannot replace a newer sentence correction',()=>{
+ const b=browser({playerWidth:1216}),c=b.context;c.player.currentTime=.1;
+ const update=(revision,source,commitId,start,end)=>b.preview({sentence_id:'revised-tail',
+  commit_id:commitId,revision,commit_reason:'timeout',source_text:source,source_start:start,source_end:end,
+  text:Array.from(source).slice(start,end).join(''),beg:start*.2,end:end*.2,
+  words:Array.from(source).slice(start,end).map((char,i)=>[(start+i)*.2,(start+i+1)*.2,char])});
+ update(1,'我们关注发展。',1,0,4);
+ const corrected=update(3,'我们关心发展。',1,0,4);
+ assert.equal(corrected.text,'我们关心');
+ update(2,'我们关注发展。',2,4,7);
+ assert.equal(corrected.text,'我们关心');
+ update(4,'我们关心发展。',2,4,7);
+ assert.equal(corrected.text,'我们关心发展。');
+});
+test('an empty preview revision retracts its commit and rejects its older duplicate',()=>{
+ const b=browser({playerWidth:1216}),c=b.context;c.player.currentTime=.5;
+ const first={sentence_id:'removed-commit',commit_id:1,revision:1,commit_reason:'timeout',
+  source_text:'我们关注',source_start:0,source_end:4,text:'我们关注',beg:0,end:2,words:[[0,2,'我们关注']]};
+ b.preview(first);
+ assert.ok(b.current.textContent);
+ assert.equal(b.preview({...first,revision:3,source_end:0,text:'',words:[]}),null);
+ assert.equal(b.current.textContent,'');
+ assert.equal(b.preview(first),null);
+ assert.equal(b.current.textContent,'');
+});
+test('long cumulative preview delivery retains linear data while displaying every committed word',t=>{
+ const observe=count=>{
+  const b=browser({playerWidth:1216}),c=b.context;c.player.currentTime=.1;
+  let cue;
+  for(let i=1;i<=count;i++)cue=b.preview({sentence_id:'long',commit_id:i,revision:i,
+   source_text:'readable '.repeat(i),source_start:(i-1)*9,source_end:i*9,text:'readable ',
+   beg:i-1,end:i,words:[[i-1,i,'readable']]});
+  const visible=[];
+  for(const page of c.captionSegments(cue)){
+   c.player.currentTime=(page.beg+page.end)/2;b.tick(0);visible.push(b.current.textContent);
+  }
+  assert.equal(visible.join('').replace(/\s/gu,''),'readable'.repeat(count));
+  return Buffer.byteLength(JSON.stringify(cue));
+ };
+ const small=observe(64),large=observe(128);
+ t.diagnostic(`retained preview bytes: 64 commits=${small}, 128 commits=${large}`);
+ assert.ok(large<small*2.5,`retained preview bytes grew from ${small} to ${large}`);
+});
 test('a final revision does not replace an already visible preview for its last 100ms',()=>{
  const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
  c.player.currentTime=.5;
@@ -352,6 +451,56 @@ test('a final revision does not replace an already visible preview for its last 
  assert.equal(b.current.textContent,'We are ready.');
  c.player.currentTime=3.1;b.tick(0);
  assert.equal(b.current.textContent,'Next words.');
+});
+test('a final arriving before the preview is visible repaginates the complete 女尸 word',()=>{
+ const text='广州女大学生登山失联4天，警方找到疑似女尸。';
+ const words=[[.76,1.36,'广州'],[1.36,1.64,'女'],[1.64,2.68,'大学生'],[2.68,4.12,'登山'],
+  [4.24,4.52,'失'],[4.52,5.12,'联'],[5.2,5.56,'4'],[5.56,5.92,'天'],[6.44,7.2,'警'],
+  [7.2,7.426,'方'],[7.426,7.653,'找'],[7.653,7.88,'到'],[7.88,8.44,'疑似'],[8.44,8.76,'女'],[8.76,9.16,'尸']];
+ for(const reading of [false,true]){
+  const b=browser({playerWidth:reading?288:1216,cssMaxWidth:'24em'}),c=b.context;
+  c.player.currentTime=reading?1:0;c.player.paused=!reading;c.playStarted=reading;
+  b.preview({sentence_id:1,commit_id:0,revision:11,source_text:text.slice(0,-1),
+   source_start:0,source_end:20,beg:.6,end:8.76,text:text.slice(0,-2),words:words.slice(0,-1)});
+  const active=b.current.textContent;
+  b.push({translated:false,sentence_id:1,revision:12,beg:.76,end:9.16,text,words});
+  if(reading)assert.equal(b.current.textContent,active,'the already visible first page stays stable');
+  c.playStarted=true;c.player.paused=false;c.player.currentTime=8.9;b.tick(0);
+  assert.ok(b.current.textContent.split('\n').some(row=>row.includes('女尸')),b.current.textContent);
+  assert.notEqual(b.current.textContent,'尸。');
+  const pages=c.captionSegments(c.subs[0]);
+  assert.equal(pages.map(p=>p.text).join('').replace(/\s/gu,''),text);
+ }
+});
+test('a final arriving after a preview page ended continues past the consumed words',()=>{
+ const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
+ c.player.currentTime=.5;
+ b.preview({sentence_id:7,beg:0,end:3,text:'We are ready.',words:[[0,1,'We'],[1,2,'are'],[2,3,'ready.']]});
+ c.player.currentTime=3.1;b.tick(0);assert.equal(b.current.textContent,'');
+ b.push({translated:false,sentence_id:7,beg:0,end:5,text:'We are already ready. Next words.',
+  words:[[0,1,'We'],[1,1.5,'are'],[1.5,2.5,'already'],[2.5,3,'ready.'],[3,3.5,'Next'],[3.5,5,'words.']]});
+ assert.equal(b.current.textContent,'Next words.');
+});
+for(const capture of require('./fixtures/en-long-continuity-captured.json').cases)
+test(`captured English live sentence ${capture.sentence_id} presents every passage once as previews grow`,t=>{
+ const normalize=text=>text.replace(/\s+/gu,' ').trim();
+  const b=browser({playerWidth:1216,cssMaxWidth:'24em'}),c=b.context;
+  const visible=[];let eventIndex=0,previous='';
+  for(const [afterMs,mediaTime] of capture.samples){
+   while(eventIndex<capture.events.length&&capture.events[eventIndex].observed_after_ms<=afterMs){
+    const message=capture.events[eventIndex++];
+    if(message.type==='preview')b.preview(message);
+    else b.push({...message,translated:false});
+   }
+   c.player.currentTime=mediaTime;b.tick(afterMs);
+   const text=normalize(b.current.textContent);
+   if(text&&text!==previous&&afterMs>=8251)visible.push(text);
+   previous=text;
+  }
+  const text=visible.join(' ');
+  t.diagnostic(`sentence ${capture.sentence_id}: ${text}`);
+  assert.equal(text,normalize(capture.events.find(message=>message.is_final).text));
+  if(capture.sentence_id===97)assert.equal(text.split('Thank you for having us.').length-1,2);
 });
 test('real final handoffs keep only table and 阶段 after their held previews',()=>{
  const fixtures=[{
@@ -414,6 +563,16 @@ test('word-timed original pages retain quotes, punctuation, and symbols outside 
  const words=Array.from(text.matchAll(/[\p{L}\p{N}]+/gu),(match,index)=>[index*.2,index*.2+.15,match[0]]);
  const segments=b.context.captionSegments({beg:0,end:10,text,words});
  assertOriginalPages(b,segments,text);
+});
+test('the original-caption entry point keeps decimal model names and quantities complete',()=>{
+ const b=browser({playerWidth:260,fontSize:30});
+ const text="今天达到25℃，OpenAI's GPT-4.1达到3.5kg。";
+ const words=Array.from(text,(char,i)=>[i*.2,(i+1)*.2,char]);
+ const segments=b.context.captionSegments({beg:0,end:words.at(-1)[1],text,words});
+ assertOriginalPages(b,segments,text);
+ for(const unit of ['25℃',"OpenAI's",'GPT-4.1','3.5kg'])
+  assert.ok(segments.some(page=>page.text.split('\n').some(row=>row.includes(unit))),
+   `${unit}: ${JSON.stringify(segments)}`);
 });
 test('stable caption pages are cached and resize changes the layout key',()=>{
  const b=browser({playerWidth:260,fontSize:30});
@@ -495,11 +654,37 @@ test('an anonymous caption is not blocked by another sentence retraction',()=>{c
 test('captions without a revision retain the legacy client behavior',()=>{const b=browser(),id='legacy-id';b.context.onSubtitle({sentence_id:id,beg:1,end:2,is_final:true,translated:false,text:'旧服务字幕。'});b.context.subs=[];b.context.captionPresenter.remove(id,0);b.context.onSubtitle({sentence_id:id,beg:1,end:2,is_final:true,translated:false,text:'旧服务后续字幕。'});assert.equal(b.context.subs.length,1);assert.equal(b.context.subs[0].text,'旧服务后续字幕。');});
 
 test('a cloud disconnect during local pause preserves the caption and reconnects at the same position on play',()=>{const b=browser();b.push({});vm.runInContext('uiPaused=true',b.context);assert.equal(b.context.holdCaptionForCloudReconnect(),true);assert.match(b.current.textContent,/这句译文/);assert.equal(b.context.resumeClosedCloudAfterPause(),true);assert.deepEqual(Array.from(b.context.reconnected).slice(0,3),['test.mp4',null,10]);assert.equal(b.context.reconnected[3].automaticRecovery,true);assert.equal(b.context.cloudResumeRequired,false);assert.equal(b.context.resumeClosedCloudAfterPause(),false);});
+test('resuming a disconnected original-caption session keeps the local player running',()=>{
+ const {context:c}=browser();
+ Object.assign(c,{uiPaused:true,originalCaptionMode:true,translatedSession:false,cloudResumeRequired:true});
+ assert.equal(c.resumeClosedCloudAfterPause(),false);
+ assert.equal(c.playStarted,true);
+ assert.equal(c.player.paused,false);
+ assert.equal(c.cloudResumeRequired,false);
+ assert.deepEqual(Array.from(c.reconnected).slice(0,3),['test.mp4',null,10]);
+ assert.equal(c.reconnected[3].automaticRecovery,true);
+});
+
+test('resuming the same original file preserves playback when the old socket never reported closure',()=>{
+ for(const {now,readyState} of [{now:16000,readyState:1},{now:3000,readyState:3}]){
+   const session=playBrowser({position:22,pauseStartedAt:0,now,readyState});
+   const c=session.context;
+   c.originalCaptionMode=true;
+   vm.runInContext('uiPaused=true',c);
+   session.play();
+   assert.equal(c.player.paused,false);
+   assert.equal(vm.runInContext('uiPaused',c),false);
+   assert.equal(c.playStarted,true);
+   assert.deepEqual(Array.from(c.reconnected).slice(0,3),['local.mp4',null,22]);
+   assert.equal(c.reconnected[3].automaticRecovery,true);
+ }
+});
+
 test('cloud failures during normal playback remain visible errors rather than silent reconnect loops',()=>{const b=browser();assert.equal(b.context.holdCaptionForCloudReconnect(),false);assert.equal(b.context.cloudResumeRequired,false);});
 
 test('a recovered ASR session reusing a sentence ID preserves both generations of transcript history',()=>{
  const b=browser(),c=b.context,html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
- Object.assign(c,{generation:2,connectionGeneration:2,preserveLiveMedia:true,recognitionOnlyStopped:false,
+ Object.assign(c,{generation:2,connectionGeneration:2,preservePlayback:true,recognitionOnlyStopped:false,
    audioClockPts:null,videoClockPts:null,hlsVideoClockPts:null,timelineMapped:false,queuedMediaMessages:[],mediaOffset:0,
    originalCaptionMode:true,captionHasSpeech:true,playStarted:true,holdingForBuffer:false,
    syncSubtitle(){},markSessionRecoveryProgress(){},
@@ -570,21 +755,25 @@ test('the preserved HLS INIT_PTS callback drains a queued terminal end without a
  assert.equal(c.terminalReceived,true);
 });
 
-test('only automatic original-caption recovery on an active live HLS source preserves the media player',()=>{
+test('automatic original-caption recovery preserves an active HLS player or the same local file',()=>{
  const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
- const start=html.indexOf('  function shouldPreserveLiveMedia(');
+ const start=html.indexOf('  function shouldPreservePlayback(');
  const end=html.indexOf('\n\n  async function connect(',start);
  const c={};vm.createContext(uiContext(c));vm.runInContext(html.slice(start,end),c);
  const source={};
- assert.equal(c.shouldPreserveLiveMedia({automaticRecovery:true,live:true,originalCaptionMode:true,
+ assert.equal(c.shouldPreservePlayback({automaticRecovery:true,live:true,originalCaptionMode:true,
    sharedViewerActive:false,hlsPlayer:source}),true);
+ assert.equal(c.shouldPreservePlayback({automaticRecovery:true,live:false,originalCaptionMode:true,
+   sharedViewerActive:false,sameLocalFile:true}),true);
  for(const changed of [
+   {automaticRecovery:false,live:false,originalCaptionMode:true,sameLocalFile:true},
+   {automaticRecovery:true,live:false,originalCaptionMode:true,sharedViewerActive:true,sameLocalFile:true},
    {automaticRecovery:false,live:true,originalCaptionMode:true,sharedViewerActive:false,hlsPlayer:source},
    {automaticRecovery:true,live:false,originalCaptionMode:true,sharedViewerActive:false,hlsPlayer:source},
    {automaticRecovery:true,live:true,originalCaptionMode:false,sharedViewerActive:false,hlsPlayer:source},
    {automaticRecovery:true,live:true,originalCaptionMode:true,sharedViewerActive:true,hlsPlayer:source},
    {automaticRecovery:true,live:true,originalCaptionMode:true,sharedViewerActive:false,hlsPlayer:null},
- ]) assert.equal(c.shouldPreserveLiveMedia(changed),false);
+ ]) assert.equal(c.shouldPreservePlayback(changed),false);
 });
 
 test('a long local pause reconnects before reusing a potentially expired ASR socket',()=>{const b=browser();b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),true);assert.deepEqual(Array.from(b.context.reconnected),['test.mp4',null,10]);});
@@ -594,6 +783,15 @@ test('original captions follow source word times rather than the translated read
 test('completed original captions resume locally without opening another billed session',()=>{const b=browser();b.context.originalCaptionsComplete=true;b.context.pauseStartedAt=0;b.context.now=16000;assert.equal(b.context.resumeClosedCloudAfterPause(),false);assert.equal(b.context.reconnected,undefined);});
 
 function bufferBrowser(){const b=browser(),c=b.context;const {CaptionPlaybackGuard}=require('../../lisca/web/static/playback_guard.js');c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live:true});c.showCaptionRecovery=message=>{c.status=message};Object.assign(c,{sourceBufferingSince:null,useCaptionBuffer:true,originalCaptionMode:true,holdingForBuffer:false,uiPaused:false,playbackLimit:10,urlEl:{value:'https://stream.test/live.m3u8'},setStatus(t){c.status=t},audioEl:{pause(){},play(){return Promise.resolve()}},player:{currentTime:10,paused:false,pause(){this.paused=true},play(){this.paused=false;return Promise.resolve()}}});const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');vm.runInContext(html.slice(html.indexOf('function syncPlaybackToBuffer()'),html.indexOf('// 字幕整句快照')),c);return b;}
+test('preparation expiry offers recovery instead of silently keeping the player held',()=>{
+ const b=bufferBrowser(),c=b.context;
+ c.playStarted=false;c.player.currentTime=0;c.player.paused=true;
+ c.playbackGuard.prepare({now:0,maxWaitMs:15000});
+ c.showRecognitionFailure=message=>{c.failure=message;};
+ c.now=15000;c.syncPlaybackToBuffer();
+ assert.match(c.failure,/准备.*超时/);
+ assert.equal(c.playStarted,false);
+});
 test('live original captions release the playback hold after the two-second failure budget',()=>{const b=bufferBrowser();b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,true);b.context.now=2100;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,false);assert.match(b.context.status,/部分缺失|暂不可用/);b.context.now=2400;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,false);});
 test('a live source starts after the bounded wait even when no first caption or ready event arrives',()=>{const b=bufferBrowser(),c=b.context;c.playStarted=false;c.player.currentTime=0;c.player.paused=true;c.playbackLimit=5;c.playbackGuard.reset({now:0,live:true});c.now=0;c.syncPlaybackToBuffer();assert.equal(c.holdingForBuffer,true);assert.equal(c.player.paused,true);c.now=1999;c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);c.now=2000;c.syncPlaybackToBuffer();assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);assert.match(c.status,/部分缺失|暂不可用/);});
 test('an unfinished local file holds at its caption boundary rather than playing ahead',()=>{const b=bufferBrowser();b.context.urlEl.value='test.mp4';b.context.playbackGuard.live=false;b.context.syncPlaybackToBuffer();assert.equal(b.context.player.paused,true);});
@@ -685,7 +883,7 @@ function recoveryBrowser(){
  const Hls=require('../../lisca/web/static/hls.min.js');
  const {RecoveryController}=require('../../lisca/web/static/recovery_controller.js');
  let now=0,nextId=1;const timers=new Map(),actions=[],recoveryOrder=[];
- const c={recoveries:0,cancellations:0,preserveLiveMedia:false,sharedViewerActive:false,recognitionOnlyStopped:false,
+ const c={recoveries:0,cancellations:0,preservePlayback:false,sharedViewerActive:false,recognitionOnlyStopped:false,
    originalCaptionMode:true,uiPaused:false,activeInput:'https://stream.test/live.m3u8',
    audioClockPts:null,timelineMapped:false,queuedMediaMessages:[],
    connectionGeneration:1,generation:1,playbackLimit:0,playbackGuard:{live:true},player:{currentTime:8},
@@ -838,8 +1036,9 @@ test('late first ready never rewinds an already playing live source, but initial
   {live:true,started:true,preserve:true,expected:40.833},
  ]){
   const {context:c}=lateHlsClockViewer();
-  c.preserveLiveMedia=state.preserve;c.playStarted=state.started;
+  c.preservePlayback=state.preserve;c.playStarted=state.started;
   c.playbackGuard.live=state.live;c.player.currentTime=40.833;
+  c.receiveMessage({type:'preview',sentence_id:'aligned',beg:35.160,end:38,text:'Prepared sentence.'});
   c.receiveMessage({type:'ready',original:true,buffered:true,start_at:35.160});
   assert.equal(c.player.currentTime,state.expected,JSON.stringify(state));
   assert.equal(c.playStarted,true);
@@ -849,6 +1048,7 @@ test('late first ready never rewinds an already playing live source, but initial
 test('draft history cannot claim visible caption coverage or announce ready',()=>{
  const {context:c}=shareHistoryViewer();
  c.originalCaptionMode=true;c.sharedViewerActive=false;c.playStarted=true;c.activeInput='live.m3u8';
+ c.playbackGuard.live=true;
  const covered=[];c.playbackGuard.captionProgress=(...args)=>covered.push(args);
  c.receiveMessage({type:'subtitle',sentence_id:900,revision:1,beg:0,end:4,
    is_final:false,text:'An unfinished hypothesis'});
@@ -862,6 +1062,240 @@ test('draft history cannot claim visible caption coverage or announce ready',()=
  c.receiveMessage({type:'subtitle',sentence_id:900,revision:2,beg:0,end:4,
    is_final:true,text:'A stable clause, with its ending.'});
  assert.equal(covered.length,2);
+});
+
+test('preview messages release playback coverage only through their complete displayed words',()=>{
+ const {context:c,current}=shareHistoryViewer();
+ const {CaptionPlaybackGuard}=require('../../lisca/web/static/playback_guard.js');
+ c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live:false});
+ c.originalCaptionMode=true;c.sharedViewerActive=false;c.activeInput='local.mp4';c.player.currentTime=.1;
+ const source='发展趋势。',words=Array.from(source,(char,i)=>[i*.2,(i+1)*.2,char]);
+ const first={type:'preview',sentence_id:'coverage-tail',commit_id:1,revision:1,commit_reason:'timeout',
+  source_text:source,source_start:0,source_end:1,text:'发',beg:0,end:.2,words:words.slice(0,1)};
+ c.receiveMessage(first);
+ assert.equal(current.textContent,'');
+ assert.equal(c.captionHasSpeech,false);
+ assert.equal(c.playbackGuard.covers(.1),false);
+ c.receiveMessage({...first,revision:2,source_end:3,text:'发展趋',end:.6,words:words.slice(0,3)});
+ assert.equal(current.textContent,'发展');
+ assert.equal(c.playbackGuard.coversRange(0,.4),true);
+ assert.equal(c.playbackGuard.coversRange(0,.6),false);
+ c.receiveMessage({...first,commit_id:2,revision:3,commit_reason:'sentence_end',
+  source_start:3,source_end:5,text:'势。',beg:.6,end:1,words:words.slice(3)});
+ assert.equal(c.playbackGuard.coversRange(0,1),true);
+ c.player.currentTime=.7;c.syncSubtitle();
+ assert.equal(current.textContent.replace(/\s/gu,''),'趋势。');
+});
+
+function preparingMessageBrowser({live=false}={}){
+ const b=shareHistoryViewer(),c=b.context;
+ const {CaptionPlaybackGuard}=require('../../lisca/web/static/playback_guard.js');
+ c.playbackGuard=new CaptionPlaybackGuard();c.playbackGuard.reset({now:0,live});
+ c.playbackGuard.prepare({now:0,maxWaitMs:15000});
+ Object.assign(c,{cloudPlayback:true,originalCaptionMode:true,sharedViewerActive:false,
+  activeInput:live?'https://stream.test/live.m3u8':'local.mp4',isHls:live,
+  sourceBufferingSince:null,useCaptionBuffer:true,playbackLimit:null,uiPaused:false,
+  urlEl:{value:'local.mp4'},now:0,performance:{now:()=>c.now},
+  audioEl:{pause(){}},showRecognitionFailure(message){c.failure=message;},
+  markSessionRecoveryProgress(){},setTimeout(){return 1;},
+  player:{currentTime:0,paused:true,playCalls:0,pause(){this.paused=true;},
+   play(){this.paused=false;this.playCalls++;return Promise.resolve();}}});
+ const html=fs.readFileSync(path.join(__dirname,'../../lisca/web/static/index.html'),'utf8');
+ vm.runInContext(html.slice(html.indexOf('function syncPlaybackToBuffer()'),html.indexOf('// 字幕整句快照')),c);
+ return b;
+}
+
+test('advancing local recognition keeps the session alive without releasing unfinished captions',()=>{
+ const {context:c}=preparingMessageBrowser();
+ c.receiveMessage({type:'subtitle',sentence_id:10,revision:1,is_final:true,beg:54,end:59.76,text:'第一句。'});
+ c.receiveMessage({type:'buffer',play_at:59.76});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+ c.syncPlaybackToBuffer();
+ c.player.currentTime=59.747376;
+ c.now=1000;c.syncPlaybackToBuffer();
+ c.now=3000;c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,false);
+ const draft={type:'subtitle',sentence_id:11,beg:60.2,end:null,is_final:false,text:'可以相互成就',
+  words:[[74.88,75.24,'可以'],[75.24,75.68,'相互'],[75.68,76.24,'成就']]};
+ c.now=14000;c.receiveMessage({...draft,revision:1});
+ c.now=16000;c.syncPlaybackToBuffer();
+ assert.equal(c.failure,undefined);
+ assert.equal(c.playbackGuard.covers(75.5),false);
+ c.now=28000;c.receiveMessage({...draft,revision:2});
+ c.receiveMessage({type:'buffer',play_at:100});
+ c.now=29000;c.syncPlaybackToBuffer();
+ assert.match(c.failure,/15 秒没有进展/);
+});
+
+test('recorded live final handoff follows the read 警方 boundary after timing and numeral revisions',()=>{
+ const fixture=require('./fixtures/zh-live-caption-handoff.json');
+ const {context:c}=preparingMessageBrowser({live:true});
+ let shown=false;
+ for(const step of fixture.steps){
+  if(!shown&&step.media_time>fixture.first_visible.media_time){
+   c.now=9754;c.player.currentTime=fixture.first_visible.media_time;c.syncSubtitle();
+   assert.equal(c.currentEl.textContent,fixture.first_visible.text);shown=true;
+  }
+  c.now=step.message.observed_after_ms;c.player.currentTime=step.media_time;
+  c.receiveMessage(step.message);
+  if(step.message.type==='preview')c.receiveMessage({type:'buffer',play_at:step.message.end});
+  c.syncPlaybackToBuffer();
+ }
+ assert.equal(c.currentEl.textContent,fixture.first_visible.text,'the current page keeps the already read numeral');
+ c.player.currentTime=7.253439;c.syncSubtitle();
+ assert.equal(c.currentEl.textContent,fixture.first_visible.text,'警方 stays on its original page through the corrected word end');
+ c.player.currentTime=7.5;c.syncSubtitle();
+ assert.equal(c.currentEl.textContent,'找到疑似女尸。','the next page neither repeats 警方 nor loses 找到');
+ c.player.currentTime=.9;c.syncSubtitle();
+ assert.ok(c.currentEl.textContent.includes('四天'),'replaying the final accepts the corrected numeral');
+});
+
+test('a final handoff does not consume a later occurrence of the preview word',()=>{
+ const {context:c}=preparingMessageBrowser();
+ c.receiveMessage({type:'preview',sentence_id:'repeat',commit_id:1,revision:1,
+  source_text:'Go go on.',source_start:0,source_end:2,text:'Go',beg:0,end:1,words:[[0,1,'Go']]});
+ c.receiveMessage({type:'buffer',play_at:1});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+ c.player.currentTime=.5;c.syncSubtitle();assert.equal(c.currentEl.textContent,'Go');
+ c.receiveMessage({type:'subtitle',sentence_id:'repeat',revision:2,beg:0,end:2.4,
+  text:'Go go on.',is_final:true,words:[[0,.8,'Go'],[.8,1.6,'go'],[1.6,2.4,'on']]});
+ assert.equal(c.currentEl.textContent,'Go','the current preview page stays stable');
+ c.player.currentTime=1.01;c.syncSubtitle();
+ assert.equal(c.currentEl.textContent,'go on.','the second go remains on the next page');
+ c.player.currentTime=.1;c.syncSubtitle();const first=c.currentEl.textContent;
+ c.player.currentTime=1.7;c.syncSubtitle();
+ assert.equal(`${first} ${c.currentEl.textContent}`,'Go go on.','replaying retains the complete final');
+});
+
+test('ready holds a retained half-word until a complete preview arrives',()=>{
+ const {context:c}=preparingMessageBrowser();
+ const source='发展趋势。',words=Array.from(source,(char,i)=>[i*.2,(i+1)*.2,char]);
+ const first={type:'preview',sentence_id:'first',commit_id:1,revision:1,
+  source_text:source,source_start:0,source_end:1,text:'发',beg:0,end:.2,words:words.slice(0,1)};
+ c.receiveMessage(first);
+ c.receiveMessage({type:'buffer',play_at:.4});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+ c.now=100;c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,true,'a server-ready half-word must not start the media');
+ assert.equal(c.playStarted,false);
+ c.receiveMessage({...first,revision:2,source_end:2,text:'发展',end:.4,words:words.slice(0,2)});
+ c.now=200;c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,false,'the remembered ready must release a later complete word');
+ c.syncSubtitle();assert.equal(c.currentEl.textContent,'发展');
+});
+
+test('a shortened preview limits playback even when the server buffer still covers its old tail',()=>{
+ const {context:c}=preparingMessageBrowser();
+ const source='发展趋势。',words=Array.from(source,(char,i)=>[i*.2,(i+1)*.2,char]);
+ const first={type:'preview',sentence_id:'shortened',commit_id:1,revision:1,
+  source_text:source,source_start:0,source_end:4,text:'发展趋势',beg:0,end:.8,words:words.slice(0,4)};
+ c.receiveMessage(first);c.receiveMessage({type:'buffer',play_at:2});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+ c.syncPlaybackToBuffer();assert.equal(c.player.paused,false);
+ c.receiveMessage({...first,revision:2,source_end:3,text:'发展趋',end:.6,words:words.slice(0,3)});
+ c.player.currentTime=.39;c.now=200;c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,true,'the raw .6s tail and historical .8s coverage cannot release the retained word');
+});
+
+test('future silence or another sentence cannot release a retained incomplete word',()=>{
+ for(const future of ['silence','caption']){
+  const {context:c}=preparingMessageBrowser();
+  c.receiveMessage({type:'preview',sentence_id:'retained',commit_id:1,revision:1,
+   source_text:'发展趋势。',source_start:0,source_end:3,text:'发展趋',beg:0,end:.6,
+   words:[[0,.2,'发'],[.2,.4,'展'],[.4,.6,'趋']]});
+  if(future==='caption')c.receiveMessage({type:'subtitle',sentence_id:'future',revision:1,
+   beg:5,end:7,text:'Future sentence.',is_final:true});
+  c.receiveMessage({type:'buffer',play_at:1,
+   ...(future==='silence'?{local_silence_from:5,local_silence_through:7}:{})});
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});c.syncPlaybackToBuffer();
+  c.player.currentTime=.39;c.now=200;c.syncPlaybackToBuffer();
+  assert.equal(c.player.paused,true,future);
+ }
+});
+
+test('an empty first preview keeps its preparation deadline despite a ready future sentence',()=>{
+ for(const live of [false,true])for(const unlock of ['word','silence','timeout']){
+  const {context:c}=preparingMessageBrowser({live});
+  const first={type:'preview',sentence_id:'first',commit_id:1,revision:1,
+   source_text:'发展趋势。',source_start:0,source_end:1,text:'发',beg:0,end:.2,words:[[0,.2,'发']]};
+  c.receiveMessage(first);
+  c.receiveMessage({type:'subtitle',sentence_id:'future',revision:1,beg:5,end:7,
+   text:'Future sentence.',is_final:true});
+  c.receiveMessage({type:'buffer',play_at:7});
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+  for(const now of [0,2100,14999]){
+   c.now=now;c.syncPlaybackToBuffer();
+   assert.equal(c.player.playCalls,0,`${live}/${unlock}/${now}`);
+   assert.equal(c.playStarted,false);assert.equal(c.playbackGuard.degraded,false);
+   assert.equal(c.failure,undefined);
+  }
+  if(unlock==='timeout'){
+   c.now=15000;c.syncPlaybackToBuffer();assert.match(c.failure,/准备.*超时/);
+  }else{
+   if(unlock==='word')c.receiveMessage({...first,revision:2,source_end:2,text:'发展',end:.4,
+    words:[[0,.2,'发'],[.2,.4,'展']]});
+   else c.receiveMessage({type:'buffer',play_at:7,local_silence_from:0,local_silence_through:2});
+   c.syncPlaybackToBuffer();assert.equal(c.player.paused,false,unlock);
+   assert.equal(c.playStarted,true);assert.equal(c.playbackGuard.degraded,false);
+  }
+ }
+});
+
+test('an empty preview correction withdraws its previously playable range',()=>{
+ const {context:c}=preparingMessageBrowser();
+ const first={type:'preview',sentence_id:'withdrawn',commit_id:1,revision:1,
+  source_text:'发展趋势。',source_start:0,source_end:4,text:'发展趋势',beg:0,end:.8,
+  words:[[0,.4,'发展'],[.4,.8,'趋势']]};
+ c.receiveMessage(first);c.receiveMessage({type:'buffer',play_at:2});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});c.syncPlaybackToBuffer();
+ c.receiveMessage({...first,revision:2,source_end:0,text:'',words:[]});
+ c.player.currentTime=.1;c.now=200;c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,true);
+ c.syncSubtitle();assert.equal(c.currentEl.textContent,'');
+});
+
+test('a remembered ready accepts a later final or verified silence without inventing a caption',()=>{
+ for(const silent of [false,true]){
+  const {context:c}=preparingMessageBrowser();
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,silent});
+  assert.equal(c.player.paused,true);
+  if(silent)c.receiveMessage({type:'buffer',play_at:2,local_silence_from:0,local_silence_through:2});
+  else {
+   c.receiveMessage({type:'subtitle',sentence_id:'late-final',revision:1,beg:0,end:2,
+    is_final:true,text:'发展趋势。',words:[[0,1,'发展'],[1,2,'趋势。']]});
+   c.receiveMessage({type:'buffer',play_at:2});
+  }
+  c.syncPlaybackToBuffer();c.syncSubtitle();
+  assert.equal(c.player.paused,false);
+  assert.equal(c.currentEl.textContent,silent?'':'发展趋势。');
+ }
+});
+
+test('retained half-words keep the original preparation deadline and ignore cancelled generations',()=>{
+ for(const live of [false,true])for(const cancel of ['source','stop']){
+  const {context:c}=preparingMessageBrowser({live});
+  c.receiveMessage({type:'preview',sentence_id:'half',commit_id:1,revision:1,beg:0,end:.2,
+   source_text:'发展趋势。',source_start:0,source_end:1,text:'发',words:[[0,.2,'发']]});
+  c.receiveMessage({type:'buffer',play_at:5});
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});
+  c.now=14999;c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);
+  c.now=15000;c.syncPlaybackToBuffer();assert.match(c.failure,/准备.*超时/);
+  if(cancel==='source')c.connectionGeneration++;else c.recognitionOnlyStopped=true;
+  c.receiveMessage({type:'subtitle',sentence_id:'half',revision:2,beg:0,end:2,text:'发展趋势。',is_final:true});
+  assert.equal(c.playStarted,false);
+ }
+});
+
+test('the prepared playback ceiling permits a normal pause between two accepted sentences',()=>{
+ const {context:c}=preparingMessageBrowser();
+ for(const [id,beg,end,text] of [[1,0,1,'First sentence.'],[2,1.6,3,'Next sentence.']])
+  c.receiveMessage({type:'subtitle',sentence_id:id,revision:1,beg,end,text,is_final:true});
+ c.receiveMessage({type:'buffer',play_at:3});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0});c.syncPlaybackToBuffer();
+ c.player.currentTime=1.3;c.syncPlaybackToBuffer();c.syncSubtitle();
+ assert.equal(c.player.paused,false);assert.equal(c.currentEl.textContent,'');
+ c.receiveMessage({type:'caption_remove',sentence_id:2,revision:2});c.syncPlaybackToBuffer();
+ assert.equal(c.player.paused,true,'removing future speech must also retract its playback ceiling');
 });
 
 test('wide original captions keep readable phrase lengths instead of filling the whole screen',()=>{
@@ -881,4 +1315,62 @@ test('a sub-100ms final fragment joins its adjacent phrase without extending the
  assert.ok(pages.every(p=>p.end-p.beg>=.6),JSON.stringify(pages));
  assert.equal(pages[0].beg,0);assert.equal(pages.at(-1).end,2);
  assert.equal(pages.map(p=>p.text).join('').replace(/\s/g,''),'Really?Yes.');
+});
+
+test('live preparation waits for its actual caption reserve without renewing the first deadline',()=>{
+ for(const finish of ['captions','timeout']){
+  const {context:c}=preparingMessageBrowser({live:true});
+  c.receiveMessage({type:'subtitle',sentence_id:1,beg:0,end:4.8,text:'First complete sentence.',is_final:true});
+  c.receiveMessage({type:'buffer',play_at:20});
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,prepare_ahead_sec:10});
+  c.now=14999;c.syncPlaybackToBuffer();
+  assert.equal(c.playStarted,false);assert.equal(c.player.paused,true);
+  assert.equal(c.playbackGuard.degraded,false);
+  if(finish==='timeout'){
+   c.now=15000;c.syncPlaybackToBuffer();assert.match(c.failure,/准备.*超时/);
+  }else{
+   c.receiveMessage({type:'subtitle',sentence_id:2,beg:5.5,end:8.8,text:'Second sentence.',is_final:true});
+   c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);
+   c.receiveMessage({type:'subtitle',sentence_id:3,beg:9.2,end:12.2,text:'Third sentence.',is_final:true});
+   c.syncPlaybackToBuffer();assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);
+   assert.equal(c.playbackGuard.heldForSessionMs,0);
+  }
+ }
+});
+
+test('a completed short stream can start with all its captions before reaching the live reserve',()=>{
+ const {context:c}=preparingMessageBrowser({live:true});c.ws={close(){}};c.recoveryController={pending:null};
+ c.receiveMessage({type:'subtitle',sentence_id:1,beg:0,end:4.8,text:'Complete short stream.',is_final:true});
+ c.receiveMessage({type:'buffer',play_at:4.8});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,prepare_ahead_sec:10});
+ c.syncPlaybackToBuffer();assert.equal(c.player.paused,true);
+ c.receiveMessage({type:'end',reason:'completed'});
+ assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);
+});
+
+test('verified leading silence contributes to the live caption reserve',()=>{
+ const {context:c}=preparingMessageBrowser({live:true});
+ c.receiveMessage({type:'buffer',play_at:12,local_silence_from:0,local_silence_through:12});
+ c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,silent:true,prepare_ahead_sec:10});
+ c.syncPlaybackToBuffer();assert.equal(c.playStarted,true);assert.equal(c.player.paused,false);
+});
+
+test('verified silence clears an empty first preview from the live preparation reserve',()=>{
+ for(const coverage of ['silence','future caption']){
+  const {context:c}=preparingMessageBrowser({live:true});
+  c.receiveMessage({type:'preview',sentence_id:'first',commit_id:1,revision:1,
+   source_text:'发展',source_start:0,source_end:1,text:'发',beg:0,end:.2,words:[[0,.2,'发']]});
+  c.receiveMessage({type:'ready',original:true,buffered:true,start_at:0,prepare_ahead_sec:10});
+  assert.equal(c.playStarted,false,coverage);
+  c.now=14999;
+  if(coverage==='future caption')c.receiveMessage({type:'subtitle',sentence_id:'future',revision:1,
+   beg:2,end:12,text:'A complete future sentence.',is_final:true});
+  c.receiveMessage({type:'buffer',play_at:12,local_silence_from:0,
+   local_silence_through:coverage==='silence'?12:2});
+  c.syncPlaybackToBuffer();
+  assert.equal(c.playStarted,true,coverage);
+  assert.equal(c.player.paused,false,coverage);
+  assert.equal(c.playbackGuard.degraded,false,coverage);
+  assert.equal(c.failure,undefined,coverage);
+ }
 });

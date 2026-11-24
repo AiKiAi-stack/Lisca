@@ -6,6 +6,58 @@ import pytest
 import run_real_browser_acceptance as acceptance
 
 
+def test_recording_preserves_sentence_commit_context_for_independent_replay(tmp_path):
+    media = tmp_path / "sample.mp4"
+    media.write_bytes(b"fixed candidate input")
+    output = tmp_path / "recording.json"
+    event = {"type": "preview", "sentence_id": 1, "beg": 0, "end": 2,
+             "text": "未来发", "source_text": "未来发展趋势", "source_start": 0,
+             "source_end": 3, "commit_reason": "timeout", "commit_id": 1,
+             "revision": 2, "is_final": False, "words": [[0, 1, "未来"], [1, 2, "发"]]}
+    acceptance.write_browser_recording(
+        media_path=str(media), output_path=output, events=[event], status="cancelled",
+        completion_signal="cancelled", completion_reason="cancelled", errors=[],
+        started_at="2026-11-14T00:00:00+00:00", started=time.monotonic(), metadata={},
+    )
+    saved = json.loads(output.read_text())["events"][0]
+    for field in ("source_text", "source_start", "source_end", "commit_reason",
+                  "commit_id", "revision", "is_final", "words"):
+        assert saved[field] == event[field]
+
+
+def test_recording_preserves_the_live_preparation_requirement(tmp_path):
+    media = tmp_path / "sample.mp4"
+    media.write_bytes(b"fixed candidate input")
+    output = tmp_path / "recording.json"
+    acceptance.write_browser_recording(
+        media_path=str(media), output_path=output,
+        events=[{"type": "ready", "original": True, "buffered": True,
+                 "start_at": 0, "prepare_ahead_sec": 10}], status="cancelled",
+        completion_signal="cancelled", completion_reason="cancelled", errors=[],
+        started_at="2026-11-15T00:00:00+00:00", started=time.monotonic(), metadata={},
+    )
+    saved = json.loads(output.read_text())["events"][0]
+    assert saved["prepare_ahead_sec"] == 10
+
+
+def test_recording_preserves_caption_recovery_status(tmp_path):
+    media = tmp_path / "sample.mp4"
+    media.write_bytes(b"fixed candidate input")
+    output = tmp_path / "recording.json"
+    acceptance.write_browser_recording(
+        media_path=str(media), output_path=output,
+        events=[{"type": "status", "caption_state": "ready", "sentence_id": 14,
+                 "message": "字幕已就绪，继续播放"}],
+        status="cancelled", completion_signal="cancelled",
+        completion_reason="cancelled", errors=[],
+        started_at="2026-11-24T00:00:00+00:00", started=time.monotonic(), metadata={},
+    )
+    saved = json.loads(output.read_text())["events"][0]
+    assert saved == {"type": "status", "caption_state": "ready",
+                     "sentence_id": 14, "message": "字幕已就绪，继续播放",
+                     "observed_after_ms": saved["observed_after_ms"]}
+
+
 def test_capped_recording_keeps_cancelled_truth_and_redacts_transport_secrets(tmp_path):
     media = tmp_path / "sample.mp4"
     media.write_bytes(b"fixed local test input")
@@ -188,7 +240,7 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                                    playback_evidence=False, browser_clock_samples=None,
                                    monotonic_ns_samples=None, captured_audio=None, installation=None, pixel_failure=False, runtime_audio_failure=False, runtime_clock_failure=False,
                                    acoustic_sync=False, save_failure=False, status_sequence=None,
-                                   stop_file=None):
+                                   stop_file=None, observe_completed_playback=False):
     clock = {"now": 100.0}
 
     class Request:
@@ -412,6 +464,8 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             "--label", label, "--output", str(tmp_path), "--seconds", str(seconds)]
     if observe_recovery:
         argv.append("--observe-recovery")
+    if observe_completed_playback:
+        argv.append("--observe-completed-playback")
     if playback_evidence:
         argv.append("--capture-playback-evidence")
     if acoustic_sync:
@@ -784,6 +838,44 @@ def test_opt_in_observation_stops_on_nonretryable_or_missing_retryability(
     assert clock["now"] - 100.0 < 0.3
 
 
+@pytest.mark.parametrize(("sdk_kind", "sdk_source", "expected"), [
+    (kind, "dashscope_exception_type", {
+        "sdk_failure_kind": kind, "sdk_failure_source": "dashscope_exception_type",
+    }) for kind in ("timeout", "connection", "protocol")
+] + [
+    ("private-key-and-transcript", "private-exception-class", {}),
+    ({"message": "private-key-and-transcript"}, ["private-exception-class"], {}),
+])
+def test_collector_preserves_only_allowlisted_sdk_diagnostics_in_recording_and_report(
+        tmp_path, monkeypatch, sdk_kind, sdk_source, expected):
+    def on_start(page):
+        page.open_session().send({
+            "type": "error", "failure_category": "unknown", "retryable": False,
+            "sdk_failure_kind": sdk_kind, "sdk_failure_source": sdk_source,
+            "message": "private-key-and-transcript",
+            "provider_code": "private-provider-code", "exception": "private-exception-class",
+        })
+
+    result, report, recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="sdk-diagnostic", seconds=10, on_start=on_start)
+
+    assert result["recording_status"] == "failed"
+    assert result["exit_ok"] is False
+    assert report["session_post_start_count"] == 1
+    saved_event = next(event for event in recording["events"] if event["type"] == "error")
+    assert saved_event["message_present"] is True
+    for item in (saved_event, next(error for error in recording["errors"]
+                                  if error["type"] == "recognition_error"),
+                 next(error for error in report["errors"]
+                      if error["type"] == "recognition_error")):
+        assert item["failure_category"] == "unknown"
+        assert item["retryable"] is False
+        assert {name: item[name] for name in ("sdk_failure_kind", "sdk_failure_source")
+                if name in item} == expected
+    for suffix in ("recording", "report"):
+        assert "private" not in (tmp_path / f"sdk-diagnostic.{suffix}.json").read_text()
+
+
 def test_opt_in_observation_stops_when_manual_retry_ui_persists_after_recovery_budget(
         tmp_path, monkeypatch):
     def on_start(page):
@@ -817,8 +909,9 @@ def test_opt_in_observation_stops_when_manual_retry_ui_persists_after_recovery_b
     assert clock["now"] - 100.0 < 7.0
 
 
-def test_opt_in_observation_stops_on_media_only_ui_exhaustion_and_keeps_delete_evidence(
-        tmp_path, monkeypatch):
+@pytest.mark.parametrize("observe_recovery,local", [(False, False), (True, False), (False, True)])
+def test_observation_stops_on_terminal_manual_retry_ui_and_keeps_delete_evidence(
+        tmp_path, monkeypatch, observe_recovery, local):
     def on_start(page):
         page.open_session()
         page.schedule(0.2, lambda: media_recovery_exhausted(page))
@@ -830,9 +923,14 @@ def test_opt_in_observation_stops_on_media_only_ui_exhaustion_and_keeps_delete_e
         page.retry_visible = True
         page.status = "media recovery exhausted"
 
+    media = None
+    if local:
+        media_file = tmp_path / "input.mp4"
+        media_file.write_bytes(b"synthetic parser-only input")
+        media = str(media_file)
     result, report, recording, _page, clock = _run_collect_with_fake_browser(
         monkeypatch, tmp_path, label="media-recovery-exhausted", seconds=5,
-        on_start=on_start)
+        on_start=on_start, observe_recovery=observe_recovery, media=media)
 
     assert report["live_seconds_cap_reached"] is False
     assert report["operator_stop"]["requested"] is False
@@ -988,3 +1086,28 @@ def test_audio_capture_reports_recorder_failure_after_clock_failure():
             assert page.evaluate("() => window.__acousticCapture.status()") == "recorder_error"
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize("video_ends", [False, True])
+def test_completed_remote_observation_includes_buffered_tail_until_eof_or_cap(
+        tmp_path, monkeypatch, video_ends):
+    def on_start(page):
+        socket = page.open_session()
+        def recognition_finished():
+            page.active = False
+            socket.send({"type": "end", "reason": "completed"})
+        page.schedule(0.2, recognition_finished)
+        page.schedule(1.0, lambda: setattr(page, "caption", "Buffered final sentence."))
+        if video_ends:
+            page.schedule(1.4, lambda: setattr(page, "ended", True))
+
+    result, report, _recording, _page, clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="completed-tail", seconds=2, on_start=on_start,
+        observe_recovery=False, observe_completed_playback=True)
+    assert result["recording_status"] == "completed"
+    assert any(s["visible_text"] == "Buffered final sentence." for s in report["timeline_samples"])
+    assert report["video_eof_observed"] is video_ends
+    assert report["live_seconds_cap_reached"] is not video_ends
+    assert report["session_post_start_count"] == 1
+    assert report["session_delete_statuses"] == []
+    assert 1.4 <= clock["now"] - 100 < 2.5

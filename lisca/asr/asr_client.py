@@ -26,9 +26,10 @@ class ASRState(Enum):
 class RecognitionFailure(RuntimeError):
     """SDK callback failure with structured fields and no raw provider message."""
 
-    def __init__(self, status_code=None, code=None):
+    def __init__(self, status_code=None, code=None, sdk_failure_kind=None):
         self.status_code = status_code
         self.code = code
+        self.sdk_failure_kind = sdk_failure_kind
         super().__init__("DashScope recognition request failed")
 
 
@@ -62,7 +63,8 @@ class _Callback(RecognitionCallback):
             self._errors.put(transport_error)
             return
         self._errors.put(RecognitionFailure(getattr(result, "status_code", None),
-                                            getattr(result, "code", None)))
+                                            getattr(result, "code", None),
+                                            getattr(result, "sdk_failure_kind", None)))
 
     def on_event(self, result: RecognitionResult) -> None:
         if self._cancelled is not None and self._cancelled.is_set():
@@ -152,7 +154,8 @@ class ASRClient:
             self.raise_if_error()
         except Exception as failure:
             if isinstance(failure, RecognitionProviderError):
-                failure = RecognitionFailure(failure.status_code, failure.code)
+                failure = RecognitionFailure(failure.status_code, failure.code,
+                                             failure.sdk_failure_kind)
             try:
                 self.raise_if_error()
             except Exception as reported_failure:
@@ -245,7 +248,8 @@ class ASRClient:
             self._audio_buffer.clear()
             if not self._cancelled.is_set():
                 if isinstance(error, RecognitionProviderError):
-                    error = RecognitionFailure(error.status_code, error.code)
+                    error = RecognitionFailure(error.status_code, error.code,
+                                               error.sdk_failure_kind)
                 self._errors.put(error if isinstance(error, (ConnectionError, TimeoutError,
                                                              RecognitionFailure))
                                  else ASRTransportFailure())

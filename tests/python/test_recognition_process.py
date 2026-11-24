@@ -111,6 +111,10 @@ class LocalService:
                         await self._send(writer, message, "task-failed", error=True)
                     elif self.mode != "no_task_start":
                         await self._send(writer, message, "task-started")
+                    if self.mode == "malformed_json":
+                        data = b"private-provider-dummy-local-test-key"
+                        writer.write(bytes([129, len(data)]) + data)
+                        await writer.drain()
                 elif action == "finish-task":
                     self.finished.set()
                     if self.mode == "normal":
@@ -616,6 +620,43 @@ def test_provider_error_stays_typed_while_its_callback_is_blocked(recognizer):
         assert callback.error.is_set()
         assert callback.transport_errors == []
         assert_exited(recognition, "failed")
+
+
+def test_sdk_malformed_reply_exposes_safe_origin_through_asr_client(monkeypatch, capfd):
+    from lisca.asr.asr_client import ASRClient, RecognitionFailure
+    from lisca.asr.asr_config import ASRSettings
+    from lisca.provider_errors import classify_provider_failure
+
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    with LocalService("malformed_json") as service:
+        monkeypatch.setattr(dashscope, "base_websocket_api_url", service.url)
+        client = ASRClient(ASRSettings(api_key="dummy-local-test-key"))
+        try:
+            client.start()
+            client.feed_audio(b"\x01\x00" * 1600)
+            assert service.started.wait(5), "actual SDK did not reach loopback run-task"
+            with pytest.raises(RecognitionFailure) as caught:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    client.raise_if_error()
+                    threading.Event().wait(0.01)
+                pytest.fail("actual SDK did not report malformed response")
+            failure = classify_provider_failure(caught.value)
+            assert failure.get("sdk_failure_kind") == "protocol"
+            assert failure.get("sdk_failure_source") == "dashscope_exception_type"
+            assert failure["failure_category"] == "unknown"
+            assert failure["retryable"] is False
+            assert failure["provider_status"] is None
+            assert failure["provider_code"] is None
+            captured = capfd.readouterr()
+            safe_output = str(failure) + str(caught.value) + captured.out + captured.err
+            for private in ("private-provider", "dummy-local-test-key", service.url,
+                            "JSONDecodeError", "message:"):
+                assert private not in safe_output
+            assert service.requests == 1
+        finally:
+            client.cancel()
 
 
 def test_explicit_new_instance_cannot_receive_old_callbacks(recognizer):

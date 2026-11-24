@@ -14,6 +14,31 @@ from types import MappingProxyType
 MAX_PCM_FRAME_BYTES = 1024 * 1024
 WORKER_MEMORY_LIMIT_BYTES = 512 * 1024 * 1024
 _CAPACITY_EXITCODE = 73
+_SDK_EXCEPTION_KINDS = {
+    "TimeoutError": "timeout",
+    "asyncio.exceptions.TimeoutError": "timeout",
+    "aiohttp.client_exceptions.ServerTimeoutError": "timeout",
+    "aiohttp.client_exceptions.ConnectionTimeoutError": "timeout",
+    "aiohttp.client_exceptions.SocketTimeoutError": "timeout",
+    "aiohttp.client_exceptions.ClientOSError": "connection",
+    "aiohttp.client_exceptions.ClientConnectionResetError": "connection",
+    "aiohttp.client_exceptions.ServerDisconnectedError": "connection",
+    "json.decoder.JSONDecodeError": "protocol",
+}
+
+
+def _sdk_failure_kind(status_code, code, message):
+    """Reduce the SDK's synthetic exception prefix to a fixed enum in the child."""
+    # Exact builtins avoid running methods on untrusted subclasses.
+    # pylint: disable=unidiomatic-typecheck
+    if (type(status_code) is not int or status_code != -1 or
+            type(code) is not str or code != "Unknown" or type(message) is not str):
+        return None
+    for exception_type, kind in _SDK_EXCEPTION_KINDS.items():
+        if message.startswith(f"Error type: <class '{exception_type}'>, message: "):
+            return kind
+    # UnexpectedMessageReceived also wraps closed sockets; its type alone is ambiguous.
+    return None
 
 
 class RecognitionCapacityError(ConnectionError):
@@ -23,9 +48,10 @@ class RecognitionCapacityError(ConnectionError):
 class RecognitionProviderError(RuntimeError):
     """Structured provider failure without its raw message or request data."""
 
-    def __init__(self, status_code=None, code=None):
+    def __init__(self, status_code=None, code=None, sdk_failure_kind=None):
         self.status_code = status_code
         self.code = code
+        self.sdk_failure_kind = sdk_failure_kind
         super().__init__("DashScope recognition request failed")
 
 
@@ -88,7 +114,8 @@ def _recognize(configuration, endpoint, audio, events, memory_limit):
                 status = getattr(result, "status_code", None)
                 code = getattr(result, "code", None)
                 send("error", (status if isinstance(status, int) else None,
-                               code if isinstance(code, (str, int)) else None))
+                               code if isinstance(code, (str, int)) else None,
+                               _sdk_failure_kind(status, code, getattr(result, "message", None))))
                 self.saw_error = True
 
             def on_complete(self):
@@ -138,11 +165,13 @@ def _join_process(process, deadline):
 
 
 class _Result:
-    def __init__(self, sentence=None, status_code=None, code=None, transport_error=None):
+    def __init__(self, sentence=None, status_code=None, code=None, transport_error=None,
+                 sdk_failure_kind=None):
         self._sentence = sentence
         self.status_code = status_code
         self.code = code
         self.transport_error = transport_error
+        self.sdk_failure_kind = sdk_failure_kind
 
     def get_sentence(self):
         return self._sentence
@@ -314,7 +343,8 @@ class RecognitionProcess:
                 if kind == "sentence":
                     method, arguments = "on_event", (_Result(sentence=value),)
                 elif kind == "error":
-                    method, arguments = "on_error", (_Result(status_code=value[0], code=value[1]),)
+                    method, arguments = "on_error", (_Result(status_code=value[0], code=value[1],
+                                                            sdk_failure_kind=value[2]),)
                 elif kind in ("open", "complete", "close"):
                     method, arguments = "on_" + kind, ()
                 else:

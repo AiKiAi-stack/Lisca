@@ -98,8 +98,11 @@ def test_anonymous_previews_do_not_consume_identified_caption_retention_budget(
                        (2.0, 2.8, draft, shifted_words, False)])
 
     previews = [event for event in events if event["type"] == "preview"]
-    assert [event["text"] for event in previews] == [repeated_text, repeated_text]
-    assert [event["beg"] for event in previews] == [0.0, 2.0]
+    assert [event["text"] for event in previews] == [
+        repeated_text, repeated_text, "后续内容仍在识别中", "后续内容仍在识别中"]
+    assert [event["beg"] for event in previews] == [0.0, 2.0, 0.4, 2.4]
+    assert [event["commit_reason"] for event in previews] == [
+        "sentence_end", "sentence_end", "timeout", "timeout"]
     assert not any(event["type"] == "error" for event in events)
     assert events[-1] == {"type": "end", "reason": "completed"}
 

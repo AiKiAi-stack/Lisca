@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from lisca.web import app as webui  # noqa: E402
 from lisca.cloud_translation import CloudConfigStore  # noqa: E402
-from lisca.asr.recognition_process import RecognitionCapacityError  # noqa: E402
+from lisca.asr.recognition_process import RecognitionCapacityError, RecognitionProviderError  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -218,6 +218,9 @@ def test_cloud_ws_exposes_provider_permission_evidence_without_raw_error(monkeyp
         def transcribe_chunk(self, _audio):
             raise StructuredProviderFailure(403, "Model.AccessDenied")
 
+        def poll(self):
+            return (None, None, "", None)
+
         def close(self):
             pass
 
@@ -256,6 +259,9 @@ def test_cloud_ws_exposes_provider_permission_evidence_without_raw_error(monkeyp
     (RecognitionCapacityError("private memory detail"), "capacity", False, None),
     (StructuredProviderFailure(503, "UnknownServiceCode"), "temporarily_unavailable", True, None),
     (StructuredProviderFailure(400, "UnknownPrivateCode"), "unknown", False, None),
+    (RecognitionProviderError(-1, "Unknown", "timeout"), "unknown", False, None),
+    (RecognitionProviderError(-1, "Unknown", "connection"), "unknown", False, None),
+    (RecognitionProviderError(-1, "Unknown", "protocol"), "unknown", False, None),
 ])
 def test_cloud_ws_classifies_failures_only_from_provider_evidence(
         monkeypatch, failure, category, retryable, code):
@@ -272,6 +278,9 @@ def test_cloud_ws_classifies_failures_only_from_provider_evidence(
     class Engine:
         def transcribe_chunk(self, _audio):
             raise failure
+
+        def poll(self):
+            return (None, None, "", None)
 
         def close(self):
             pass
@@ -296,6 +305,10 @@ def test_cloud_ws_classifies_failures_only_from_provider_evidence(
     assert error["failure_category"] == category
     assert error["retryable"] is retryable
     assert error.get("provider_code") == code
+    sdk_kind = getattr(failure, "sdk_failure_kind", None)
+    if sdk_kind is not None:
+        assert error["sdk_failure_kind"] == sdk_kind
+        assert error["sdk_failure_source"] == "dashscope_exception_type"
     assert "private" not in str(events)
     assert "TEST_ONLY_KEY" not in str(events)
 
@@ -394,13 +407,16 @@ def test_owner_disconnect_or_cloud_config_delete_allows_only_inflight_recognitio
             stop = webui._CLOUD_JOBS[token]["stop"]
         with client.websocket_connect("/ws?session=" + token):
             assert started.wait(2)
+            calls_at_cancel = calls.copy()
             if cancel_source == "cloud_config_delete":
                 assert client.delete("/api/cloud").status_code == 200
         assert stop.wait(2), "session cancellation did not reach the worker"
         release.set()
         assert source_closed.wait(2), "worker did not release the media source"
 
-    assert calls == {"transcribe": 1, "poll": 0, "finish": 0}
+    assert calls_at_cancel["transcribe"] == 1
+    assert calls_at_cancel["finish"] == 0
+    assert calls == calls_at_cancel
 
 
 def test_non_hls_http_no_progress_watchdog_is_nonretryable_through_public_websocket(monkeypatch):
@@ -430,8 +446,12 @@ def test_non_hls_http_no_progress_watchdog_is_nonretryable_through_public_websoc
         def close(self):
             pass
 
+    def advance_clock(stop, seconds):
+        clock["now"] += seconds
+        return stop.is_set()
+
     monkeypatch.setattr(webui, "_session_monotonic", lambda: clock["now"])
-    monkeypatch.setattr(webui, "_session_wait", lambda stop, _seconds: stop.is_set())
+    monkeypatch.setattr(webui, "_session_wait", advance_clock)
     monkeypatch.setattr(webui, "StreamSource", Source)
     monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
     with TestClient(webui.app) as client:
@@ -489,8 +509,12 @@ def test_live_no_progress_can_recover_after_twenty_seconds_through_public_websoc
         def close(self):
             pass
 
+    def advance_clock(stop, seconds):
+        clock["now"] += seconds
+        return stop.is_set()
+
     monkeypatch.setattr(webui, "_session_monotonic", lambda: clock["now"])
-    monkeypatch.setattr(webui, "_session_wait", lambda stop, _seconds: stop.is_set())
+    monkeypatch.setattr(webui, "_session_wait", advance_clock)
     monkeypatch.setattr(webui, "StreamSource", Source)
     monkeypatch.setattr(webui, "create_engine", lambda *_args, **_kwargs: Engine())
     with TestClient(webui.app) as client:
@@ -523,11 +547,12 @@ def test_ws_event_backlog_overflow_is_visible_and_not_normal_completion(monkeypa
     monkeypatch.setattr(webui, "_SERVER_LOGS", deque())
     send_json = webui.WebSocket.send_json
     delayed = {"done": False}
+    producer_finished = threading.Event()
 
     async def delay_first_owner_send(socket, data, mode="text"):
         if socket.scope["path"] == "/ws" and not delayed["done"]:
             delayed["done"] = True
-            await asyncio.sleep(0.1)
+            await asyncio.to_thread(producer_finished.wait, 2)
         await send_json(socket, data, mode)
 
     monkeypatch.setattr(webui.WebSocket, "send_json", delay_first_owner_send)
@@ -541,7 +566,7 @@ def test_ws_event_backlog_overflow_is_visible_and_not_normal_completion(monkeypa
             yield b"\x01" * 3200
 
         def close(self):
-            pass
+            producer_finished.set()
 
     class Engine:
         def transcribe_chunk(self, _audio):

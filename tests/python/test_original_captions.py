@@ -1,5 +1,6 @@
 """Original-language captions through the public cloud HTTP/WS seam."""
 import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -185,7 +186,7 @@ def test_deleting_local_session_interrupts_realtime_feed_pacing(tmp_path, monkey
                 if event['type'] == 'end':
                     break
 
-    assert len(sent) == stopped_at < 100
+    assert len(sent) == stopped_at == 20
     assert events[-1] == {'type': 'end', 'reason': 'cancelled'}
 
 
@@ -673,7 +674,8 @@ def test_thirty_minute_local_silence_prepares_incrementally_with_bounded_feed_an
     sent = []
     fed = [0.0]
     peak_unprocessed_chunks = [0]
-    max_audio_lead = [0.0]
+    max_audio_lead = {'initial': 0.0, 'steady': 0.0}
+    ready_received = threading.Event()
     first_pacing_wait = threading.Event()
     allow_pacing = threading.Event()
     audio = b'\x00' * (16000 * 2)  # One second at the 16 kHz mono worker boundary.
@@ -692,7 +694,8 @@ def test_thirty_minute_local_silence_prepares_incrementally_with_bounded_feed_an
                 peak_unprocessed_chunks[0], generated[0] - len(sent))
             fed[0] += len(pcm) / 16000
             sent.append(fed[0])
-            max_audio_lead[0] = max(max_audio_lead[0], fed[0] - clock[0])
+            stage = 'steady' if ready_received.is_set() else 'initial'
+            max_audio_lead[stage] = max(max_audio_lead[stage], fed[0] - clock[0])
             return self.poll()
         def poll(self): return (None, None, '', None)
         def finish(self): return self.poll()
@@ -721,34 +724,44 @@ def test_thirty_minute_local_silence_prepares_incrementally_with_bounded_feed_an
                 events.append(event)
                 if event['type'] == 'ready':
                     ready_before_eof = generated[0] < 30 * 60 and len(sent) < 30 * 60
+                    ready_received.set()
                     allow_pacing.set()
                 if event['type'] == 'end':
                     break
 
     assert generated[0] == len(sent) == 30 * 60
     assert peak_unprocessed_chunks[0] <= 1
-    assert max_audio_lead[0] <= 2.0 + 1e-6
+    assert max_audio_lead['initial'] <= 2.0 + 1e-6
+    assert max_audio_lead['steady'] <= 2.0 + 1e-6
     assert ready_before_eof
     assert any(event['type'] == 'ready' and event.get('silent') for event in events)
     assert not any(event['type'] in ('subtitle', 'preview') for event in events)
     assert events[-1] == {'type': 'end', 'reason': 'completed'}
 
 
-def test_server_stops_local_session_after_fifteen_seconds_without_recognition_progress(tmp_path, monkeypatch):
-    import time
-
+@pytest.mark.parametrize('chunk_count,pcm_sample,expected_failure', [
+    pytest.param(400, b'\x00\x10', 'no_progress', id='active-input-at-deadline'),
+    pytest.param(180, b'\x00\x10', 'caption_preparation', id='non-silent-eof-before-deadline'),
+    pytest.param(4, b'\x00\x00', None, id='short-silent-eof'),
+])
+def test_local_session_without_captions(tmp_path, monkeypatch, chunk_count, pcm_sample, expected_failure):
     monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
     monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
     media = tmp_path / 'no-progress.wav'
     media.touch()
     sent = []
     closed = []
-    audio = b'\x00\x10' * 1600
+    audio = pcm_sample * 1600
+    clock = [0.0]
+
+    def advance_clock(stop, seconds):
+        clock[0] += seconds
+        return stop.is_set()
 
     class Source:
         def __init__(self, *_args, **_kwargs): pass
         def iter_chunks(self):
-            for _ in range(180):
+            for _ in range(chunk_count):
                 yield audio
         def close(self): pass
 
@@ -762,10 +775,11 @@ def test_server_stops_local_session_after_fifteen_seconds_without_recognition_pr
 
     monkeypatch.setattr(webui, 'StreamSource', Source)
     monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    monkeypatch.setattr(webui, '_session_monotonic', lambda: clock[0])
+    monkeypatch.setattr(webui, '_session_wait', advance_clock)
     with TestClient(webui.app) as client:
         client.put('/api/cloud', json={'api_key': 'test-private-key'})
         ticket = client.post('/api/cloud/sessions', json={'url': str(media)}).json()
-        began = time.monotonic()
         with client.websocket_connect('/ws?session=' + ticket['session']) as socket:
             events = []
             while True:
@@ -774,13 +788,25 @@ def test_server_stops_local_session_after_fifteen_seconds_without_recognition_pr
                 if event['type'] == 'end':
                     break
 
-    elapsed = time.monotonic() - began
     error = next((event for event in events if event['type'] == 'error'), None)
-    assert error is not None, events[-5:]
-    assert '15 秒' in error['message']
-    assert events[-1]['reason'] == 'error'
-    assert 14 <= elapsed < 20, elapsed
-    assert 0 < len(sent) < 180, len(sent)
+    assert not any(event['type'] in ('subtitle', 'preview') for event in events)
+    if expected_failure is None:
+        assert error is None
+        assert any(event['type'] == 'ready' for event in events)
+        assert events[-1]['reason'] == 'completed'
+    else:
+        assert error is not None, events[-5:]
+        assert error['failure_category'] == expected_failure
+        assert '仅播放' in error['message']
+        assert not any(event['type'] == 'ready' for event in events)
+        assert events[-1]['reason'] == 'error'
+    if expected_failure == 'no_progress':
+        assert '15 秒' in error['message']
+        assert clock[0] == pytest.approx(15, abs=0.05)
+        assert 0 < len(sent) < chunk_count
+    else:
+        assert clock[0] < 15
+        assert len(sent) == chunk_count
     assert closed == ['closed']
 
 
@@ -879,7 +905,7 @@ def test_user_pause_is_excluded_from_server_progress_budget(tmp_path, monkeypatc
 def test_pause_budget_includes_time_while_source_read_is_blocked(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
     monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
-    clock = [0.0]
+    clock_offset = [0.0]
     pause_command_sent = threading.Event()
     pause_accounted = threading.Event()
     worker_ident = []
@@ -914,10 +940,12 @@ def test_pause_budget_includes_time_while_source_read_is_blocked(tmp_path, monke
         def close(self): pass
 
     def session_clock():
+        # Preserve normal feeding before injecting the pause interval.
+        now = time.monotonic() + clock_offset[0]
         if (pause_command_sent.is_set() and worker_ident
                 and threading.get_ident() != worker_ident[0]):
             pause_accounted.set()
-        return clock[0]
+        return now
 
     monkeypatch.setattr(webui, '_session_monotonic', session_clock)
     monkeypatch.setattr(webui, 'StreamSource', Source)
@@ -931,7 +959,7 @@ def test_pause_budget_includes_time_while_source_read_is_blocked(tmp_path, monke
                 pause_command_sent.set()
                 socket.send_text('pause')
                 assert pause_accounted.wait(2)
-                clock[0] = 20.0
+                clock_offset[0] = 20.0
                 allow_second.set()
                 socket.send_text('resume')
                 assert second_sent.wait(2)
@@ -1025,6 +1053,98 @@ def test_only_a_forward_caption_range_refreshes_server_progress_budget(tmp_path,
     assert [event['end'] for event in events if event['type'] == 'subtitle'] == [0.2, 0.2]
     assert any(event['type'] == 'error' and '15 秒' in event['message'] for event in events)
     assert events[-1] == {'type': 'end', 'reason': 'error'}
+
+
+def test_new_visible_caption_refreshes_progress_budget_when_silence_watermark_is_ahead(
+        tmp_path, monkeypatch):
+    # The real long local input had captions arriving for earlier speech after a
+    # silence run had advanced the server watermark beyond their word times.
+    monkeypatch.setattr(webui, '_CLOUD', CloudConfigStore(tmp_path / 'cloud.bin'))
+    monkeypatch.setattr(webui, '_CLOUD_JOBS', {})
+    clock = [0.0]
+    silence = b'\x00' * 3200
+    speech = b'\x00\x10' * 1600
+    blocked_after_silence = threading.Event()
+    allow_speech = threading.Event()
+    blocked_after_caption = threading.Event()
+    allow_after_caption = threading.Event()
+    sent = []
+
+    class Source:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def iter_chunks(self):
+            for _ in range(20):
+                yield silence
+            blocked_after_silence.set()
+            allow_speech.wait(3)
+            yield speech
+            blocked_after_caption.set()
+            allow_after_caption.wait(3)
+            yield speech
+
+        def close(self):
+            pass
+
+    class Engine:
+        def transcribe_chunk(self, _audio):
+            sent.append(len(sent) + 1)
+            if len(sent) == 21:
+                return (0.0, 1.0, '静音水位之后的新文字', [
+                    (0.0, 1.0, '静音水位之后的新文字')
+                ], True, 'late-visible-caption')
+            return (None, None, '', None)
+
+        def poll(self):
+            return (None, None, '', None)
+
+        def finish(self):
+            return self.poll()
+
+        def close(self):
+            pass
+
+    def advance(stop, seconds):
+        return stop.is_set()
+
+    monkeypatch.setattr(webui, '_session_monotonic', lambda: clock[0])
+    monkeypatch.setattr(webui, '_session_wait', advance)
+    monkeypatch.setattr(webui, 'StreamSource', Source)
+    monkeypatch.setattr(webui, 'create_engine', lambda *_args, **_kwargs: Engine())
+    media = tmp_path / 'progress.mp4'
+    media.touch()
+    try:
+        with TestClient(webui.app) as client:
+            client.put('/api/cloud', json={'api_key': 'test-private-key'})
+            ticket = client.post('/api/cloud/sessions',
+                                 json={'url': str(media)}).json()
+            with client.websocket_connect('/ws?session=' + ticket['session']) as socket:
+                assert blocked_after_silence.wait(2)
+                clock[0] = 14.0
+                allow_speech.set()
+                events = []
+                while True:
+                    event = socket.receive_json()
+                    events.append(event)
+                    if event['type'] == 'subtitle':
+                        break
+                assert event['text'] == '静音水位之后的新文字'
+                assert blocked_after_caption.wait(2)
+                clock[0] = 15.1
+                allow_after_caption.set()
+                while True:
+                    event = socket.receive_json()
+                    events.append(event)
+                    if event['type'] == 'end':
+                        break
+    finally:
+        allow_speech.set()
+        allow_after_caption.set()
+
+    assert len(sent) == 22
+    assert not any(event['type'] == 'error' for event in events)
+    assert events[-1] == {'type': 'end', 'reason': 'completed'}
 
 
 @pytest.mark.parametrize('raise_after_first', [False, True])
@@ -1196,7 +1316,7 @@ def test_stable_preview_preserves_only_its_clause_word_times(tmp_path, monkeypat
                 events.append(event)
                 if event['type'] == 'end': break
     previews = [event for event in events if event['type'] == 'preview']
-    assert [event['text'] for event in previews] == ['Hello there.', 'Next sentence.']
+    assert [event['text'] for event in previews] == ['Hello there.', ' Next sentence.']
     assert [event.get('words') for event in previews] == [[list(w) for w in words[:2]], [list(w) for w in words[2:]]]
 
 
