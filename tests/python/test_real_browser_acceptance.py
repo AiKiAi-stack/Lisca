@@ -201,6 +201,40 @@ def test_direct_eof_checkpoints_and_session_count_survive_a_109ms_sampling_gap(
         assert metrics[name]["reason"], name
 
 
+@pytest.mark.parametrize(("mutation", "expected"), [
+    ("replace", "failed"),
+    ("delete", "unknown"),
+])
+def test_local_input_identity_mismatch_blocks_source_bound_metrics(
+        tmp_path, monkeypatch, mutation, expected):
+    media = tmp_path / "sample.wav"
+    media.write_bytes(b"fixed local input")
+
+    def change_input():
+        if mutation == "replace":
+            media.write_bytes(b"replacement input with a different identity")
+        else:
+            media.unlink()
+
+    def on_start(page):
+        socket = page.open_session()
+        page.schedule(1.3, change_input)
+        page.schedule(1.5, lambda: socket.send({"type": "end", "reason": "completed"}))
+        page.schedule(1.6, lambda: setattr(page, "ended", True))
+
+    _result, report, recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label=f"input-{mutation}", seconds=1, on_start=on_start,
+        observe_recovery=False, media=str(media), checkpoints=[5.1])
+
+    assert recording["input_unchanged"] is False
+    metrics = report["metrics"]
+    for name in ("media_eof", "cache_jump", "continuity"):
+        assert metrics[name]["status"] == expected, name
+        assert "input" in metrics[name]["reason"], name
+    assert metrics["session_count"]["status"] == "observed"
+    assert metrics["session_count"]["evidence"]["count"] == 1
+
+
 @pytest.mark.parametrize(("offset", "starts_session", "screenshot_failure", "expected"), [
     (0.25, False, False, "failed"),
     (0.0, True, False, "failed"),
@@ -248,6 +282,8 @@ def test_clean_valid_sampling_keeps_direct_metrics_observed_and_unproven_metrics
     assert report["metrics"]["continuity"]["status"] == "observed"
     for name in ("cache_jump", "readability", "sync", "coverage", "resources"):
         assert report["metrics"][name]["status"] == "unknown", name
+    assert report["metrics"]["sync"]["evidence"]["scorer"] == (
+        "tests/acceptance/score_acoustic_acceptance.py")
 
 
 def test_acoustic_capture_requires_a_local_reference_bound_input(tmp_path):

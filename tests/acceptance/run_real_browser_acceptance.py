@@ -363,14 +363,44 @@ def _metric(status, reason, evidence=None):
     return {"status": status, "reason": reason, "evidence": evidence or {}}
 
 
-def build_metric_evidence(*, browser_observed, sampling_valid, remote,
-                          samples, checkpoints, checkpoints_requested,
-                          session_post_start_count, operator_stop,
-                          acoustic_sync_assessed):
+def _source_binding(recording):
+    """Report why a local input cannot anchor source-bound metrics, if it cannot."""
+    if recording.get("source_kind") != "local_file":
+        return None, None, None
+    if recording.get("input_unchanged") is True:
+        return None, None, None
+    evidence = {
+        "source_kind": "local_file",
+        "input_unchanged": recording.get("input_unchanged"),
+        "input_sha256": recording.get("input_sha256"),
+        "input_sha256_after": recording.get("input_sha256_after"),
+        "input_identity_before": recording.get("input_identity_before"),
+        "input_identity_after": recording.get("input_identity_after"),
+    }
+    if evidence["input_identity_before"] is None:
+        return "unknown", "local input identity was not recorded before observation", evidence
+    if evidence["input_identity_after"] is None:
+        return "unknown", "local input identity could not be read after observation", evidence
+    if (evidence["input_identity_after"] != evidence["input_identity_before"]
+            or evidence["input_sha256"] != evidence["input_sha256_after"]):
+        return "failed", "local input changed during observation", evidence
+    return "unknown", "local input identity could not be confirmed", evidence
+
+
+def build_metric_evidence(*, browser_observed, sampling_valid, samples, checkpoints,
+                          checkpoints_requested, session_post_start_count, operator_stop,
+                          recording):
     """Separate directly observed facts from metrics that need time-sensitive evidence."""
+    source_kind = recording.get("source_kind")
+    remote = source_kind == "remote_stream"
+    binding_status, binding_reason, binding_evidence = _source_binding(recording)
     ended_samples = [sample for sample in samples if sample.get("ended") is True]
     if not browser_observed:
         media_eof = _metric("unknown", "browser observation did not start")
+    elif binding_status:
+        media_eof = _metric(
+            binding_status, f"media EOF is not source-bound: {binding_reason}",
+            binding_evidence)
     elif ended_samples:
         last = ended_samples[-1]
         media_eof = _metric("observed", "direct media-ended sample", {
@@ -387,6 +417,10 @@ def build_metric_evidence(*, browser_observed, sampling_valid, remote,
 
     if not browser_observed:
         cache_jump = _metric("unknown", "browser observation did not start")
+    elif binding_status:
+        cache_jump = _metric(
+            binding_status, f"cache jump is not source-bound: {binding_reason}",
+            binding_evidence)
     elif not checkpoints:
         reason = ("cache jump checkpoints were requested but no complete evidence "
                   "was collected" if checkpoints_requested
@@ -458,6 +492,10 @@ def build_metric_evidence(*, browser_observed, sampling_valid, remote,
     max_gap = max(gaps, default=0)
     if not browser_observed:
         continuity = _metric("unknown", "browser observation did not start")
+    elif binding_status:
+        continuity = _metric(
+            binding_status, f"continuity is not source-bound: {binding_reason}",
+            binding_evidence)
     elif not sampling_valid:
         continuity = _metric(
             "unknown",
@@ -489,10 +527,11 @@ def build_metric_evidence(*, browser_observed, sampling_valid, remote,
              or sample.get("height_clipped") for sample in visible)},
     )
 
-    sync = (_metric("observed", "independent acoustic sync assessment",
-                    {"acoustic_sync_assessed": True})
-            if acoustic_sync_assessed else
-            _metric("unknown", "no independent acoustic sync assessment"))
+    sync = _metric(
+        "unknown",
+        "no independent acoustic sync assessment; use the independent acoustic scorer",
+        {"scorer": "tests/acceptance/score_acoustic_acceptance.py"},
+    )
 
     coverage = _metric("unknown",
                        "no independent audible-speech reference for caption coverage")
@@ -1062,17 +1101,6 @@ def collect(args):
     max_gap = max(gaps, default=0)
     measurement_invalid = len(samples) < 2 or max_gap > 100 or any(
         item.get("within_sampling_tolerance") is False for item in checkpoints)
-    metrics = build_metric_evidence(
-        browser_observed=sampler_started,
-        sampling_valid=not measurement_invalid,
-        remote=remote,
-        samples=samples,
-        checkpoints=checkpoints,
-        checkpoints_requested=bool(args.checkpoints),
-        session_post_start_count=posts["count"],
-        operator_stop=stop_state,
-        acoustic_sync_assessed=False,
-    )
     metadata = {"language": args.language, "media_kind": "remote_stream" if remote else "local_file",
                 "sample_interval_ms": 50, "sampling_tolerance_seconds": 0.1,
                 "session_post_start_count": posts["count"], "video_eof_observed": video_eof,
@@ -1085,6 +1113,16 @@ def collect(args):
     recording = write_browser_recording(media_path, recording_path, events, status, signal, reason,
                                         errors, started_at, started, metadata, source_before)
     errors = recording.get("errors", errors)
+    metrics = build_metric_evidence(
+        browser_observed=sampler_started,
+        sampling_valid=not measurement_invalid,
+        samples=samples,
+        checkpoints=checkpoints,
+        checkpoints_requested=bool(args.checkpoints),
+        session_post_start_count=posts["count"],
+        operator_stop=stop_state,
+        recording=recording,
+    )
     score_result = None
     if args.reference and args.language and recording["recording_status"] == "completed":
         try:

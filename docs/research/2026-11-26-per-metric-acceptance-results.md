@@ -81,6 +81,94 @@ git diff --check
 - Pylint 退出码：`0`（无 error）
 - `git diff --check` 退出码：`0`
 
+## 2026-11-27 审核修正：本地输入身份绑定
+
+Codex 的 Spec 审核发现 `collect()` 在 `write_browser_recording()` 产生
+`input_unchanged` 之前就构造了 `metrics`。用原采集替身复现：`on_start` 在 1.3 秒
+替换本地 `sample.wav`、1.5 秒发送 `completed`、1.6 秒结束，写出的
+`recording.input_unchanged=false`，但 `metrics.media_eof.status=observed`、
+`errors=[]`。这违反 Testing Decisions 中“输入身份不符不能给出相应成功状态”。
+
+修正先读取真实写出的 recording 身份结果，再决定依赖固定输入的指标：
+
+- 本地文件 `input_unchanged=true` 时保持原行为。
+- 文件在采集中改变时，`media_eof`、`cache_jump`、`continuity` 均为 `failed`，
+  原因写明本地输入改变，`evidence` 保留修改前后哈希与文件身份。
+- 文件在采集后无法读取或身份无法确认时，这三项为 `unknown`，原因分别写明未记录
+  修改前身份或修改后无法读取。
+- `session_count` 继续按独立请求账本记为 `observed`；`cancellation` 继续按 DELETE
+  回执判定，不因输入变化一起抹掉。
+- 远端仍按 `source_kind=remote_stream` 单列，不强加本地文件恒定哈希。
+- 删除仅被传入 `False` 的 `acoustic_sync_assessed` 参数及可生成 `observed` 的分支；
+  `sync` 固定为 `unknown`，并指向独立评分器
+  `tests/acceptance/score_acoustic_acceptance.py`。
+
+本切片未重写已返回 `failed` 的 DELETE 500 路径，未改 100 ms 全局采样门槛、
+`measurement_invalid` 或 `exit_ok` 语义。
+
+RED（修正前，新增测试经 `collect`/写出的报告）：
+
+```sh
+set -o pipefail
+/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python -m pytest \
+  tests/python/test_real_browser_acceptance.py \
+  -k 'input_identity_mismatch' -q
+```
+
+- 退出码：`1`
+- 计数：`2 failed, 60 deselected`
+- 失败原因：替换和删除输入两种场景下，`media_eof` 仍为 `observed`，而不是
+  预期的 `failed`/`unknown`；`cache_jump` 和 `continuity` 同样尚未读取身份结果。
+
+GREEN（修正后）：
+
+```sh
+set -o pipefail
+/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python -m pytest \
+  tests/python/test_real_browser_acceptance.py \
+  -k 'input_identity_mismatch' -q
+```
+
+- 退出码：`0`
+- 计数：`2 passed, 60 deselected`
+- 覆盖：替换输入使三项为 `failed`，删除/无法读取使三项为 `unknown`，原因含
+  `input`；同一报告 `session_count` 仍为 `observed` 且计数为 1。
+
+完整采集回归：
+
+```sh
+set -o pipefail
+/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python -m pytest \
+  tests/python/test_real_browser_acceptance.py -q
+```
+
+- 退出码：`0`
+- 计数：`62 passed, 1 warning`（警告仅为 pytest 缓存目录只读）
+
+相邻定向回归与静态检查：
+
+```sh
+set -o pipefail
+/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python -m pytest \
+  tests/python/test_real_browser_acceptance.py \
+  tests/python/test_long_acceptance_probe.py -q
+```
+
+- 退出码：`0`
+- 计数：`98 passed, 1 warning`
+
+```sh
+set -o pipefail
+/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python -m pylint --errors-only \
+  --init-hook="import sys; sys.path[:0] = ['tests/acceptance', 'tests/browser', 'tests/python']" \
+  tests/acceptance/run_real_browser_acceptance.py \
+  tests/python/test_real_browser_acceptance.py
+git diff --check
+```
+
+- Pylint 退出码：`0`（无 error）
+- `git diff --check` 退出码：`0`
+
 ## 未运行与剩余产品项
 
 - 未重跑真实 1802 秒长片和真实 109 ms 间隔采集。本轮用现有采集器替身经
