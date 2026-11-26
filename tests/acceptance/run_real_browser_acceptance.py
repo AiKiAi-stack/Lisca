@@ -31,6 +31,7 @@ from run_original_acceptance import (
     write_recording,
 )
 from score_original_acceptance import score
+from sampling_continuity import analyze as analyze_sampling_continuity
 from playwright.sync_api import sync_playwright
 from browser_acoustic_capture import (
     capture_visible_screenshot,
@@ -387,13 +388,17 @@ def _source_binding(recording):
     return "unknown", "local input identity could not be confirmed", evidence
 
 
-def build_metric_evidence(*, browser_observed, sampling_valid, samples, checkpoints,
-                          checkpoints_requested, session_post_start_count, operator_stop,
-                          recording):
+def build_metric_evidence(*, browser_observed, sampling_valid, remote=None,
+                          samples, checkpoints, checkpoints_requested,
+                          session_post_start_count, operator_stop,
+                          recording=None, acoustic_sync_assessed=False,
+                          checkpoint_post_delta=None):
     """Separate directly observed facts from metrics that need time-sensitive evidence."""
-    source_kind = recording.get("source_kind")
-    remote = source_kind == "remote_stream"
-    binding_status, binding_reason, binding_evidence = _source_binding(recording)
+    if recording is not None:
+        remote = recording.get("source_kind") == "remote_stream"
+    else:
+        remote = bool(remote)
+    binding_status, binding_reason, binding_evidence = _source_binding(recording or {})
     ended_samples = [sample for sample in samples if sample.get("ended") is True]
     if not browser_observed:
         media_eof = _metric("unknown", "browser observation did not start")
@@ -455,6 +460,8 @@ def build_metric_evidence(*, browser_observed, sampling_valid, samples, checkpoi
                 unknowns.append("checkpoint session ledger is missing")
             elif session_delta != 0:
                 failures.append("a recognition session started during the cache jump")
+        if checkpoint_post_delta not in (None, 0):
+            failures.append("a recognition session started after the cache jumps")
         if failures:
             cache_jump = _metric("failed", "; ".join(dict.fromkeys(failures)),
                                  {"checkpoints": evidence})
@@ -530,7 +537,8 @@ def build_metric_evidence(*, browser_observed, sampling_valid, samples, checkpoi
     sync = _metric(
         "unknown",
         "no independent acoustic sync assessment; use the independent acoustic scorer",
-        {"scorer": "tests/acceptance/score_acoustic_acceptance.py"},
+        {"scorer": "tests/acceptance/score_acoustic_acceptance.py",
+         "acoustic_sync_assessed": acoustic_sync_assessed},
     )
 
     coverage = _metric("unknown",
@@ -1116,12 +1124,15 @@ def collect(args):
     metrics = build_metric_evidence(
         browser_observed=sampler_started,
         sampling_valid=not measurement_invalid,
+        remote=remote,
         samples=samples,
         checkpoints=checkpoints,
         checkpoints_requested=bool(args.checkpoints),
         session_post_start_count=posts["count"],
         operator_stop=stop_state,
         recording=recording,
+        acoustic_sync_assessed=False,
+        checkpoint_post_delta=checkpoint_post_delta,
     )
     score_result = None
     if args.reference and args.language and recording["recording_status"] == "completed":
@@ -1164,6 +1175,7 @@ def collect(args):
                      "sample_count": len(samples), "max_observed_gap_ms": round(max_gap, 1),
                      "status": "measurement_invalid" if measurement_invalid else "valid"},
         "metrics": metrics,
+        "sampling_continuity": analyze_sampling_continuity(samples),
         "preparation": {
             "first_ready_after_ms": first_ready.get("observed_after_ms") if first_ready else None,
             "first_playing_after_ms": first_playing.get("observed_after_ms") if first_playing else None,

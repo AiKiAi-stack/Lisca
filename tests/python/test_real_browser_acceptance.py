@@ -286,6 +286,32 @@ def test_clean_valid_sampling_keeps_direct_metrics_observed_and_unproven_metrics
         "tests/acceptance/score_acoustic_acceptance.py")
 
 
+def test_post_after_the_last_checkpoint_fails_the_cache_jump_metric():
+    metrics = acceptance.build_metric_evidence(
+        browser_observed=True,
+        sampling_valid=True,
+        remote=False,
+        samples=[{"observed_after_ms": 0, "ended": True,
+                  "media_time": 1802.0, "duration": 1802.0}],
+        checkpoints=[{
+            "target_seconds": 5.1,
+            "media_time": 5.1,
+            "sampling_tolerance_seconds": 0.1,
+            "within_sampling_tolerance": True,
+            "screenshot_written": True,
+            "session_post_delta": 0,
+        }],
+        checkpoints_requested=True,
+        session_post_start_count=2,
+        operator_stop={},
+        acoustic_sync_assessed=False,
+        checkpoint_post_delta=1,
+    )
+
+    assert metrics["cache_jump"]["status"] == "failed"
+    assert "after" in metrics["cache_jump"]["reason"]
+
+
 def test_acoustic_capture_requires_a_local_reference_bound_input(tmp_path):
     reference = tmp_path / "reference.json"
     media = tmp_path / "sample.wav"

@@ -99,9 +99,10 @@ Codex 的 Spec 审核发现 `collect()` 在 `write_browser_recording()` 产生
 - `session_count` 继续按独立请求账本记为 `observed`；`cancellation` 继续按 DELETE
   回执判定，不因输入变化一起抹掉。
 - 远端仍按 `source_kind=remote_stream` 单列，不强加本地文件恒定哈希。
-- 删除仅被传入 `False` 的 `acoustic_sync_assessed` 参数及可生成 `observed` 的分支；
-  `sync` 固定为 `unknown`，并指向独立评分器
-  `tests/acceptance/score_acoustic_acceptance.py`。
+- 删除可生成 `observed` 的同步分支；`sync` 固定为 `unknown`，并指向独立评分器
+  `tests/acceptance/score_acoustic_acceptance.py`。合并 `#116` 后保留仅作兼容的
+  `acoustic_sync_assessed` 形参，`collect()` 固定传 `False`，该形参只写入证据，
+  不改变 `sync=unknown`。
 
 本切片未重写已返回 `failed` 的 DELETE 500 路径，未改 100 ms 全局采样门槛、
 `measurement_invalid` 或 `exit_ok` 语义。
@@ -168,6 +169,64 @@ git diff --check
 
 - Pylint 退出码：`0`（无 error）
 - `git diff --check` 退出码：`0`
+
+## 2026-11-27 集成：合并 #116 并发分支
+
+把远端 `origin/codex/issue-triage-20261126`（Draft PR #116，基点 `04785bb`）
+以 `git merge --no-ff` 合入本分支的 `dcfdd30`。双方共同起源于 `508fe37`；
+本候选的父提交即 `dcfdd30` 与 `04785bb`，没有改写任一侧历史。
+
+保留并合并的行为：
+
+- 并发分支：报告 `sampling_continuity` 字段、
+  `tests/acceptance/sampling_continuity.py` 工具及
+  `tests/python/test_sampling_continuity.py`、`docs/README.md` 与 `tests/README.md`
+  导航、109 ms 缺口复算文档，以及 `checkpoint_post_delta` 非零时把最后检查点
+  之后新增识别会话判为 `cache_jump=failed` 的检查。
+- 本分支：`source_binding` 对本地输入身份变化的 `failed`/`unknown` 绑定、
+  `collect()` 先写 recording 再生成 `metrics`、`sync` 固定 `unknown` 并指向独立
+  评分器、采集指南与本文结果文档。
+- 冲突仅在两份修改测试与 `build_metric_evidence()`：合并为单次、在
+  `write_browser_recording()` 之后调用；函数同时接受 `recording` 与并发分支的
+  `remote`/`acoustic_sync_assessed`/`checkpoint_post_delta`。传入 `recording`
+  时仍以 recording 的 `source_kind` 和输入身份为准，直接单元调用可只传 `remote`。
+  检查点证据仍保留 `visible_text`，新增会话/截图/容差判定不合并成未知。
+
+集成后一次性回归：
+
+```sh
+/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python -m pytest \
+  tests/python/test_real_browser_acceptance.py \
+  tests/python/test_long_acceptance_probe.py \
+  tests/python/test_sampling_continuity.py -q \
+  -o cache_dir=/tmp/lisca-103-integration-pytest
+```
+
+- 退出码：`0`
+- 计数：`108 passed`
+- 覆盖双方回归：输入身份绑定、先 recording 后 metrics、采样缺口分类、逐指标
+  证据、直播取消、长片探针；原 50 ms/100 ms 门槛、`measurement_invalid`、
+  `exit_ok` 语义未改。
+
+错误级 Pylint（含测试导入路径，覆盖 collector、连续性工具及两份修改测试）：
+
+```sh
+/home/wbb/.local/share/stream-with-asr/dev-venv/bin/python -m pylint --errors-only \
+  --init-hook="import sys; sys.path[:0] = ['tests/acceptance', 'tests/browser', 'tests/python']" \
+  --ignored-modules=dashscope.audio.asr --disable=E0611,E1101,E0110 \
+  tests/acceptance/run_real_browser_acceptance.py \
+  tests/acceptance/sampling_continuity.py \
+  tests/python/test_real_browser_acceptance.py \
+  tests/python/test_sampling_continuity.py
+git diff --check
+```
+
+- Pylint 退出码：`0`（无 error）
+- `git diff --check` 退出码：`0`
+
+本轮未运行真实 ASR、真实浏览器采集或新的长片；构建由 Codex 负责。集成提交的
+准确 SHA 在本文件随附提交完成后由交付报告给出，父提交范围即
+`dcfdd30` + `04785bb`。
 
 ## 未运行与剩余产品项
 
