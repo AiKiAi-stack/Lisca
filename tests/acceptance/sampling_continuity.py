@@ -2,17 +2,22 @@
 
 The browser collector requests a DOM sample every 50 ms and marks a run
 ``measurement_invalid`` when any two consecutive observations are more than
-100 ms apart.  A gap can be either:
+100 ms apart.  For each such gap this module reports whether the endpoints
+differ:
 
-* harmless for transition timing because the visible caption text changed
-  between the two samples (a transition is known to be inside the gap, so its
-  time is bounded by the gap), or
-* an observation hole because nothing changed at the endpoints; a short
-  visible/empty transition could have happened entirely inside it.
+* ``bounded`` means at least one endpoint state change was observed and some
+  change therefore happened inside the gap.  The gap width bounds the time of
+  that observed change, but it does not show there was nothing else in the
+  interval: other changes may have happened during the gap without being
+  observed.
+* ``unbounded`` means the endpoints agree; a short visible/empty transition
+  could have happened entirely inside the gap.
 
-This module reports that distinction.  It does not change the collector's
-``measurement_invalid`` status or any acceptance threshold; callers decide
-whether a bounded gap is acceptable for their measurement.
+A ``bounded`` gap is supplementary description only.  It does not make the
+original sampling valid, and it must not be used to pass time-sensitive
+metrics.  This module does not change the collector's ``measurement_invalid``
+status or any acceptance threshold; callers decide whether a bounded gap is
+acceptable for their measurement.
 """
 from __future__ import annotations
 
@@ -35,8 +40,9 @@ def analyze(samples: Iterable[dict[str, Any]], tolerance_ms: float = 100) -> dic
     """Classify every inter-sample gap against a fixed tolerance.
 
     A gap larger than ``tolerance_ms`` is ``bounded`` when the visible text or
-    visibility flag differs between its endpoints.  The transition then lies
-    inside the gap and its timestamp is uncertain by at most the gap width.
+    visibility flag differs between its endpoints.  At least one endpoint
+    change was then observed inside the gap and its time is bounded by the gap
+    width, but other changes inside the interval cannot be excluded.
     A gap whose endpoints agree is ``unbounded``: a full transition could have
     occurred and reverted inside it without being observed.
     """

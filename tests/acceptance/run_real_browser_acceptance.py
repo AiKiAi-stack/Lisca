@@ -494,8 +494,8 @@ def build_metric_evidence(*, browser_observed, sampling_valid, remote=None,
     else:
         cancellation = _metric("failed", "requested cancellation has no DELETE response")
 
-    gaps = [b["observed_after_ms"] - a["observed_after_ms"]
-            for a, b in zip(samples, samples[1:])]
+    gaps = [after_sample["observed_after_ms"] - before_sample["observed_after_ms"]
+            for before_sample, after_sample in zip(samples, samples[1:])]
     max_gap = max(gaps, default=0)
     if not browser_observed:
         continuity = _metric("unknown", "browser observation did not start")
