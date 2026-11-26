@@ -367,7 +367,7 @@ def _metric(status, reason, evidence=None):
 def build_metric_evidence(*, browser_observed, sampling_valid, remote,
                           samples, checkpoints, checkpoints_requested,
                           session_post_start_count, operator_stop,
-                          acoustic_sync_assessed):
+                          acoustic_sync_assessed, checkpoint_post_delta=None):
     """Separate directly observed facts from metrics that need time-sensitive evidence."""
     ended_samples = [sample for sample in samples if sample.get("ended") is True]
     if not browser_observed:
@@ -421,6 +421,8 @@ def build_metric_evidence(*, browser_observed, sampling_valid, remote,
                 unknowns.append("checkpoint session ledger is missing")
             elif session_delta != 0:
                 failures.append("a recognition session started during the cache jump")
+        if checkpoint_post_delta not in (None, 0):
+            failures.append("a recognition session started after the cache jumps")
         if failures:
             cache_jump = _metric("failed", "; ".join(dict.fromkeys(failures)),
                                  {"checkpoints": evidence})
@@ -1072,6 +1074,7 @@ def collect(args):
         session_post_start_count=posts["count"],
         operator_stop=stop_state,
         acoustic_sync_assessed=False,
+        checkpoint_post_delta=checkpoint_post_delta,
     )
     metadata = {"language": args.language, "media_kind": "remote_stream" if remote else "local_file",
                 "sample_interval_ms": 50, "sampling_tolerance_seconds": 0.1,
