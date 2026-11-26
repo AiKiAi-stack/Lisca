@@ -31,6 +31,7 @@ from run_original_acceptance import (
     write_recording,
 )
 from score_original_acceptance import score
+from sampling_continuity import analyze as analyze_sampling_continuity
 from playwright.sync_api import sync_playwright
 from browser_acoustic_capture import (
     capture_visible_screenshot,
@@ -955,6 +956,7 @@ def collect(args):
         "sampling": {"requested_interval_ms": 50, "tolerance_ms": 100,
                      "sample_count": len(samples), "max_observed_gap_ms": round(max_gap, 1),
                      "status": "measurement_invalid" if measurement_invalid else "valid"},
+        "sampling_continuity": analyze_sampling_continuity(samples, tolerance_ms=100),
         "preparation": {
             "first_ready_after_ms": first_ready.get("observed_after_ms") if first_ready else None,
             "first_playing_after_ms": first_playing.get("observed_after_ms") if first_playing else None,
