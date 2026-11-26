@@ -31,6 +31,7 @@ from run_original_acceptance import (
     write_recording,
 )
 from score_original_acceptance import score
+from sampling_continuity import analyze as analyze_sampling_continuity
 from playwright.sync_api import sync_playwright
 from browser_acoustic_capture import (
     capture_visible_screenshot,
@@ -355,7 +356,207 @@ def _take_checkpoint(page, seconds, started, screenshot_path):
         "line_count": visible.get("lines"),
         "clipped": visible.get("clipped"),
         "screenshot_path": str(screenshot_path),
+        "screenshot_written": screenshot_path.exists() and screenshot_path.stat().st_size > 0,
     }
+
+
+def _metric(status, reason, evidence=None):
+    return {"status": status, "reason": reason, "evidence": evidence or {}}
+
+
+def _source_binding(recording):
+    """Report why a local input cannot anchor source-bound metrics, if it cannot."""
+    if recording.get("source_kind") != "local_file":
+        return None, None, None
+    if recording.get("input_unchanged") is True:
+        return None, None, None
+    evidence = {
+        "source_kind": "local_file",
+        "input_unchanged": recording.get("input_unchanged"),
+        "input_sha256": recording.get("input_sha256"),
+        "input_sha256_after": recording.get("input_sha256_after"),
+        "input_identity_before": recording.get("input_identity_before"),
+        "input_identity_after": recording.get("input_identity_after"),
+    }
+    if evidence["input_identity_before"] is None:
+        return "unknown", "local input identity was not recorded before observation", evidence
+    if evidence["input_identity_after"] is None:
+        return "unknown", "local input identity could not be read after observation", evidence
+    if (evidence["input_identity_after"] != evidence["input_identity_before"]
+            or evidence["input_sha256"] != evidence["input_sha256_after"]):
+        return "failed", "local input changed during observation", evidence
+    return "unknown", "local input identity could not be confirmed", evidence
+
+
+def build_metric_evidence(*, browser_observed, sampling_valid, remote=None,
+                          samples, checkpoints, checkpoints_requested,
+                          session_post_start_count, operator_stop,
+                          recording=None, acoustic_sync_assessed=False,
+                          checkpoint_post_delta=None):
+    """Separate directly observed facts from metrics that need time-sensitive evidence."""
+    if recording is not None:
+        remote = recording.get("source_kind") == "remote_stream"
+    else:
+        remote = bool(remote)
+    binding_status, binding_reason, binding_evidence = _source_binding(recording or {})
+    ended_samples = [sample for sample in samples if sample.get("ended") is True]
+    if not browser_observed:
+        media_eof = _metric("unknown", "browser observation did not start")
+    elif binding_status:
+        media_eof = _metric(
+            binding_status, f"media EOF is not source-bound: {binding_reason}",
+            binding_evidence)
+    elif ended_samples:
+        last = ended_samples[-1]
+        media_eof = _metric("observed", "direct media-ended sample", {
+            "observed_after_ms": last.get("observed_after_ms"),
+            "media_time": last.get("media_time"),
+            "duration": last.get("duration"),
+        })
+    elif not samples:
+        media_eof = _metric("unknown", "no DOM samples were observed")
+    elif remote:
+        media_eof = _metric("unknown", "remote observation ended before media EOF")
+    else:
+        media_eof = _metric("failed", "local media EOF was not observed")
+
+    if not browser_observed:
+        cache_jump = _metric("unknown", "browser observation did not start")
+    elif binding_status:
+        cache_jump = _metric(
+            binding_status, f"cache jump is not source-bound: {binding_reason}",
+            binding_evidence)
+    elif not checkpoints:
+        reason = ("cache jump checkpoints were requested but no complete evidence "
+                  "was collected" if checkpoints_requested
+                  else "no cache jump checkpoints were requested")
+        cache_jump = _metric("unknown", reason)
+    else:
+        failures, unknowns, evidence = [], [], []
+        for item in checkpoints:
+            media_time = item.get("media_time")
+            target = item.get("target_seconds")
+            tolerance = item.get("sampling_tolerance_seconds")
+            within = item.get("within_sampling_tolerance")
+            session_delta = item.get("session_post_delta")
+            evidence.append({
+                "target_seconds": target,
+                "media_time": media_time,
+                "sampling_tolerance_seconds": tolerance,
+                "within_sampling_tolerance": within,
+                "screenshot_path": item.get("screenshot_path"),
+                "screenshot_written": item.get("screenshot_written"),
+                "visible_text": item.get("visible_text"),
+                "paused": item.get("paused"),
+                "session_post_delta": session_delta,
+            })
+            if target is None or media_time is None or within is None:
+                unknowns.append("checkpoint target time or tolerance is missing")
+            elif within is not True:
+                failures.append("checkpoint media time is outside target tolerance")
+            if item.get("screenshot_written") is not True:
+                unknowns.append("checkpoint screenshot is missing")
+            if session_delta is None:
+                unknowns.append("checkpoint session ledger is missing")
+            elif session_delta != 0:
+                failures.append("a recognition session started during the cache jump")
+        if checkpoint_post_delta not in (None, 0):
+            failures.append("a recognition session started after the cache jumps")
+        if failures:
+            cache_jump = _metric("failed", "; ".join(dict.fromkeys(failures)),
+                                 {"checkpoints": evidence})
+        elif unknowns:
+            cache_jump = _metric("unknown", "; ".join(dict.fromkeys(unknowns)),
+                                 {"checkpoints": evidence})
+        else:
+            cache_jump = _metric("observed",
+                                 "each checkpoint matched its target with a screenshot "
+                                 "and no new recognition session",
+                                 {"checkpoints": evidence})
+
+    if browser_observed:
+        session_count = _metric("observed", "recognition session request ledger", {
+            "count": session_post_start_count, "source": "request_ledger"})
+    else:
+        session_count = _metric("unknown", "browser observation did not start")
+
+    delete_status = operator_stop.get("delete_status")
+    if (operator_stop.get("requested") is not True
+            or operator_stop.get("trigger") == "collector_cleanup"):
+        cancellation = _metric("unknown", "cancellation was not requested")
+    elif type(delete_status) is int:
+        succeeded = 200 <= delete_status < 300
+        cancellation = _metric(
+            "observed" if succeeded else "failed",
+            "DELETE response received" if succeeded else "DELETE response was not successful",
+            {"delete_status": delete_status, "trigger": operator_stop.get("trigger")},
+        )
+    else:
+        cancellation = _metric("failed", "requested cancellation has no DELETE response")
+
+    gaps = [after_sample["observed_after_ms"] - before_sample["observed_after_ms"]
+            for before_sample, after_sample in zip(samples, samples[1:])]
+    max_gap = max(gaps, default=0)
+    if not browser_observed:
+        continuity = _metric("unknown", "browser observation did not start")
+    elif binding_status:
+        continuity = _metric(
+            binding_status, f"continuity is not source-bound: {binding_reason}",
+            binding_evidence)
+    elif not sampling_valid:
+        continuity = _metric(
+            "unknown",
+            "DOM sampling exceeded the 100 ms maximum interval; "
+            "time-sensitive continuity remains unknown",
+            {"sample_count": len(samples), "max_observed_gap_ms": round(max_gap, 1)},
+        )
+    elif len(samples) < 2:
+        continuity = _metric("unknown", "fewer than two DOM samples were observed")
+    elif not any(not sample.get("paused") for sample in samples):
+        continuity = _metric("unknown", "no playing DOM sample was observed")
+    else:
+        continuity = _metric("observed", "valid DOM sampling covers playback", {
+            "sample_count": len(samples),
+            "max_observed_gap_ms": round(max_gap, 1),
+            "paused_sample_count": sum(sample.get("paused") is True for sample in samples),
+            "buffering_sample_count": sum(
+                sample.get("buffering") is True for sample in samples),
+            "seeking_sample_count": sum(sample.get("seeking") is True for sample in samples),
+        })
+
+    visible = [sample for sample in samples if sample.get("visible") is True]
+    readability = _metric(
+        "unknown",
+        "DOM layout samples do not establish an independent readability result",
+        {"visible_sample_count": len(visible),
+         "overflow_sample_count": sum(
+             (sample.get("line_count") or 0) > 2.1 or sample.get("clipped")
+             or sample.get("height_clipped") for sample in visible)},
+    )
+
+    sync = _metric(
+        "unknown",
+        "no independent acoustic sync assessment; use the independent acoustic scorer",
+        {"scorer": "tests/acceptance/score_acoustic_acceptance.py",
+         "acoustic_sync_assessed": acoustic_sync_assessed},
+    )
+
+    coverage = _metric("unknown",
+                       "no independent audible-speech reference for caption coverage")
+    resources = _metric("unknown", "no independent resource record was supplied")
+
+    return {
+        "media_eof": media_eof,
+        "cache_jump": cache_jump,
+        "session_count": session_count,
+        "cancellation": cancellation,
+        "continuity": continuity,
+        "readability": readability,
+        "sync": sync,
+        "coverage": coverage,
+        "resources": resources,
+    }
+
 
 def _result_paths(output_dir, label):
     destination = Path(output_dir).expanduser()
@@ -857,7 +1058,12 @@ def collect(args):
                             checkpoint_dir.mkdir(parents=True, exist_ok=True)
                         for point in args.checkpoints:
                             screenshot_path = checkpoint_dir / f"{point:g}s.png"
-                            checkpoints.append(_take_checkpoint(page, point, started, screenshot_path))
+                            before_point = posts["count"]
+                            checkpoint = _take_checkpoint(page, point, started, screenshot_path)
+                            checkpoint["session_post_start_count_before"] = before_point
+                            checkpoint["session_post_start_count_after"] = posts["count"]
+                            checkpoint["session_post_delta"] = posts["count"] - before_point
+                            checkpoints.append(checkpoint)
                         checkpoint_post_delta = posts["count"] - before
                         if checkpoint_post_delta:
                             errors.append({"type": "recognition_post_after_completed_seek",
@@ -915,6 +1121,19 @@ def collect(args):
     recording = write_browser_recording(media_path, recording_path, events, status, signal, reason,
                                         errors, started_at, started, metadata, source_before)
     errors = recording.get("errors", errors)
+    metrics = build_metric_evidence(
+        browser_observed=sampler_started,
+        sampling_valid=not measurement_invalid,
+        remote=remote,
+        samples=samples,
+        checkpoints=checkpoints,
+        checkpoints_requested=bool(args.checkpoints),
+        session_post_start_count=posts["count"],
+        operator_stop=stop_state,
+        recording=recording,
+        acoustic_sync_assessed=False,
+        checkpoint_post_delta=checkpoint_post_delta,
+    )
     score_result = None
     if args.reference and args.language and recording["recording_status"] == "completed":
         try:
@@ -955,6 +1174,8 @@ def collect(args):
         "sampling": {"requested_interval_ms": 50, "tolerance_ms": 100,
                      "sample_count": len(samples), "max_observed_gap_ms": round(max_gap, 1),
                      "status": "measurement_invalid" if measurement_invalid else "valid"},
+        "metrics": metrics,
+        "sampling_continuity": analyze_sampling_continuity(samples),
         "preparation": {
             "first_ready_after_ms": first_ready.get("observed_after_ms") if first_ready else None,
             "first_playing_after_ms": first_playing.get("observed_after_ms") if first_playing else None,

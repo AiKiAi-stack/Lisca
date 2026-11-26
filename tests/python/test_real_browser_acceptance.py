@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import time
 
 import pytest
@@ -158,6 +159,157 @@ def test_browser_launch_failure_cannot_report_valid_sampling(tmp_path, monkeypat
     assert report["sampling"]["sample_count"] == 0
     assert result["measurement_status"] == "measurement_invalid"
     assert report["sampling"]["status"] == "measurement_invalid"
+    assert set(report["metrics"]) == {
+        "media_eof", "cache_jump", "session_count", "cancellation",
+        "continuity", "readability", "sync", "coverage", "resources",
+    }
+    assert {metric["status"] for metric in report["metrics"].values()} == {"unknown"}
+    assert all(metric["reason"] for metric in report["metrics"].values())
+
+
+def test_direct_eof_checkpoints_and_session_count_survive_a_109ms_sampling_gap(
+        tmp_path, monkeypatch):
+    media = tmp_path / "sample.wav"
+    media.write_bytes(b"fixed local input")
+
+    def on_start(page):
+        socket = page.open_session()
+        page.schedule(1.5, lambda: socket.send({"type": "end", "reason": "completed"}))
+        page.schedule(1.6, lambda: setattr(page, "ended", True))
+
+    result, report, _recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="sampling-gap", seconds=1, on_start=on_start,
+        observe_recovery=False, media=str(media), checkpoints=[5.1, 600],
+        sample_gap_at_ms=1000)
+
+    assert report["sampling"]["status"] == "measurement_invalid"
+    assert report["sampling"]["max_observed_gap_ms"] == pytest.approx(109, abs=0.1)
+    assert result["exit_ok"] is False
+    metrics = report["metrics"]
+    for name in ("media_eof", "cache_jump", "session_count"):
+        assert metrics[name]["status"] == "observed", name
+        assert metrics[name]["reason"], name
+    jump = metrics["cache_jump"]["evidence"]["checkpoints"]
+    assert [item["target_seconds"] for item in jump] == [5.1, 600.0]
+    assert all(item["media_time"] == item["target_seconds"] for item in jump)
+    assert all(item["screenshot_written"] is True for item in jump)
+    assert all(item["session_post_delta"] == 0 for item in jump)
+    assert metrics["session_count"]["evidence"]["count"] == 1
+    for name in ("cancellation", "continuity", "readability", "sync", "coverage",
+                 "resources"):
+        assert metrics[name]["status"] == "unknown", name
+        assert metrics[name]["reason"], name
+
+
+@pytest.mark.parametrize(("mutation", "expected"), [
+    ("replace", "failed"),
+    ("delete", "unknown"),
+])
+def test_local_input_identity_mismatch_blocks_source_bound_metrics(
+        tmp_path, monkeypatch, mutation, expected):
+    media = tmp_path / "sample.wav"
+    media.write_bytes(b"fixed local input")
+
+    def change_input():
+        if mutation == "replace":
+            media.write_bytes(b"replacement input with a different identity")
+        else:
+            media.unlink()
+
+    def on_start(page):
+        socket = page.open_session()
+        page.schedule(1.3, change_input)
+        page.schedule(1.5, lambda: socket.send({"type": "end", "reason": "completed"}))
+        page.schedule(1.6, lambda: setattr(page, "ended", True))
+
+    _result, report, recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label=f"input-{mutation}", seconds=1, on_start=on_start,
+        observe_recovery=False, media=str(media), checkpoints=[5.1])
+
+    assert recording["input_unchanged"] is False
+    metrics = report["metrics"]
+    for name in ("media_eof", "cache_jump", "continuity"):
+        assert metrics[name]["status"] == expected, name
+        assert "input" in metrics[name]["reason"], name
+    assert metrics["session_count"]["status"] == "observed"
+    assert metrics["session_count"]["evidence"]["count"] == 1
+
+
+@pytest.mark.parametrize(("offset", "starts_session", "screenshot_failure", "expected"), [
+    (0.25, False, False, "failed"),
+    (0.0, True, False, "failed"),
+    (0.0, False, True, "unknown"),
+])
+def test_cache_jump_metric_requires_tolerance_screenshot_and_no_new_session(
+        tmp_path, monkeypatch, offset, starts_session, screenshot_failure, expected):
+    media = tmp_path / "sample.wav"
+    media.write_bytes(b"fixed local input")
+
+    def on_start(page):
+        socket = page.open_session()
+        page.schedule(1.5, lambda: socket.send({"type": "end", "reason": "completed"}))
+        page.schedule(1.6, lambda: setattr(page, "ended", True))
+
+    result, report, _recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="checkpoint-evidence", seconds=1, on_start=on_start,
+        observe_recovery=False, media=str(media), checkpoints=[5.1],
+        checkpoint_time_offset=offset,
+        checkpoint_starts_session=starts_session,
+        checkpoint_screenshot_failure=screenshot_failure)
+
+    assert result["exit_ok"] is False
+    assert report["metrics"]["cache_jump"]["status"] == expected
+    assert report["metrics"]["cache_jump"]["reason"]
+
+
+def test_clean_valid_sampling_keeps_direct_metrics_observed_and_unproven_metrics_unknown(
+        tmp_path, monkeypatch):
+    media = tmp_path / "sample.wav"
+    media.write_bytes(b"fixed local input")
+
+    def on_start(page):
+        page.ended = True
+        page.open_session().send({"type": "end", "reason": "completed"})
+
+    result, report, _recording, _page, _clock = _run_collect_with_fake_browser(
+        monkeypatch, tmp_path, label="clean-sampling", seconds=1, on_start=on_start,
+        observe_recovery=False, media=str(media))
+
+    assert report["sampling"]["status"] == "valid"
+    assert result["exit_ok"] is True
+    assert report["metrics"]["media_eof"]["status"] == "observed"
+    assert report["metrics"]["session_count"]["status"] == "observed"
+    assert report["metrics"]["continuity"]["status"] == "observed"
+    for name in ("cache_jump", "readability", "sync", "coverage", "resources"):
+        assert report["metrics"][name]["status"] == "unknown", name
+    assert report["metrics"]["sync"]["evidence"]["scorer"] == (
+        "tests/acceptance/score_acoustic_acceptance.py")
+
+
+def test_post_after_the_last_checkpoint_fails_the_cache_jump_metric():
+    metrics = acceptance.build_metric_evidence(
+        browser_observed=True,
+        sampling_valid=True,
+        remote=False,
+        samples=[{"observed_after_ms": 0, "ended": True,
+                  "media_time": 1802.0, "duration": 1802.0}],
+        checkpoints=[{
+            "target_seconds": 5.1,
+            "media_time": 5.1,
+            "sampling_tolerance_seconds": 0.1,
+            "within_sampling_tolerance": True,
+            "screenshot_written": True,
+            "session_post_delta": 0,
+        }],
+        checkpoints_requested=True,
+        session_post_start_count=2,
+        operator_stop={},
+        acoustic_sync_assessed=False,
+        checkpoint_post_delta=1,
+    )
+
+    assert metrics["cache_jump"]["status"] == "failed"
+    assert "after" in metrics["cache_jump"]["reason"]
 
 
 def test_acoustic_capture_requires_a_local_reference_bound_input(tmp_path):
@@ -240,7 +392,11 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                                    playback_evidence=False, browser_clock_samples=None,
                                    monotonic_ns_samples=None, captured_audio=None, installation=None, pixel_failure=False, runtime_audio_failure=False, runtime_clock_failure=False,
                                    acoustic_sync=False, save_failure=False, status_sequence=None,
-                                   stop_file=None, observe_completed_playback=False):
+                                   stop_file=None, observe_completed_playback=False,
+                                   checkpoints=None, checkpoint_time_offset=0.0,
+                                   checkpoint_starts_session=False,
+                                   checkpoint_screenshot_failure=False,
+                                   sample_gap_at_ms=None):
     clock = {"now": 100.0}
 
     class Request:
@@ -282,6 +438,16 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
         def is_visible(self):
             return self.selector == "#stop" and self.page.active
 
+        def evaluate(self, script, arg=None):
+            assert self.selector == "#player"
+            if "duration" in script:
+                return self.page.duration
+            assert "currentTime" in script
+            self.page.current_time = float(arg)
+            if checkpoint_starts_session:
+                self.page._request("POST")
+            return None
+
     class Page:
         def __init__(self):
             self.handlers = {}
@@ -298,6 +464,8 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             self.retry_visible = False
             self.caption = ""
             self.ended = False
+            self.duration = 1802.0
+            self.current_time = 0.0
 
         def on(self, name, callback):
             self.handlers.setdefault(name, []).append(callback)
@@ -333,7 +501,18 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             if "__realAcceptanceSampler?.stop()" in script:
                 self._sample()
                 return None
+            if script == "() => new Promise(requestAnimationFrame)":
+                return None
             raise AssertionError(f"Unexpected collector page evaluation: {script}")
+
+        def wait_for_function(self, *_args, **_kwargs):
+            pass
+
+        def screenshot(self, path=None, **_kwargs):
+            if checkpoint_screenshot_failure:
+                raise RuntimeError("screenshot unavailable")
+            Path(path).write_bytes(b"png")
+            return b"png"
 
         def _sample(self, observed_at=None):
             observed_at = clock["now"] if observed_at is None else observed_at
@@ -341,7 +520,7 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             self.sample_buffer.append({
                 "observed_after_ms": round(elapsed * 1000),
                 "media_time": elapsed,
-                "duration": None,
+                "duration": self.duration,
                 "ended": self.ended,
                 "paused": False,
                 "seeking": False,
@@ -405,7 +584,12 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
             clock["now"] = target
             while self.next_sample_at is not None and self.next_sample_at <= target:
                 self._sample(self.next_sample_at)
-                self.next_sample_at += 0.05
+                step = 0.05
+                if (sample_gap_at_ms is not None
+                        and abs((self.next_sample_at - self.sampler_started_at) * 1000
+                                - sample_gap_at_ms) < 0.5):
+                    step = 0.109
+                self.next_sample_at += step
 
     page = Page()
 
@@ -451,6 +635,13 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                 **(captured_audio or {})}
 
     monkeypatch.setattr(acceptance, "save_audio_capture", fake_save_audio_capture)
+
+    def fake_snapshot(target_page):
+        return {"time": target_page.current_time + checkpoint_time_offset,
+                "paused": True, "text": "captioned checkpoint frame",
+                "status": "", "lines": 1, "clipped": False}
+
+    monkeypatch.setattr(acceptance, "snapshot", fake_snapshot)
     if pixel_failure:
         def fail_screenshot(*_args):
             raise RuntimeError("capture failed")
@@ -473,6 +664,8 @@ def _run_collect_with_fake_browser(monkeypatch, tmp_path, *, label, seconds, on_
                      "--language", "en"])
     if stop_file is not None:
         argv.extend(["--stop-file", str(stop_file)])
+    if checkpoints is not None:
+        argv.extend(["--checkpoints", ",".join(str(point) for point in checkpoints)])
     args = acceptance.parse_args(argv)
     result = acceptance.collect(args)
     report = json.loads((tmp_path / f"{label}.report.json").read_text(encoding="utf-8"))
@@ -502,6 +695,8 @@ def test_remote_channel_precheck_can_finish_before_session_observation(
     assert report["live_seconds_cap_reached"] is True
     assert report["operator_stop"]["trigger"] == "observation_cap"
     assert report["operator_stop"]["delete_status"] == 200
+    assert report["metrics"]["cancellation"]["status"] == "observed"
+    assert report["metrics"]["cancellation"]["evidence"]["delete_status"] == 200
     assert result["exit_ok"] is True
     assert recording["completion_reason"] == "cancelled"
     assert not recording["errors"]
