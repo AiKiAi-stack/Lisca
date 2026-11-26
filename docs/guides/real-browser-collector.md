@@ -35,6 +35,17 @@ normal recognition end event. Sampling gaps over 100 ms are reported as
 optional share-endpoint failures are kept as sanitized diagnostics; page errors,
 WebSocket errors, player/UI failures, and session-start failures remain fatal.
 
+The report also has `metrics`, one entry per conclusion with `status`
+(`observed`, `unknown`, or `failed`), `reason`, and `evidence`. EOF comes from a
+direct media-ended sample, cache jumps require target tolerance plus a saved
+screenshot and no new session POST per checkpoint, and session count comes from
+the request ledger. Those direct facts stay `observed` even when a DOM gap makes
+the separate `sampling.status` `measurement_invalid`. Continuity stays `unknown`
+for invalid sampling; readability, sync, and coverage stay `unknown` without
+their own independent evidence, and resources stay `unknown` without a separate
+resource record. Per-metric statuses do not replace the global sampling status
+or `exit_ok`.
+
 For delayed remote playback, add `--observe-completed-playback` to keep sampling
 after normal recognition completion until video EOF or `--seconds`. This captures
 captions in buffered media that has not played when recognition ends. Reports
